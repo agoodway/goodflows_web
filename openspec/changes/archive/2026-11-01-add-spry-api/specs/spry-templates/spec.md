@@ -89,3 +89,36 @@ If the expanded sprite name contains `/`, the run request MUST fail with `422` a
 
 - **WHEN** the recipe name is `{{branch}}` and branch is `feature/add-dashboard`
 - **THEN** the API responds `422` and the error mentions `{{branch_slug}}`
+
+### Requirement: Expanded sprite name must be a valid sprite name
+
+The expanded sprite name, whether from the recipe name or the request's `sprite` override, MUST match `^[a-z0-9][a-z0-9-]{0,62}$`; otherwise the run request (or dry run) MUST fail with `422` on `sprite_name` (or on `sprite` when the override's literal text can never be valid) and no run is created. `{{branch_slug}}` preserves case, so a branch with uppercase letters, `.`, or `_` yields an invalid name rather than one that aliases another VM.
+
+#### Scenario: Uppercase branch
+
+- **WHEN** the recipe name is `app-{{branch_slug}}` and branch is `Feat/X`
+- **THEN** the API responds `422` and the error names `app-Feat-X` as not a valid sprite name
+
+#### Scenario: Invalid override
+
+- **WHEN** a run request sets `sprite` to `Demo`, `demo#1`, or `a..b`
+- **THEN** the API responds `422` and no run is created
+
+### Requirement: Inputs are restricted to safe characters
+
+Inputs are substituted unquoted into shell lines, so `branch` and `commit` MUST consist of letters, digits, and `. _ / + -` (at most 255 characters), and `remote` of letters, digits, and `. _ : / @ % + -` (at most 1024 characters), each starting with a letter or digit. A violating input MUST fail the request with `422` on that field before anything is created.
+
+#### Scenario: Shell metacharacters in branch
+
+- **WHEN** a run request sets `branch` to `x; rm -rf /`
+- **THEN** the API responds `422` with an error on `branch` and no run is created
+
+#### Scenario: Option-like input
+
+- **WHEN** a run request sets `branch` to `--upload-pack=evil`
+- **THEN** the API responds `422` with an error on `branch`
+
+#### Scenario: Typical inputs
+
+- **WHEN** a run supplies branch `feature/add-dashboard`, commit `abc123def`, and remote `git@github.com:example-org/example-app.git`
+- **THEN** the inputs are accepted

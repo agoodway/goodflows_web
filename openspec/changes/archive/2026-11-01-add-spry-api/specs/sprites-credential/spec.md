@@ -64,12 +64,22 @@ The stored token MUST be encrypted in the database. Reading the database row wit
 
 ### Requirement: Credential access control
 
-Reading the credential status SHALL accept any valid API key. Setting and removing the credential MUST require a private (`sk_`) key.
+Reading the credential status SHALL accept any valid API key. Setting and removing the credential MUST require a private (`sk_`) key whose user is an owner or admin of the account; any other key MUST receive `403`, and the OpenAPI document MUST list `403` for both operations.
 
 #### Scenario: Public key cannot set
 
 - **WHEN** a client with a `pk_` key sends `PUT /api/v1/sprites-credential`
 - **THEN** the API responds `403` and the stored credential is unchanged
+
+#### Scenario: Non-admin member cannot set or remove
+
+- **WHEN** a client with an `sk_` key of a user who is a plain member (not owner or admin) of the account sends `PUT` or `DELETE /api/v1/sprites-credential`
+- **THEN** the API responds `403` and the stored credential is unchanged
+
+#### Scenario: Admin can set
+
+- **WHEN** a client with an `sk_` key of an account admin sends `PUT /api/v1/sprites-credential` with a token
+- **THEN** the API responds `200` and later runs use that token
 
 ### Requirement: One credential client per claimed run
 
