@@ -36,15 +36,51 @@ if sentry_dsn = System.get_env("SENTRY_DSN") do
     environment_name: config_env()
 end
 
+# Encryption key for data at rest (GoodFlows.Vault). Required in production;
+# dev and test fall back to the fixed keys in dev.exs / test.exs.
+case {config_env(), System.get_env("CLOAK_KEY")} do
+  {:prod, key} when key in [nil, ""] ->
+    raise """
+    environment variable CLOAK_KEY is missing.
+    Generate one with: elixir -e 'IO.puts(:crypto.strong_rand_bytes(32) |> Base.encode64())'
+    """
+
+  {:test, _key} ->
+    :ok
+
+  {_env, key} when key in [nil, ""] ->
+    :ok
+
+  {_env, key} ->
+    config :good_flows, GoodFlows.Vault, key: key
+end
+
 # Single source for non-test boots (dev + prod + releases). Omitted in test
 # so GoodFlows.Application does not start PgFlow workers.
 if config_env() != :test do
   config :good_flows, PgFlow,
     repo: GoodFlows.Repo,
-    jobs: [],
+    jobs: [GoodFlows.Spry.RunJob, GoodFlows.Spry.ReapRunsJob],
     flows: [],
     max_concurrency: 10,
+    # Explicit per-job limits: at most this many Spry runs execute at once on
+    # each node (queued runs wait for capacity; the reaper only fails a queued
+    # run once its PgFlow job is gone), and a single reaper sweep at a time.
+    worker_options: %{
+      GoodFlows.Spry.RunJob => [
+        max_concurrency: String.to_integer(System.get_env("SPRY_RUN_MAX_CONCURRENCY", "10"))
+      ],
+      GoodFlows.Spry.ReapRunsJob => [max_concurrency: 1]
+    },
     signal_strategy: :notify
+end
+
+# Spry run owner ids embed the node name; production nodes must be
+# distributed with a stable name (rel/env.sh.eex sets RELEASE_DISTRIBUTION
+# and RELEASE_NODE), so GoodFlows.Spry.Config.validate!/0 refuses to start
+# PgFlow workers on :nonode@nohost.
+if config_env() == :prod do
+  config :good_flows, GoodFlows.Spry, require_named_node: true
 end
 
 # config/runtime.exs is executed for all environments, including

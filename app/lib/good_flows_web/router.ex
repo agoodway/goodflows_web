@@ -66,14 +66,25 @@ defmodule GoodFlowsWeb.Router do
     pipe_through [:api, :api_authenticated]
 
     get "/me", MeController, :show
+
+    get "/recipes", RecipeController, :index
+    get "/recipes/:id", RecipeController, :show
+    get "/recipes/:id/runs", RunController, :index
+    get "/runs/:id", RunController, :show
+    get "/sprites-credential", SpritesCredentialController, :show
   end
 
   # Write endpoints: private (sk_) API keys only.
-  # scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
-  #   pipe_through [:api, :api_authenticated, :api_write]
-  #
-  #   post "/resources", ResourceController, :create
-  # end
+  scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write]
+
+    post "/recipes", RecipeController, :create
+    put "/recipes/:id", RecipeController, :update
+    delete "/recipes/:id", RecipeController, :delete
+    post "/recipes/:id/runs", RunController, :create
+    put "/sprites-credential", SpritesCredentialController, :update
+    delete "/sprites-credential", SpritesCredentialController, :delete
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:good_flows, :dev_routes) do

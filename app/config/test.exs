@@ -23,6 +23,17 @@ config :good_flows, GoodFlowsWeb.Endpoint,
   secret_key_base: "WOfQglvaxzm4BnsDuxAim8osKhtzkaIagyoNYnJxtNd9wVZq2jGcTRq3X41iKb0u",
   server: false
 
+# Fixed encryption key for tests only.
+config :good_flows, GoodFlows.Vault, key: "OItCtf1i+OuEvu0P7Ik+csu7g7Rx1cO0Jz/7NNwFjwk="
+
+# Short Spry deadlines so timeout tests run quickly.
+config :good_flows, GoodFlows.Spry,
+  step_timeout_ms: 300,
+  run_timeout_ms: 1_500,
+  output_limit_bytes: 65_536,
+  # Unroutable so a test that misses a stub can never reach the real API.
+  sprites_base_url: "http://127.0.0.1:9"
+
 # In test we don't send emails
 config :good_flows, GoodFlows.Mailer, adapter: Swoosh.Adapters.Test
 

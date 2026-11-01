@@ -40,6 +40,14 @@ config :phoenix_live_view,
   # the attribute set on all root tags. Used for Phoenix.LiveView.ColocatedCSS.
   root_tag_attribute: "phx-r"
 
+# Spry runs. The PgFlow job timeout (GoodFlows.Spry.Config.job_timeout_seconds/0)
+# must cover run_timeout_ms plus 5 minutes; this is checked at startup.
+config :good_flows, GoodFlows.Spry,
+  step_timeout_ms: 30 * 60_000,
+  run_timeout_ms: 6 * 60 * 60_000,
+  output_limit_bytes: 65_536,
+  sprites_base_url: nil
+
 # Configure the mailer
 #
 # By default it uses the "Local" adapter which stores the emails
@@ -79,13 +87,20 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Keep secrets out of request logs: the Sprites token arrives as a "token"
+# param on PUT /api/v1/sprites-credential. Matches any param containing a term.
+config :phoenix, :filter_parameters, ["password", "token"]
+
 # Repo for enqueue without a running PgFlow supervisor (tests).
 config :pgflow, repo: GoodFlows.Repo
 
 # Sentry error tracking. Events are only sent when SENTRY_DSN is set (runtime.exs).
 config :sentry,
   enable_source_code_context: true,
-  root_source_code_paths: [File.cwd!()]
+  root_source_code_paths: [File.cwd!()],
+  # The Sprites SDK keeps the account token in its process state; scrub it
+  # from crash reports before they leave the app.
+  before_send: {GoodFlows.Spry.Redaction, :sentry_before_send}
 
 # Attach Sentry to Elixir's Logger so crashes/errors are captured automatically
 config :good_flows, :logger, [

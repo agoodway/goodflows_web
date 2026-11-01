@@ -14,7 +14,7 @@ defmodule GoodFlows.MixProject do
       listeners: [Phoenix.CodeReloader],
       dialyzer: [
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
-        plt_add_apps: [:ex_unit]
+        plt_add_apps: [:ex_unit, :mix]
       ]
     ]
   end
@@ -88,6 +88,7 @@ defmodule GoodFlows.MixProject do
 
       # Security
       {:bcrypt_elixir, "~> 3.0"},
+      {:cloak_ecto, "~> 1.3"},
 
       # Environment & Config
       {:dotenvy, "~> 1.1"},
