@@ -38,6 +38,7 @@ defmodule GoodFlowsWeb.Router do
 
   pipeline :api_write do
     plug GoodFlowsWeb.Plugs.ApiAuth, :require_write_access
+    plug GoodFlowsWeb.Plugs.RequireParsedBody
   end
 
   # Resolves the `:project` path segment; always the last plug of a scope.

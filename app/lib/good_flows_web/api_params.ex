@@ -35,4 +35,11 @@ defmodule GoodFlowsWeb.ApiParams do
     {"No such project in this account, or no such recipe in this project", "application/json",
      ErrorResponse}
   end
+
+  @doc "The `415` response for a write whose body the endpoint could not parse."
+  @spec unsupported_media_type() :: {String.t(), String.t(), module()}
+  def unsupported_media_type do
+    {"Body is not `application/json` (or another parseable type)", "application/json",
+     ErrorResponse}
+  end
 end

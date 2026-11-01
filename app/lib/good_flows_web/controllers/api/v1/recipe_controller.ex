@@ -77,6 +77,7 @@ defmodule GoodFlowsWeb.Api.V1.RecipeController do
     parameters: @project_param,
     request_body: {"Recipe", "application/json", RecipeRequest, required: true},
     responses: [
+      unsupported_media_type: ApiParams.unsupported_media_type(),
       created: {"The created recipe", "application/json", RecipeResponse},
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
       forbidden: {"Public keys cannot write", "application/json", ErrorResponse},
@@ -103,6 +104,7 @@ defmodule GoodFlowsWeb.Api.V1.RecipeController do
     parameters: @id_params,
     request_body: {"Recipe", "application/json", RecipeRequest, required: true},
     responses: [
+      unsupported_media_type: ApiParams.unsupported_media_type(),
       ok: {"The replaced recipe", "application/json", RecipeResponse},
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
       forbidden: {"Public keys cannot write", "application/json", ErrorResponse},

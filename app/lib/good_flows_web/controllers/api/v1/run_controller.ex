@@ -52,6 +52,7 @@ defmodule GoodFlowsWeb.Api.V1.RunController do
     parameters: @recipe_params,
     request_body: {"Run request", "application/json", RunRequest, required: true},
     responses: [
+      unsupported_media_type: ApiParams.unsupported_media_type(),
       ok: {"Dry-run plan", "application/json", RunPlan},
       accepted: {"The queued run", "application/json", RunResponse},
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},

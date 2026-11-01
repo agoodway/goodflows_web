@@ -457,7 +457,7 @@ defmodule GoodFlowsWeb.Api.V1.TestReportControllerTest do
       assert json_response(conn, 201)
 
       # text/plain passes the endpoint parser untouched and unhalted (the
-      # recipe action itself is not exercised: it expects parsed params).
+      # router's RequireParsedBody then answers 415; see its own test).
       opts =
         BodyParsers.init(
           parsers: [:urlencoded, :multipart, :json],

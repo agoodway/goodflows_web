@@ -11,6 +11,7 @@ defmodule GoodFlowsWeb.Api.V1.SpritesCredentialController do
 
   alias GoodFlows.Accounts.AccountUser
   alias GoodFlows.Spry
+  alias GoodFlowsWeb.ApiParams
 
   alias GoodFlowsWeb.Schemas.{
     ErrorResponse,
@@ -42,6 +43,7 @@ defmodule GoodFlowsWeb.Api.V1.SpritesCredentialController do
     """,
     request_body: {"Token", "application/json", SpritesCredentialRequest, required: true},
     responses: [
+      unsupported_media_type: ApiParams.unsupported_media_type(),
       ok: {"Credential status", "application/json", SpritesCredentialStatus},
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
       forbidden:

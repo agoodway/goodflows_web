@@ -43,6 +43,7 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
     summary: "Create a project",
     request_body: {"Project", "application/json", ProjectRequest, required: true},
     responses: [
+      unsupported_media_type: ApiParams.unsupported_media_type(),
       created: {"The created project", "application/json", ProjectResponse},
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
       forbidden: {"Public keys cannot write", "application/json", ErrorResponse},
