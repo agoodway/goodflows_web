@@ -1,0 +1,378 @@
+{
+  "environment": "local",
+  "format": "exunit-timings",
+  "job": "test",
+  "job_status": "passed",
+  "report": {
+    "partition": "1",
+    "partition_count": 3,
+    "records": [
+      {
+        "elixir_version": "1.19.1",
+        "event": "suite_started",
+        "filters": {
+          "exclude": [
+            {
+              "tag": "qpdf",
+              "value": true
+            },
+            {
+              "tag": "athena_preview",
+              "value": false
+            }
+          ],
+          "include": [
+            {
+              "tag": "chrome",
+              "value": true
+            }
+          ]
+        },
+        "format": "exunit-timings",
+        "max_cases": 16,
+        "otp_release": "28",
+        "partition": "1",
+        "partition_count": 3,
+        "received_offset_us": 0,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "schedulers": 8,
+        "seed": 412893,
+        "started_at": "2026-11-01T12:00:00.000000Z"
+      },
+      {
+        "async": true,
+        "event": "module_started",
+        "execution_id": 1,
+        "file": "test/gc/alpha_test.exs",
+        "module": "GC.AlphaTest",
+        "parameter_id": null,
+        "received_offset_us": 120,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "setup_all": false,
+        "started_offset_us": 120
+      },
+      {
+        "async": true,
+        "describe": null,
+        "description": "adds numbers",
+        "event": "test_started",
+        "execution_id": 2,
+        "file": "test/gc/alpha_test.exs",
+        "line": 5,
+        "module": "GC.AlphaTest",
+        "name": "test adds numbers",
+        "parameter_id": null,
+        "received_offset_us": 151,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 150
+      },
+      {
+        "async": true,
+        "describe": null,
+        "description": "adds numbers",
+        "duration_us": 1500,
+        "event": "test_finished",
+        "execution_id": 2,
+        "file": "test/gc/alpha_test.exs",
+        "line": 5,
+        "module": "GC.AlphaTest",
+        "name": "test adds numbers",
+        "outcome": "passed",
+        "parameter_id": null,
+        "received_offset_us": 1702,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 150
+      },
+      {
+        "async": true,
+        "describe": null,
+        "description": "pending feature",
+        "event": "test_started",
+        "execution_id": 3,
+        "file": "test/gc/alpha_test.exs",
+        "line": 12,
+        "module": "GC.AlphaTest",
+        "name": "test pending feature",
+        "parameter_id": null,
+        "received_offset_us": 1801,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 1800
+      },
+      {
+        "async": true,
+        "describe": null,
+        "description": "pending feature",
+        "duration_us": null,
+        "event": "test_finished",
+        "execution_id": 3,
+        "file": "test/gc/alpha_test.exs",
+        "line": 12,
+        "module": "GC.AlphaTest",
+        "name": "test pending feature",
+        "outcome": "skipped",
+        "parameter_id": null,
+        "received_offset_us": 1810,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 1800
+      },
+      {
+        "async": true,
+        "counts": {
+          "passed": 1,
+          "skipped": 1
+        },
+        "event": "module_finished",
+        "execution_id": 1,
+        "file": "test/gc/alpha_test.exs",
+        "module": "GC.AlphaTest",
+        "observed_duration_us": 2180,
+        "outcome": "passed",
+        "parameter_id": null,
+        "received_offset_us": 2300,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "setup_all": false,
+        "started_offset_us": 120
+      },
+      {
+        "async": false,
+        "event": "module_started",
+        "execution_id": 4,
+        "file": "test/gc/beta_test.exs",
+        "module": "GC.BetaTest",
+        "parameter_id": 1,
+        "received_offset_us": 2400,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "setup_all": true,
+        "started_offset_us": 2400
+      },
+      {
+        "async": false,
+        "describe": "parsing",
+        "description": "handles input",
+        "event": "test_started",
+        "execution_id": 5,
+        "file": "test/gc/beta_test.exs",
+        "line": 20,
+        "module": "GC.BetaTest",
+        "name": "test parsing handles input",
+        "parameter_id": 1,
+        "received_offset_us": 2501,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 2500
+      },
+      {
+        "async": false,
+        "describe": "parsing",
+        "description": "handles input",
+        "duration_us": 3050,
+        "event": "test_finished",
+        "execution_id": 5,
+        "file": "test/gc/beta_test.exs",
+        "line": 20,
+        "module": "GC.BetaTest",
+        "name": "test parsing handles input",
+        "outcome": "passed",
+        "parameter_id": 1,
+        "received_offset_us": 5600,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 2500
+      },
+      {
+        "async": false,
+        "counts": {
+          "passed": 1
+        },
+        "event": "module_finished",
+        "execution_id": 4,
+        "file": "test/gc/beta_test.exs",
+        "module": "GC.BetaTest",
+        "observed_duration_us": 3500,
+        "outcome": "passed",
+        "parameter_id": 1,
+        "received_offset_us": 5900,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "setup_all": true,
+        "started_offset_us": 2400
+      },
+      {
+        "async": null,
+        "describe": null,
+        "description": null,
+        "event": "test_started",
+        "execution_id": 6,
+        "file": null,
+        "line": null,
+        "module": "GC.GammaTest",
+        "name": "test chrome only",
+        "parameter_id": null,
+        "received_offset_us": 6101,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 6100
+      },
+      {
+        "async": null,
+        "describe": null,
+        "description": null,
+        "duration_us": null,
+        "event": "test_finished",
+        "execution_id": 6,
+        "file": null,
+        "line": null,
+        "module": "GC.GammaTest",
+        "name": "test chrome only",
+        "outcome": "excluded",
+        "parameter_id": null,
+        "received_offset_us": 6110,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 6100
+      },
+      {
+        "aborted": false,
+        "counts": {
+          "excluded": 1,
+          "passed": 2,
+          "skipped": 1
+        },
+        "event": "suite_finished",
+        "files": [
+          {
+            "async": {
+              "counts": {},
+              "module_count": 0,
+              "observed_module_duration_us": 0,
+              "test_count": 0,
+              "test_duration_us": 0
+            },
+            "counts": {
+              "excluded": 1
+            },
+            "file": null,
+            "module_count": 0,
+            "observed_module_duration_us": 0,
+            "sync": {
+              "counts": {},
+              "module_count": 0,
+              "observed_module_duration_us": 0,
+              "test_count": 0,
+              "test_duration_us": 0
+            },
+            "test_count": 1,
+            "test_duration_us": 0,
+            "unknown": {
+              "counts": {
+                "excluded": 1
+              },
+              "module_count": 0,
+              "observed_module_duration_us": 0,
+              "test_count": 1,
+              "test_duration_us": 0
+            }
+          },
+          {
+            "async": {
+              "counts": {
+                "passed": 1,
+                "skipped": 1
+              },
+              "module_count": 1,
+              "observed_module_duration_us": 2180,
+              "test_count": 2,
+              "test_duration_us": 1500
+            },
+            "counts": {
+              "passed": 1,
+              "skipped": 1
+            },
+            "file": "test/gc/alpha_test.exs",
+            "module_count": 1,
+            "observed_module_duration_us": 2180,
+            "sync": {
+              "counts": {},
+              "module_count": 0,
+              "observed_module_duration_us": 0,
+              "test_count": 0,
+              "test_duration_us": 0
+            },
+            "test_count": 2,
+            "test_duration_us": 1500,
+            "unknown": {
+              "counts": {},
+              "module_count": 0,
+              "observed_module_duration_us": 0,
+              "test_count": 0,
+              "test_duration_us": 0
+            }
+          },
+          {
+            "async": {
+              "counts": {},
+              "module_count": 0,
+              "observed_module_duration_us": 0,
+              "test_count": 0,
+              "test_duration_us": 0
+            },
+            "counts": {
+              "passed": 1
+            },
+            "file": "test/gc/beta_test.exs",
+            "module_count": 1,
+            "observed_module_duration_us": 3500,
+            "sync": {
+              "counts": {
+                "passed": 1
+              },
+              "module_count": 1,
+              "observed_module_duration_us": 3500,
+              "test_count": 1,
+              "test_duration_us": 3050
+            },
+            "test_count": 1,
+            "test_duration_us": 3050,
+            "unknown": {
+              "counts": {},
+              "module_count": 0,
+              "observed_module_duration_us": 0,
+              "test_count": 0,
+              "test_duration_us": 0
+            }
+          }
+        ],
+        "received_offset_us": 9000,
+        "report_id": "report-1",
+        "run_id": "suite-20261101-a",
+        "times_us": {
+          "async": 3200,
+          "load": 1900,
+          "run": 8800,
+          "sync": 5600,
+          "total": 10700
+        },
+        "unfinished_modules": 0,
+        "unfinished_tests": 0
+      }
+    ],
+    "report_id": "report-1",
+    "suite_id": "suite-20261101-a",
+    "truncated": false
+  },
+  "source": {
+    "branch": "main",
+    "commit": "3f786850e387550fdab836ed7e6dc881de23001b",
+    "dirty": false
+  },
+  "workflow": "default",
+  "workflow_run_id": "67f7946d-136b-4608-ab01-e1f251a09754"
+}

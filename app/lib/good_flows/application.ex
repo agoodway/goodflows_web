@@ -28,6 +28,7 @@ defmodule GoodFlows.Application do
         pgflow_children() ++
         [
           {DNSCluster, query: Application.get_env(:good_flows, :dns_cluster_query) || :ignore},
+          GoodFlowsWeb.TestReportAdmission,
           GoodFlowsWeb.Endpoint
         ]
 

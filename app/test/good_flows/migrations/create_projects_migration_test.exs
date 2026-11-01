@@ -13,21 +13,31 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
   @version 20_261_101_190_000
   @migration GoodFlows.Repo.Migrations.CreateProjects
 
+  # `test_reports` references `projects`, so it is rolled back first.
+  @reports_version 20_261_101_200_000
+  @reports_migration GoodFlows.Repo.Migrations.CreateTestReports
+
   setup_all do
-    # `mix test` usually loaded it already through `ecto.migrate`; compiling
-    # it again would only warn about redefining the module.
-    unless Code.ensure_loaded?(@migration) do
-      Code.require_file("#{@version}_create_projects.exs", Migrator.migrations_path(Repo))
+    # `mix test` usually loaded them already through `ecto.migrate`;
+    # compiling them again would only warn about redefining the modules.
+    for {module, file} <- [
+          {@migration, "#{@version}_create_projects.exs"},
+          {@reports_migration, "#{@reports_version}_create_test_reports.exs"}
+        ],
+        not Code.ensure_loaded?(module) do
+      Code.require_file(file, Migrator.migrations_path(Repo))
     end
 
     :ok
   end
 
+  defp migrate(direction), do: migrate(@version, @migration, direction)
+
   # `migration_lock: false`: the lock would hold the shared sandbox
   # connection in this process while the migrator's task waits for it.
-  defp migrate(direction) do
-    Migrator.run(Repo, [{@version, @migration}], direction,
-      to: @version,
+  defp migrate(version, migration, direction) do
+    Migrator.run(Repo, [{version, migration}], direction,
+      to: version,
       log: false,
       migration_lock: false
     )
@@ -51,6 +61,8 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
   test "down and up round-trip; up refuses existing recipes" do
     assert migrated?()
+    assert migrate(@reports_version, @reports_migration, :down) == [@reports_version]
+    refute table?("test_reports")
     assert migrate(:down) == [@version]
     refute migrated?()
     refute table?("projects")
@@ -79,6 +91,9 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
     assert "project_id" in recipe_columns()
     assert table?("recipes_account_id_index")
     refute table?("recipes_account_id_name_index")
+
+    assert migrate(@reports_version, @reports_migration, :up) == [@reports_version]
+    assert table?("test_reports")
   end
 
   test "down refuses while two projects of an account share a recipe name" do

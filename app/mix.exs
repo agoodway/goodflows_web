@@ -155,7 +155,8 @@ defmodule GoodFlows.MixProject do
         "doctor",
         "sobelow --config",
         "dialyzer",
-        "test"
+        # Includes the :slow tests that a plain `mix test` excludes.
+        "test --include slow"
       ],
       precommit: ["check"]
     ]

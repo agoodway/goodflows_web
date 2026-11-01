@@ -38,21 +38,25 @@ defmodule GoodFlows.Projects do
   end
 
   @doc """
-  Deletes a project that has no recipes. Returns `{:error, :has_recipes}`
-  while any recipe belongs to it, including one committed concurrently
-  (the foreign key violation maps through `no_assoc_constraint/3`).
+  Deletes a project that has neither recipes nor test reports. Returns
+  `{:error, :has_recipes}` while any recipe belongs to it and
+  `{:error, :has_test_reports}` while any test report does, including rows
+  committed concurrently (the foreign key violation maps through
+  `no_assoc_constraint/3`). The project and its rows are kept.
   """
   @spec delete_project(Account.t(), Project.t()) ::
-          :ok | {:error, :not_found | :has_recipes}
+          :ok | {:error, :not_found | :has_recipes | :has_test_reports}
   def delete_project(%Account{id: account_id}, %Project{account_id: account_id} = project) do
     case project |> Project.delete_changeset() |> Repo.delete(stale_error_field: :id) do
       {:ok, _project} ->
         :ok
 
       {:error, %Ecto.Changeset{errors: errors}} ->
-        if Keyword.has_key?(errors, :recipes),
-          do: {:error, :has_recipes},
-          else: {:error, :not_found}
+        cond do
+          Keyword.has_key?(errors, :recipes) -> {:error, :has_recipes}
+          Keyword.has_key?(errors, :test_reports) -> {:error, :has_test_reports}
+          true -> {:error, :not_found}
+        end
     end
   end
 

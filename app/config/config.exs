@@ -89,7 +89,12 @@ config :phoenix, :json_library, Jason
 
 # Keep secrets out of request logs: the Sprites token arrives as a "token"
 # param on PUT /api/v1/sprites-credential. Matches any param containing a term.
+# (Test report bodies never become params: the endpoint does not parse that
+# route, see GoodFlowsWeb.Plugs.BodyParsers.)
 config :phoenix, :filter_parameters, ["password", "token"]
+
+# Test report upload limits (POST /api/v1/projects/:project/test-reports) are
+# runtime settings: see config/runtime.exs and .env.sample.
 
 # Repo for enqueue without a running PgFlow supervisor (tests).
 config :pgflow, repo: GoodFlows.Repo

@@ -41,7 +41,7 @@ defmodule GoodFlowsWeb.ApiSpec do
            starting with a letter or digit; unique in the account). Recipes
            live under `/api/v1/projects/{project}`; a slug with no project
            is `404` and is never created implicitly. A project that still
-           has recipes cannot be deleted (`409`).
+           has recipes or stored test reports cannot be deleted (`409`).
         2. **Set the Sprites credential** with `PUT /api/v1/sprites-credential`
            (a private key of an account owner or admin). The token is stored
            encrypted and is never returned; every VM operation for the account
@@ -105,6 +105,73 @@ defmodule GoodFlowsWeb.ApiSpec do
           `active_run_id`. If runs for the same sprite keep starting and
           finishing while a request is admitted, the API responds `503` with
           `Retry-After`; retry the request.
+
+        ## Test reports
+
+        `POST /api/v1/projects/{project}/test-reports` stores one
+        `exunit-timings` report produced by a local or CI test run. It needs a
+        private (`sk_…`) key, and the project must already exist: the path
+        slug selects it (an invalid slug is `422` on `project`, a slug the
+        account does not have is `404`). The body has no `project` or
+        `account_id`. Authentication and the project are checked before the
+        body is read. This is storage only: there is no read, query, grouping
+        or retention API, and storing a report never starts a Spry run.
+
+        The body (`Content-Type: application/json`, no `Content-Encoding`
+        other than `identity`, otherwise `415`) has exactly these keys:
+
+        - `format` (`exunit-timings`), `workflow_run_id` (lowercase UUID of
+          the workflow invocation), `workflow` and `job` (1 to 64 bytes, no
+          control characters), `environment` (the same, or `null`) and
+          `job_status` (`passed`, `failed`, `timed_out`, `cancelled`,
+          `skipped` or `unknown`)
+        - `source`: `commit` (40 or 64 hex characters), `branch` (up to 256
+          bytes) and `dirty` (boolean), each nullable
+        - `report`: `suite_id` and `report_id` (1 to 128 bytes of
+          `[A-Za-z0-9._-]`, starting with a letter or digit; `report_id` is
+          unique within a job), `partition` (1 to 64 bytes of `[A-Za-z0-9._-]`
+          or `null`), `partition_count` (positive or `null`), `truncated`
+          (whether collection dropped an invalid final line) and `records`
+        - `records`: 1 to 100,000 producer events in original order, starting
+          with the only `suite_started`; a `suite_finished`, if present, is
+          last. Every event has `event`, `run_id` (= `suite_id`),
+          `report_id` and `received_offset_us`. See `TestReportEvent` for the
+          fields of `suite_started`, `test_started`, `test_finished`,
+          `module_started`, `module_finished`, `suite_finished`,
+          `max_failures_reached` and `interrupted`.
+
+        Times are integer microseconds and are stored as sent; measured
+        durations are never checked against receipt offsets. A finish event
+        must match an earlier start with the same `execution_id` and fields.
+        The `suite_finished` counts, file totals and `times_us` must agree
+        with the finished events. Unknown or duplicate keys, strings
+        containing U+0000, numbers with a fraction or exponent and integers
+        beyond 2^53 - 1 are `422`. Logs, failure messages, assertion values
+        and parameter values are not accepted. `422` bodies are keyed by JSON
+        path (such as `report.records[3].duration_us`) with fixed messages
+        that never repeat submitted values.
+
+        Responses: `201` stored, `200` exact retry, `400` malformed JSON,
+        `401`/`403` key errors, `404` unknown project, `406` when `Accept`
+        excludes JSON, `409` a different report under the same identity,
+        `413` a body over 32 MiB (33,554,432 bytes), `415`, `422`, and `503`
+        with `Retry-After` when storage is unavailable or too many uploads
+        are being read on the server.
+
+        - **Identity and retries.** The project, `workflow_run_id`, `job` and
+          `report_id` identify one immutable report. An exact retry (equal
+          JSON ignoring object key order) returns `200` with the same `id`
+          and `duplicate: true`; anything else is `409` and changes nothing.
+          An incomplete report is never completed by a later upload. On
+          `503` the report may or may not have been stored: retry the same
+          frozen body.
+        - **Per-report completeness.** `status` is `complete` only when the
+          last record is `suite_finished` with `aborted` false and no
+          unfinished tests or modules, no `interrupted` or
+          `max_failures_reached` record appears and `truncated` is false;
+          otherwise `incomplete`. Failed tests do not make a report
+          incomplete, and one partition never says the whole workflow
+          invocation completed.
         """
       },
       paths: Paths.from_router(Router),

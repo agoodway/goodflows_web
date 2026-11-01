@@ -34,6 +34,21 @@ config :good_flows, GoodFlows.Spry,
   # Unroutable so a test that misses a stub can never reach the real API.
   sprites_base_url: "http://127.0.0.1:9"
 
+# Small test report body limit so size tests stay fast (fixtures are ~10 KB);
+# high admission caps so concurrent async tests are never refused. Tests for
+# the real limit and for cap exhaustion override these temporarily.
+# (config/runtime.exs leaves test report settings alone in test.)
+config :good_flows,
+  test_report_max_body_bytes: 32_768,
+  test_report_max_concurrent_uploads: 1_000,
+  test_report_max_concurrent_uploads_per_account: 1_000,
+  test_report_read_timeout_ms: 60_000,
+  test_report_max_heap_bytes: 2_147_483_648,
+  test_report_db_timeout_ms: 15_000
+
+# Lets tests collect Sentry events (none are sent: there is no DSN).
+config :sentry, test_mode: true
+
 # In test we don't send emails
 config :good_flows, GoodFlows.Mailer, adapter: Swoosh.Adapters.Test
 

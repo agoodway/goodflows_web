@@ -47,12 +47,14 @@ defmodule GoodFlowsWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  plug Plug.Parsers,
+  # Plug.Parsers for every route except test report uploads, which read
+  # their own body after authentication (GoodFlowsWeb.Plugs.TestReportBody).
+  plug GoodFlowsWeb.Plugs.BodyParsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
     json_decoder: Phoenix.json_library()
 
-  plug Sentry.PlugContext
+  plug Sentry.PlugContext, body_scrubber: {GoodFlowsWeb.SentryScrubber, :scrub}
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options

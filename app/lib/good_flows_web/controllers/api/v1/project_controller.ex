@@ -80,19 +80,21 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
 
   operation(:delete,
     summary: "Delete a project",
-    description: "Only a project without recipes can be deleted; otherwise `409`.",
+    description:
+      "Only a project without recipes or test reports can be deleted; otherwise `409`.",
     parameters: @project_param,
     responses: [
       no_content: "Deleted",
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
       forbidden: {"Public keys cannot write", "application/json", ErrorResponse},
       not_found: {"No such project in this account", "application/json", ErrorResponse},
-      conflict: {"The project still has recipes", "application/json", ConflictResponse},
+      conflict:
+        {"The project still has recipes or test reports", "application/json", ConflictResponse},
       unprocessable_entity: {"Invalid project slug", "application/json", ValidationErrorResponse}
     ]
   )
 
-  @doc "Deletes a project that has no recipes."
+  @doc "Deletes a project that has neither recipes nor test reports."
   def delete(conn, _params) do
     with :ok <- Projects.delete_project(conn.assigns.current_account, conn.assigns.project) do
       send_resp(conn, :no_content, "")

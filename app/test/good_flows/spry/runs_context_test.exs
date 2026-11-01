@@ -11,6 +11,8 @@ defmodule GoodFlows.Spry.RunsContextTest do
 
   @moduletag :capture_log
 
+  setup :verify_on_exit!
+
   setup do
     account = account_fixture()
     credential_fixture(account)

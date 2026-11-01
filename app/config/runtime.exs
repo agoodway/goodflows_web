@@ -75,6 +75,23 @@ if config_env() != :test do
     signal_strategy: :notify
 end
 
+# Test report uploads (POST /api/v1/projects/:project/test-reports), read at
+# call time. Each admitted upload holds at most one Repo connection at a
+# time, so the node cap must stay well below POOL_SIZE (checked in prod).
+# Test keeps the values from config/test.exs.
+if config_env() != :test do
+  env_int = fn name, default -> String.to_integer(System.get_env(name, default)) end
+
+  config :good_flows,
+    test_report_max_body_bytes: env_int.("TEST_REPORT_MAX_BODY_BYTES", "33554432"),
+    test_report_max_concurrent_uploads: env_int.("TEST_REPORT_MAX_CONCURRENT_UPLOADS", "2"),
+    test_report_max_concurrent_uploads_per_account:
+      env_int.("TEST_REPORT_MAX_CONCURRENT_UPLOADS_PER_ACCOUNT", "1"),
+    test_report_read_timeout_ms: env_int.("TEST_REPORT_READ_TIMEOUT_MS", "60000"),
+    test_report_max_heap_bytes: env_int.("TEST_REPORT_MAX_HEAP_BYTES", "2147483648"),
+    test_report_db_timeout_ms: env_int.("TEST_REPORT_DB_TIMEOUT_MS", "15000")
+end
+
 # Spry run owner ids embed the node name; production nodes must be
 # distributed with a stable name (rel/env.sh.eex sets RELEASE_DISTRIBUTION
 # and RELEASE_NODE), so GoodFlows.Spry.Config.validate!/0 refuses to start
@@ -166,10 +183,20 @@ if config_env() == :prod do
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
+  pool_size = String.to_integer(System.get_env("POOL_SIZE") || "10")
+  upload_cap = String.to_integer(System.get_env("TEST_REPORT_MAX_CONCURRENT_UPLOADS", "2"))
+
+  if upload_cap * 2 > pool_size do
+    raise """
+    TEST_REPORT_MAX_CONCURRENT_UPLOADS (#{upload_cap}) must be at most half of
+    POOL_SIZE (#{pool_size}): each test report upload can hold a Repo connection.
+    """
+  end
+
   config :good_flows, GoodFlows.Repo,
     # ssl: true,
     url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
+    pool_size: pool_size,
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
     socket_options: maybe_ipv6

@@ -104,6 +104,7 @@ defmodule GoodFlowsWeb.Router do
     put "/recipes/:id", RecipeController, :update
     delete "/recipes/:id", RecipeController, :delete
     post "/recipes/:id/runs", RunController, :create
+    post "/test-reports", TestReportController, :create
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
