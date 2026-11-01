@@ -1,6 +1,9 @@
 defmodule GoodFlowsWeb.Api.V1.RunController do
   @moduledoc """
   Starts recipe phase runs (or dry runs) and reports their progress.
+  Starting and listing a recipe's runs live under
+  `/api/v1/projects/:project/recipes/:id/runs` and require the recipe to
+  belong to that project; `GET /api/v1/runs/:id` stays account-scoped.
   Starting requires a private (`sk_`) key; reading accepts any key, but
   public (`pk_`) keys never see step `command` or `output`.
   """
@@ -9,6 +12,7 @@ defmodule GoodFlowsWeb.Api.V1.RunController do
 
   alias GoodFlows.Accounts.ApiKey
   alias GoodFlows.Spry
+  alias GoodFlowsWeb.ApiParams
 
   alias GoodFlowsWeb.Schemas.{
     ErrorResponse,
@@ -23,6 +27,9 @@ defmodule GoodFlowsWeb.Api.V1.RunController do
   action_fallback GoodFlowsWeb.FallbackController
 
   tags(["Spry"])
+
+  @recipe_params ApiParams.recipe()
+  @recipe_not_found ApiParams.recipe_not_found()
 
   operation(:create,
     summary: "Start a run",
@@ -42,19 +49,19 @@ defmodule GoodFlowsWeb.Api.V1.RunController do
     letter or digit, at most 63 characters); prefer `{{branch_slug}}` over
     `{{branch}}` in names. Violations are `422`.
     """,
-    parameters: [id: [in: :path, type: :string, description: "Recipe ID", required: true]],
+    parameters: @recipe_params,
     request_body: {"Run request", "application/json", RunRequest, required: true},
     responses: [
       ok: {"Dry-run plan", "application/json", RunPlan},
       accepted: {"The queued run", "application/json", RunResponse},
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
       forbidden: {"Public keys cannot start runs", "application/json", ErrorResponse},
-      not_found: {"No such recipe in this account", "application/json", ErrorResponse},
+      not_found: @recipe_not_found,
       conflict:
         {"A run is already active for this sprite", "application/json", RunConflictResponse},
       unprocessable_entity:
-        {"Invalid request, missing input, or missing credential", "application/json",
-         ValidationErrorResponse},
+        {"Invalid request, missing input, missing credential, or invalid project slug",
+         "application/json", ValidationErrorResponse},
       service_unavailable:
         {"The run could not be queued, or admission was contended; retry", "application/json",
          ErrorResponse}
@@ -63,11 +70,11 @@ defmodule GoodFlowsWeb.Api.V1.RunController do
 
   @doc "Starts a run, or returns its plan when the cast `dry_run` flag is true."
   def create(conn, %{"id" => recipe_id}) do
-    account = conn.assigns.current_account
+    %{current_account: account, project: project} = conn.assigns
     params = Map.drop(conn.body_params, ["id"])
     opts = [started_by_api_key_id: conn.assigns.current_api_key.id]
 
-    case Spry.request_run(account, recipe_id, params, opts) do
+    case Spry.request_run(account, project, recipe_id, params, opts) do
       {:ok, {:plan, result}} ->
         render(conn, :plan, result)
 
@@ -88,27 +95,28 @@ defmodule GoodFlowsWeb.Api.V1.RunController do
     pagination on creation time and id). Pass the response's `next_cursor`
     as `cursor` to get the next page; it is `null` on the last page.
     """,
-    parameters: [
-      id: [in: :path, type: :string, description: "Recipe ID", required: true],
-      limit: [
-        in: :query,
-        schema: %OpenApiSpex.Schema{type: :integer, minimum: 1, maximum: 200, default: 50},
-        description: "Page size (1 to 200, default 50)",
-        required: false
-      ],
-      cursor: [
-        in: :query,
-        type: :string,
-        description: "The `next_cursor` of the previous page",
-        required: false
-      ]
-    ],
+    parameters:
+      @recipe_params ++
+        [
+          limit: [
+            in: :query,
+            schema: %OpenApiSpex.Schema{type: :integer, minimum: 1, maximum: 200, default: 50},
+            description: "Page size (1 to 200, default 50)",
+            required: false
+          ],
+          cursor: [
+            in: :query,
+            type: :string,
+            description: "The `next_cursor` of the previous page",
+            required: false
+          ]
+        ],
     responses: [
       ok: {"Runs", "application/json", RunListResponse},
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
-      not_found: {"No such recipe in this account", "application/json", ErrorResponse},
+      not_found: @recipe_not_found,
       unprocessable_entity:
-        {"Invalid limit or cursor", "application/json", ValidationErrorResponse}
+        {"Invalid limit, cursor, or project slug", "application/json", ValidationErrorResponse}
     ]
   )
 
@@ -116,7 +124,9 @@ defmodule GoodFlowsWeb.Api.V1.RunController do
   def index(conn, %{"id" => recipe_id} = params) do
     page_params = Map.take(params, ["limit", "cursor"])
 
-    with {:ok, page} <- Spry.list_runs(conn.assigns.current_account, recipe_id, page_params) do
+    %{current_account: account, project: project} = conn.assigns
+
+    with {:ok, page} <- Spry.list_runs(account, project, recipe_id, page_params) do
       render(conn, :index, runs: page.runs, next_cursor: page.next_cursor)
     end
   end

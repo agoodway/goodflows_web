@@ -11,6 +11,13 @@ defmodule GoodFlowsWeb.Schemas.Run do
     properties: %{
       id: %Schema{type: :string, format: :uuid},
       recipe_id: %Schema{type: :string, format: :uuid, nullable: true},
+      project: %Schema{
+        type: :string,
+        nullable: true,
+        description:
+          "Slug of the recipe's project, for building " <>
+            "`/api/v1/projects/{project}/recipes/{recipe_id}` (null once the recipe is deleted)"
+      },
       status: %Schema{type: :string, enum: ["queued", "running", "succeeded", "failed"]},
       phase: %Schema{type: :string, enum: ["setup", "start", "stop", "teardown"]},
       sprite_name: %Schema{type: :string},

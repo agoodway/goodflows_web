@@ -18,8 +18,9 @@ defmodule GoodFlows.Spry.ReaperTest do
   setup do
     account = account_fixture()
     credential_fixture(account)
-    recipe = recipe_fixture(account, %{"name" => "box", "start" => ["a", "b", "c"]})
-    %{account: account, recipe: recipe}
+    project = project_fixture(account)
+    recipe = recipe_fixture(project, %{"name" => "box", "start" => ["a", "b", "c"]})
+    %{account: account, project: project, recipe: recipe}
   end
 
   defp later, do: DateTime.add(DateTime.utc_now(), 1, :day)
@@ -112,7 +113,10 @@ defmodule GoodFlows.Spry.ReaperTest do
       compile_jobs!()
 
       {:ok, run} =
-        start_run(ctx.account, ctx.recipe.id, %{"phase" => "start", "sprite" => "waits"})
+        start_run(ctx.account, ctx.project, ctx.recipe.id, %{
+          "phase" => "start",
+          "sprite" => "waits"
+        })
 
       Repo.update_all(from(r in Run, where: r.id == ^run.id), set: [inserted_at: long_ago()])
 

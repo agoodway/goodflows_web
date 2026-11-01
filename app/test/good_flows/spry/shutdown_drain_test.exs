@@ -10,7 +10,7 @@ defmodule GoodFlows.Spry.ShutdownDrainTest do
 
   setup do
     account = account_fixture()
-    recipe = recipe_fixture(account, %{"name" => "box", "start" => ["a", "b"]})
+    recipe = recipe_fixture(project_fixture(account), %{"name" => "box", "start" => ["a", "b"]})
     %{account: account, recipe: recipe}
   end
 

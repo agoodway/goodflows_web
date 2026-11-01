@@ -3,6 +3,8 @@ defmodule GoodFlows.SpryFixtures do
   Test helpers for Spry recipes, credentials, and runs.
   """
 
+  alias GoodFlows.Projects
+  alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
   alias GoodFlows.Spry
   alias GoodFlows.Spry.{Run, RunStep}
@@ -18,8 +20,31 @@ defmodule GoodFlows.SpryFixtures do
     })
   end
 
-  def recipe_fixture(account, attrs \\ %{}) do
-    {:ok, recipe} = Spry.create_recipe(account, recipe_attrs(attrs))
+  @doc """
+  Inserts a project for the account with `attrs` (default slug
+  `"project-<n>"`, unique per call). Always inserts: a duplicate slug or any
+  other invalid attrs raise instead of reusing an existing project.
+  """
+  def project_fixture(account, attrs \\ %{}) do
+    attrs =
+      attrs
+      |> Map.new(fn {key, value} -> {to_string(key), value} end)
+      |> Map.put_new_lazy("slug", fn -> "project-#{System.unique_integer([:positive])}" end)
+
+    case Projects.create_project(account, attrs) do
+      {:ok, project} ->
+        project
+
+      {:error, changeset} ->
+        raise ArgumentError,
+              "project_fixture could not insert #{inspect(attrs)}: " <>
+                inspect(changeset.errors)
+    end
+  end
+
+  def recipe_fixture(%Project{} = project, attrs \\ %{}) do
+    account = Repo.get!(GoodFlows.Accounts.Account, project.account_id)
+    {:ok, recipe} = Spry.create_recipe(account, project, recipe_attrs(attrs))
     recipe
   end
 
@@ -29,19 +54,19 @@ defmodule GoodFlows.SpryFixtures do
   end
 
   @doc """
-  Admits a real run through `Spry.request_run/4` (the single entry point),
+  Admits a real run through `Spry.request_run/5` (the single entry point),
   returning `{:ok, run}` or the error.
   """
-  def start_run(account, recipe_id, params, opts \\ []) do
-    case Spry.request_run(account, recipe_id, Map.delete(params, "dry_run"), opts) do
+  def start_run(account, project, recipe_id, params, opts \\ []) do
+    case Spry.request_run(account, project, recipe_id, Map.delete(params, "dry_run"), opts) do
       {:ok, {:run, run}} -> {:ok, run}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  @doc "Dry-runs through `Spry.request_run/4`, returning `{:ok, result}` or the error."
-  def dry_run(account, recipe_id, params) do
-    case Spry.request_run(account, recipe_id, Map.put(params, "dry_run", true)) do
+  @doc "Dry-runs through `Spry.request_run/5`, returning `{:ok, result}` or the error."
+  def dry_run(account, project, recipe_id, params) do
+    case Spry.request_run(account, project, recipe_id, Map.put(params, "dry_run", true)) do
       {:ok, {:plan, result}} -> {:ok, result}
       {:error, reason} -> {:error, reason}
     end

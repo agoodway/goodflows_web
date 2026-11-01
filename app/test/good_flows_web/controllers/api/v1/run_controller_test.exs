@@ -14,9 +14,11 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
   setup %{account: account} do
     compile_jobs!()
     credential_fixture(account)
+    project = project_fixture(account)
+    sibling = project_fixture(account, %{"slug" => "other"})
 
     recipe =
-      recipe_fixture(account, %{
+      recipe_fixture(project, %{
         "name" => "app-{{branch_slug}}",
         "setup" => ["echo hi"],
         "teardown" => ["echo bye"]
@@ -25,14 +27,18 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
     reject(&Wrapper.create/3)
     reject(&Wrapper.exec/4)
     reject(&Wrapper.destroy/3)
-    %{recipe: recipe}
+    %{project: project, sibling: sibling, recipe: recipe}
   end
 
-  describe "POST /recipes/:id/runs" do
+  # No route matches: the endpoint renders `Phoenix.Router.NoRouteError` as a
+  # 404 response rather than raising it in the test.
+  defp unscoped_404(%Plug.Conn{} = conn), do: response(conn, 404)
+
+  describe "POST /projects/:project/recipes/:id/runs" do
     test "accepts a setup run", ctx do
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
           "phase" => "setup",
           "branch" => "feat/x"
         })
@@ -42,12 +48,14 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
       assert %{"status" => "queued", "phase" => "setup", "sprite_name" => "app-feat-x"} =
                body["data"]
+
+      assert body["data"]["project"] == ctx.project.slug
     end
 
     test "the sprite override wins", ctx do
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
           "phase" => "start",
           "sprite" => "demo"
         })
@@ -56,8 +64,36 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
       assert body["data"]["sprite_name"] == "demo"
     end
 
+    test "a body project key is ignored; the path project scopes the run", ctx do
+      stub(Wrapper, :exists?, fn _client, "app-feat-y", _opts -> {:ok, false} end)
+
+      body =
+        ctx.sk_conn
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
+          "phase" => "setup",
+          "branch" => "feat/x",
+          "project" => ctx.sibling.slug
+        })
+        |> json_response(202)
+
+      assert %{"status" => "queued", "recipe_id" => recipe_id} = body["data"]
+      assert recipe_id == ctx.recipe.id
+
+      plan =
+        ctx.sk_conn
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
+          "phase" => "setup",
+          "branch" => "feat/y",
+          "dry_run" => true,
+          "project" => "Not A Slug"
+        })
+        |> json_response(200)
+
+      assert plan["data"]["sprite_name"] == "app-feat-y"
+    end
+
     test "invalid phase, misplaced flags, and missing inputs are 422", ctx do
-      path = ~p"/api/v1/recipes/#{ctx.recipe.id}/runs"
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs"
 
       assert ctx.sk_conn
              |> post(path, %{"phase" => "deploy"})
@@ -80,7 +116,10 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{"phase" => "setup", "branch" => "x"})
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
+          "phase" => "setup",
+          "branch" => "x"
+        })
         |> json_response(422)
 
       assert body["errors"]["detail"] =~ "Sprites credential"
@@ -92,7 +131,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
           "phase" => "teardown",
           "branch" => "feat/x"
         })
@@ -105,7 +144,10 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
     test "records the API key that started the run", ctx do
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{"phase" => "setup", "branch" => "x"})
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
+          "phase" => "setup",
+          "branch" => "x"
+        })
         |> json_response(202)
 
       run = GoodFlows.Repo.get!(GoodFlows.Spry.Run, body["data"]["id"])
@@ -123,7 +165,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
       {body, log} =
         ExUnit.CaptureLog.with_log(fn ->
           ctx.sk_conn
-          |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+          |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
             "phase" => "setup",
             "branch" => "x"
           })
@@ -139,7 +181,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
     end
 
     test "inputs outside their allowed characters or lengths are 422", ctx do
-      path = ~p"/api/v1/recipes/#{ctx.recipe.id}/runs"
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs"
 
       for {field, value} <- [
             {"branch", "x; rm -rf /"},
@@ -161,7 +203,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
     end
 
     test "invalid sprite names are 422, including names that differ only by case", ctx do
-      path = ~p"/api/v1/recipes/#{ctx.recipe.id}/runs"
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs"
 
       # {{branch_slug}} keeps case, so an uppercase branch cannot alias a
       # lowercase sprite.
@@ -191,7 +233,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
           "phase" => "setup",
           "branch" => "feat/x",
           "dry_run" => true
@@ -210,7 +252,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
     test "any boolean form of dry_run is a dry run, never a real run", ctx do
       stub(Wrapper, :exists?, fn _client, "app-feat-x", _opts -> {:ok, true} end)
-      path = ~p"/api/v1/recipes/#{ctx.recipe.id}/runs"
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs"
 
       for value <- ["1", "true", true] do
         body =
@@ -228,7 +270,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
     test "an invalid dry_run value is 422 and creates nothing", ctx do
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
           "phase" => "setup",
           "branch" => "x",
           "dry_run" => "maybe"
@@ -244,7 +286,9 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{"phase" => "deploy"})
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
+          "phase" => "deploy"
+        })
         |> json_response(422)
 
       assert body["errors"]["phase"]
@@ -256,10 +300,14 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
       stub(GoodFlows.Spry, :active_run_id, fn _account, _sprite -> nil end)
 
       conn =
-        post(ctx.sk_conn, ~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
-          "phase" => "setup",
-          "branch" => "x"
-        })
+        post(
+          ctx.sk_conn,
+          ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs",
+          %{
+            "phase" => "setup",
+            "branch" => "x"
+          }
+        )
 
       body = json_response(conn, 503)
       assert_schema(body, "ErrorResponse", ApiSpec.spec())
@@ -275,7 +323,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
           "phase" => "setup",
           "branch" => "feat/x",
           "dry_run" => true
@@ -291,7 +339,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
       body =
         ctx.sk_conn
-        |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+        |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
           "phase" => "start",
           "branch" => "x",
           "dry_run" => true
@@ -302,7 +350,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
     end
 
     test "public keys cannot start runs or dry runs", ctx do
-      path = ~p"/api/v1/recipes/#{ctx.recipe.id}/runs"
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs"
 
       assert ctx.pk_conn
              |> post(path, %{"phase" => "setup", "branch" => "x"})
@@ -317,15 +365,101 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
       credential_fixture(ctx.other_account)
 
       assert ctx.other_conn
-             |> post(~p"/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+             |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
+               "phase" => "setup",
+               "branch" => "x"
+             })
+             |> json_response(404)
+
+      project_fixture(ctx.other_account)
+
+      assert ctx.other_conn
+             |> post(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs", %{
                "phase" => "setup",
                "branch" => "x"
              })
              |> json_response(404)
     end
+
+    test "a recipe under another project of the account is 404 for start and dry run", ctx do
+      reject(&Wrapper.exists?/3)
+      path = ~p"/api/v1/projects/#{ctx.sibling.slug}/recipes/#{ctx.recipe.id}/runs"
+
+      assert ctx.sk_conn
+             |> post(path, %{"phase" => "setup", "branch" => "x"})
+             |> json_response(404)
+
+      body =
+        ctx.sk_conn
+        |> post(path, %{"phase" => "setup", "branch" => "x", "dry_run" => true})
+        |> json_response(404)
+
+      refute Map.has_key?(body, "plan")
+      assert GoodFlows.Repo.aggregate(GoodFlows.Spry.Run, :count) == 0
+    end
+
+    test "a missing project is 404 and creates no run or project", ctx do
+      assert ctx.sk_conn
+             |> post(~p"/api/v1/projects/missing/recipes/#{ctx.recipe.id}/runs", %{
+               "phase" => "setup",
+               "branch" => "x"
+             })
+             |> json_response(404)
+
+      assert GoodFlows.Repo.aggregate(GoodFlows.Spry.Run, :count) == 0
+      assert GoodFlows.Projects.get_project(ctx.account, "missing") == {:error, :not_found}
+    end
+
+    test "an invalid project segment is 422 on project and creates no run", ctx do
+      body =
+        ctx.sk_conn
+        |> post(~p"/api/v1/projects/GoodCases/recipes/#{ctx.recipe.id}/runs", %{
+          "phase" => "setup",
+          "branch" => "x"
+        })
+        |> json_response(422)
+
+      assert_schema(body, "ValidationErrorResponse", ApiSpec.spec())
+      assert body["errors"]["project"]
+      assert GoodFlows.Repo.aggregate(GoodFlows.Spry.Run, :count) == 0
+    end
+
+    test "a public key writing to a missing project is 403", ctx do
+      assert ctx.pk_conn
+             |> post(~p"/api/v1/projects/missing/recipes/#{ctx.recipe.id}/runs", %{
+               "phase" => "setup"
+             })
+             |> json_response(403)
+    end
+
+    test "the same sprite name under another project is 409 with active_run_id", ctx do
+      sibling_recipe = recipe_fixture(ctx.sibling, %{"name" => ctx.recipe.name})
+      active = run_fixture(ctx.account, ctx.recipe, sprite_name: "app-feat-x", status: "running")
+
+      body =
+        ctx.sk_conn
+        |> post(~p"/api/v1/projects/#{ctx.sibling.slug}/recipes/#{sibling_recipe.id}/runs", %{
+          "phase" => "setup",
+          "branch" => "feat/x"
+        })
+        |> json_response(409)
+
+      assert body["errors"]["active_run_id"] == active.id
+    end
+
+    test "the unscoped route is gone", ctx do
+      assert ctx.sk_conn
+             |> post("/api/v1/recipes/#{ctx.recipe.id}/runs", %{
+               "phase" => "setup",
+               "branch" => "x"
+             })
+             |> unscoped_404()
+
+      assert GoodFlows.Repo.aggregate(GoodFlows.Spry.Run, :count) == 0
+    end
   end
 
-  describe "GET /recipes/:id/runs" do
+  describe "GET /projects/:project/recipes/:id/runs" do
     test "lists newest first without steps, with a public key", ctx do
       runs =
         for {name, offset} <- [{"a", -30}, {"b", -20}, {"c", -10}] do
@@ -336,7 +470,11 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
           )
         end
 
-      body = ctx.pk_conn |> get(~p"/api/v1/recipes/#{ctx.recipe.id}/runs") |> json_response(200)
+      body =
+        ctx.pk_conn
+        |> get(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs")
+        |> json_response(200)
+
       assert_schema(body, "RunListResponse", ApiSpec.spec())
       assert Enum.map(body["data"], & &1["id"]) == runs |> Enum.reverse() |> Enum.map(& &1.id)
       refute Enum.any?(body["data"], &Map.has_key?(&1, "steps"))
@@ -356,7 +494,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
         end
         |> Enum.reverse()
 
-      path = ~p"/api/v1/recipes/#{ctx.recipe.id}/runs"
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs"
       page1 = ctx.pk_conn |> get(path, %{"limit" => "2"}) |> json_response(200)
       assert_schema(page1, "RunListResponse", ApiSpec.spec())
       assert Enum.map(page1["data"], & &1["id"]) == Enum.slice(ids, 0, 2)
@@ -389,13 +527,17 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
       for i <- 1..51,
           do: run_fixture(ctx.account, ctx.recipe, sprite_name: "d#{i}", status: "failed")
 
-      body = ctx.pk_conn |> get(~p"/api/v1/recipes/#{ctx.recipe.id}/runs") |> json_response(200)
+      body =
+        ctx.pk_conn
+        |> get(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs")
+        |> json_response(200)
+
       assert length(body["data"]) == 50
       assert body["next_cursor"]
     end
 
     test "an invalid limit or cursor is 422", ctx do
-      path = ~p"/api/v1/recipes/#{ctx.recipe.id}/runs"
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs"
 
       for params <- [
             %{"limit" => "0"},
@@ -410,8 +552,33 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
 
     test "other accounts get 404", ctx do
       assert ctx.other_conn
-             |> get(~p"/api/v1/recipes/#{ctx.recipe.id}/runs")
+             |> get(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs")
              |> json_response(404)
+    end
+
+    test "another project of the account, or a missing project, is 404", ctx do
+      run_fixture(ctx.account, ctx.recipe, status: "succeeded")
+
+      assert ctx.pk_conn
+             |> get(~p"/api/v1/projects/#{ctx.sibling.slug}/recipes/#{ctx.recipe.id}/runs")
+             |> json_response(404)
+
+      assert ctx.pk_conn
+             |> get(~p"/api/v1/projects/missing/recipes/#{ctx.recipe.id}/runs")
+             |> json_response(404)
+    end
+
+    test "an invalid project segment is 422", ctx do
+      body =
+        ctx.pk_conn
+        |> get(~p"/api/v1/projects/GoodCases/recipes/#{ctx.recipe.id}/runs")
+        |> json_response(422)
+
+      assert body["errors"]["project"]
+    end
+
+    test "the unscoped route is gone", ctx do
+      assert ctx.pk_conn |> get("/api/v1/recipes/#{ctx.recipe.id}/runs") |> unscoped_404()
     end
   end
 
@@ -476,7 +643,11 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
         )
 
       show = ctx.sk_conn |> get(~p"/api/v1/runs/#{run.id}") |> json_response(200)
-      index = ctx.sk_conn |> get(~p"/api/v1/recipes/#{ctx.recipe.id}/runs") |> json_response(200)
+
+      index =
+        ctx.sk_conn
+        |> get(~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs")
+        |> json_response(200)
 
       for data <- [show["data"] | index["data"]],
           key <- ~w(owner_id pgflow_run_id plan action_started_at reaper_checked_at account_id) do
@@ -484,6 +655,28 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
       end
 
       refute Jason.encode!(show) =~ run.owner_id
+    end
+
+    test "runs render their recipe's project slug, null once the recipe is deleted", ctx do
+      run = run_fixture(ctx.account, ctx.recipe, status: "succeeded")
+      slug = ctx.project.slug
+
+      show = ctx.pk_conn |> get(~p"/api/v1/runs/#{run.id}") |> json_response(200)
+      assert_schema(show, "RunResponse", ApiSpec.spec())
+      assert show["data"]["project"] == slug
+
+      index =
+        ctx.pk_conn
+        |> get(~p"/api/v1/projects/#{slug}/recipes/#{ctx.recipe.id}/runs")
+        |> json_response(200)
+
+      assert [%{"project" => ^slug}] = index["data"]
+
+      :ok = GoodFlows.Spry.delete_recipe(ctx.account, ctx.project, ctx.recipe.id)
+
+      show = ctx.pk_conn |> get(~p"/api/v1/runs/#{run.id}") |> json_response(200)
+      assert_schema(show, "RunResponse", ApiSpec.spec())
+      assert %{"project" => nil, "recipe_id" => nil} = show["data"]
     end
 
     test "other accounts and unknown ids get 404", ctx do
@@ -498,7 +691,7 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
     assert %OpenApiSpex.OpenApi{} = spec
 
     doc = conn |> get(~p"/api/v1/openapi") |> json_response(200)
-    responses = doc["paths"]["/api/v1/recipes/{id}/runs"]["post"]["responses"]
+    responses = doc["paths"]["/api/v1/projects/{project}/recipes/{id}/runs"]["post"]["responses"]
     assert Map.has_key?(responses, "200")
     assert Map.has_key?(responses, "202")
     assert Map.has_key?(responses, "409")
@@ -506,10 +699,12 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
     assert responses["409"]["content"]["application/json"]["schema"]["$ref"] =~
              "RunConflictResponse"
 
-    params = doc["paths"]["/api/v1/recipes/{id}/runs"]["get"]["parameters"]
+    params = doc["paths"]["/api/v1/projects/{project}/recipes/{id}/runs"]["get"]["parameters"]
+    assert Enum.any?(params, &(&1["name"] == "project" and &1["in"] == "path"))
     assert Enum.any?(params, &(&1["name"] == "limit" and &1["in"] == "query"))
     assert Enum.any?(params, &(&1["name"] == "cursor" and &1["in"] == "query"))
     assert doc["paths"]["/api/v1/runs/{id}"]["get"]
+    refute doc["paths"]["/api/v1/recipes/{id}/runs"]
 
     for name <-
           ~w(Recipe RecipeRequest RunRequest Run RunStep RunPlan ConflictResponse RunConflictResponse SpritesCredentialStatus) do

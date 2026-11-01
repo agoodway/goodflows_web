@@ -16,9 +16,10 @@ defmodule GoodFlows.Spry.RunJobTest do
   setup do
     account = account_fixture()
     credential_fixture(account, @token)
+    project = project_fixture(account)
 
     recipe =
-      recipe_fixture(account, %{
+      recipe_fixture(project, %{
         "name" => "app-{{branch_slug}}",
         "setup" => ["echo s1 {{sprite}}", "echo s2"],
         "start" => ["echo start"],
@@ -26,7 +27,7 @@ defmodule GoodFlows.Spry.RunJobTest do
         "teardown" => ["echo t1"]
       })
 
-    %{account: account, recipe: recipe, test_pid: self()}
+    %{account: account, project: project, recipe: recipe, test_pid: self()}
   end
 
   defp queued_run(account, recipe, params) do
@@ -287,7 +288,7 @@ defmodule GoodFlows.Spry.RunJobTest do
 
   test "a middle step failure fails fast", ctx do
     {:ok, recipe} =
-      Spry.replace_recipe(ctx.account, ctx.recipe.id, %{
+      Spry.replace_recipe(ctx.account, ctx.project, ctx.recipe.id, %{
         "name" => "three",
         "start" => ["a", "b", "c"]
       })
@@ -344,7 +345,10 @@ defmodule GoodFlows.Spry.RunJobTest do
     lines = for i <- 1..12, do: "step #{i}"
 
     {:ok, recipe} =
-      Spry.replace_recipe(ctx.account, ctx.recipe.id, %{"name" => "slow", "start" => lines})
+      Spry.replace_recipe(ctx.account, ctx.project, ctx.recipe.id, %{
+        "name" => "slow",
+        "start" => lines
+      })
 
     # Each step takes 250ms (under the 300ms step timeout); a budget-limited
     # timeout below that behaves like the wrapper's deadline.
@@ -441,7 +445,7 @@ defmodule GoodFlows.Spry.RunJobTest do
     run = queued_run(ctx.account, ctx.recipe, %{"phase" => "setup"})
 
     {:ok, _} =
-      Spry.replace_recipe(ctx.account, ctx.recipe.id, %{
+      Spry.replace_recipe(ctx.account, ctx.project, ctx.recipe.id, %{
         "name" => "renamed",
         "setup" => ["rm -rf /"]
       })

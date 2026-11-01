@@ -1,7 +1,9 @@
 defmodule GoodFlows.Spry.Recipe do
   @moduledoc """
-  An account's Spry recipe: a sprite `name` template plus the in-VM shell
+  A project's Spry recipe: a sprite `name` template plus the in-VM shell
   lines for each lifecycle phase (`setup`, `start`, `stop`, `teardown`).
+  It belongs to one `GoodFlows.Projects.Project` (and that project's
+  account); the project comes from the URL, never from the body.
 
   Phase lists are validated from the raw params before casting so that host
   steps (`{host: …}` maps or any other non-string item) get an explicit error
@@ -11,16 +13,23 @@ defmodule GoodFlows.Spry.Recipe do
   Each phase list holds at most 500 items of at most 10,000 characters, and
   `name` is at most 255 characters.
 
-  The `name` is the sprite name template, and it is unique per account: two
-  recipes of an account can never share a template, so a recipe identifies
-  the sprites it drives. Its literal text must be able to form a valid
-  sprite name (`GoodFlows.Spry.Template.valid_name_template?/1`); the
+  The `name` is the sprite name template, and it is unique per project: two
+  recipes of one project can never share a template. That is not VM
+  isolation. Sprite names are global to the account's Sprites credential, so
+  recipes in different projects of one account may share a template and then
+  drive the same sprite: one project's `teardown` can destroy a VM another
+  project set up. The account-wide one-active-run-per-sprite guard only stops
+  their runs from overlapping. (Sprite names are also global to the Sprites
+  token itself, so two accounts storing one token, or the `spry` CLI using
+  it, can collide in the same way.) Its literal text must be able to form a
+  valid sprite name (`GoodFlows.Spry.Template.valid_name_template?/1`); the
   expanded name is checked again when a run is planned.
   """
   use Ecto.Schema
   import Ecto.Changeset
 
   alias GoodFlows.Accounts.Account
+  alias GoodFlows.Projects.Project
   alias GoodFlows.Spry.Template
 
   @type t :: %__MODULE__{}
@@ -43,6 +52,7 @@ defmodule GoodFlows.Spry.Recipe do
     field :teardown, {:array, :string}, default: []
 
     belongs_to :account, Account
+    belongs_to :project, Project
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -54,8 +64,9 @@ defmodule GoodFlows.Spry.Recipe do
   @doc """
   Builds a full-replacement changeset: omitted phase lists become empty
   lists and an omitted `name` is an error (even when replacing a recipe that
-  already has one). Rejects `org`, host steps, blank items, and unknown
-  placeholders.
+  already has one). Rejects `org`, `project`, host steps, blank items, and
+  unknown placeholders. `account_id` and `project_id` are never cast; the
+  caller sets them from the URL's project.
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(recipe, attrs) do
@@ -68,13 +79,15 @@ defmodule GoodFlows.Spry.Recipe do
     |> validate_length(:name, max: @max_name_length)
     |> add_errors(phase_errors)
     |> validate_no_org(attrs)
+    |> validate_no_project(attrs)
     |> validate_name_placeholders()
     |> validate_name_format()
     |> validate_line_placeholders(phase_values)
     |> unique_constraint(:name,
-      name: :recipes_account_id_name_index,
-      message: "has already been taken by another recipe in this account"
+      name: :recipes_project_id_name_index,
+      message: "has already been taken by another recipe in this project"
     )
+    |> foreign_key_constraint(:project_id, name: :recipes_project_id_fkey)
   end
 
   defp validate_phases(attrs) do
@@ -146,6 +159,14 @@ defmodule GoodFlows.Spry.Recipe do
         :org,
         "is not supported; the Sprites organization comes from the account's Sprites credential"
       )
+    else
+      changeset
+    end
+  end
+
+  defp validate_no_project(changeset, attrs) do
+    if Map.has_key?(attrs, "project") do
+      add_error(changeset, :project, "is not supported; the project comes from the URL")
     else
       changeset
     end

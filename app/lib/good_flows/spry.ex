@@ -1,16 +1,20 @@
 defmodule GoodFlows.Spry do
   @moduledoc """
-  Hosted Spry: account-scoped recipes, the account's Sprites credential, and
+  Hosted Spry: project-scoped recipes, the account's Sprites credential, and
   runs that drive a recipe phase against a Sprite VM.
 
   Every function takes the owning account and scopes its queries by
   `account_id`; records of other accounts are reported as `:not_found`.
+  Recipe functions, and starting or listing a recipe's runs, also take the
+  `GoodFlows.Projects.Project` from the URL and treat a recipe of another
+  project as `:not_found`. Sprite admission stays account-wide.
   """
   import Ecto.Query
 
   require Logger
 
   alias GoodFlows.Accounts.Account
+  alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
   alias GoodFlows.Spry.{Plan, Recipe, Run, RunJob, Sprites, SpritesCredential}
 
@@ -21,39 +25,55 @@ defmodule GoodFlows.Spry do
 
   ## Recipes
 
-  @doc "Lists the account's recipes ordered by name."
-  @spec list_recipes(Account.t()) :: [Recipe.t()]
-  def list_recipes(%Account{id: account_id}) do
+  @doc "Lists the project's recipes ordered by name."
+  @spec list_recipes(Account.t(), Project.t()) :: [Recipe.t()]
+  def list_recipes(%Account{id: account_id}, %Project{id: project_id} = project) do
     Recipe
-    |> where(account_id: ^account_id)
+    |> where(account_id: ^account_id, project_id: ^project_id)
     |> order_by([r], asc: r.name, asc: r.inserted_at)
     |> Repo.all()
+    |> Enum.map(&with_project(&1, project))
   end
 
-  @doc "Fetches one of the account's recipes."
-  @spec get_recipe(Account.t(), term()) :: {:ok, Recipe.t()} | {:error, :not_found}
-  def get_recipe(%Account{id: account_id}, id) do
+  @doc """
+  Fetches one of the project's recipes. A recipe of another project (even
+  of the same account) or another account is `:not_found`.
+  """
+  @spec get_recipe(Account.t(), Project.t(), term()) :: {:ok, Recipe.t()} | {:error, :not_found}
+  def get_recipe(%Account{id: account_id}, %Project{id: project_id} = project, id) do
     with {:ok, id} <- cast_id(id),
-         %Recipe{} = recipe <- Repo.get_by(Recipe, id: id, account_id: account_id) do
-      {:ok, recipe}
+         %Recipe{} = recipe <-
+           Repo.get_by(Recipe, id: id, account_id: account_id, project_id: project_id) do
+      {:ok, with_project(recipe, project)}
     else
       _ -> {:error, :not_found}
     end
   end
 
-  @doc "Creates a recipe for the account."
-  @spec create_recipe(Account.t(), map()) :: {:ok, Recipe.t()} | {:error, Ecto.Changeset.t()}
-  def create_recipe(%Account{id: account_id}, attrs) do
-    %Recipe{account_id: account_id}
+  @doc """
+  Creates a recipe in the project. `account_id` and `project_id` come from
+  the project, never from `attrs`; a project deleted meanwhile is
+  `:not_found`.
+  """
+  @spec create_recipe(Account.t(), Project.t(), map()) ::
+          {:ok, Recipe.t()} | {:error, :not_found | Ecto.Changeset.t()}
+  def create_recipe(%Account{id: account_id}, %Project{account_id: account_id} = project, attrs) do
+    %Recipe{account_id: project.account_id, project_id: project.id}
     |> Recipe.changeset(attrs)
     |> Repo.insert()
+    |> case do
+      {:ok, recipe} -> {:ok, with_project(recipe, project)}
+      {:error, changeset} -> changeset_or_not_found(changeset)
+    end
   end
 
-  @doc "Replaces a recipe wholesale; omitted phase lists become empty."
-  @spec replace_recipe(Account.t(), term(), map()) ::
+  def create_recipe(%Account{}, %Project{}, _attrs), do: {:error, :not_found}
+
+  @doc "Replaces a recipe wholesale; omitted phase lists become empty. The project never changes."
+  @spec replace_recipe(Account.t(), Project.t(), term(), map()) ::
           {:ok, Recipe.t()} | {:error, :not_found | Ecto.Changeset.t()}
-  def replace_recipe(%Account{} = account, id, attrs) do
-    with {:ok, recipe} <- get_recipe(account, id) do
+  def replace_recipe(%Account{} = account, %Project{} = project, id, attrs) do
+    with {:ok, recipe} <- get_recipe(account, project, id) do
       recipe
       |> Recipe.changeset(attrs)
       |> Repo.update()
@@ -63,15 +83,19 @@ defmodule GoodFlows.Spry do
   @doc """
   Deletes a recipe unless it has a queued or running run.
 
-  Takes the same account-scoped `FOR UPDATE` lock on the recipe row as run
-  admission, so a concurrent admission either commits first (deletion then
-  returns `{:error, :active_run}`) or waits and then finds the recipe gone.
+  The recipe must belong to the project (checked before locking; a
+  recipe's project never changes). It then takes the same account-scoped
+  `FOR UPDATE` lock on the recipe row as run admission, so a concurrent
+  admission either commits first (deletion then returns
+  `{:error, :active_run}`) or waits and then finds the recipe gone.
   Finished runs survive with `recipe_id` set to `nil`.
   """
-  @spec delete_recipe(Account.t(), term()) :: :ok | {:error, :not_found | :active_run}
-  def delete_recipe(%Account{} = account, id) do
+  @spec delete_recipe(Account.t(), Project.t(), term()) ::
+          :ok | {:error, :not_found | :active_run}
+  def delete_recipe(%Account{} = account, %Project{} = project, id) do
     Repo.transact(fn ->
-      with {:ok, recipe} <- lock_recipe(account, id),
+      with {:ok, recipe} <- get_recipe(account, project, id),
+           {:ok, recipe} <- lock_recipe(account, recipe.id),
            :ok <- ensure_no_active_run(recipe) do
         Repo.delete!(recipe)
         {:ok, :deleted}
@@ -81,6 +105,14 @@ defmodule GoodFlows.Spry do
       {:ok, :deleted} -> :ok
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp with_project(%Recipe{} = recipe, %Project{} = project), do: %{recipe | project: project}
+
+  defp changeset_or_not_found(%Ecto.Changeset{errors: errors} = changeset) do
+    if Keyword.has_key?(errors, :project_id),
+      do: {:error, :not_found},
+      else: {:error, changeset}
   end
 
   defp lock_recipe(%Account{id: account_id}, id) do
@@ -168,7 +200,7 @@ defmodule GoodFlows.Spry do
   @default_page_size 50
   @max_page_size 200
 
-  # The columns `GET /recipes/:id/runs` renders; the plan snapshot and
+  # The columns `GET /projects/:project/recipes/:id/runs` renders; the plan snapshot and
   # worker bookkeeping are never loaded for listings.
   @list_fields [
     :id,
@@ -201,8 +233,9 @@ defmodule GoodFlows.Spry do
           | {:enqueue_failed, term()}
 
   @doc """
-  Handles `POST /recipes/:id/runs`, the single entry point for dry runs and
-  real runs: validates the request with `Plan.build/2` (pure, so request
+  Handles `POST /projects/:project/recipes/:id/runs`, the single entry point for dry runs and
+  real runs: loads the project's recipe (another project's recipe is
+  `:not_found` before any credential lookup or Sprites call), validates the request with `Plan.build/2` (pure, so request
   errors win over a missing credential), then either dry-runs it or admits
   a real run.
 
@@ -227,11 +260,11 @@ defmodule GoodFlows.Spry do
 
   Options: `:started_by_api_key_id`, recorded on an admitted run.
   """
-  @spec request_run(Account.t(), term(), map(), keyword()) ::
+  @spec request_run(Account.t(), Project.t(), term(), map(), keyword()) ::
           {:ok, {:plan, dry_run_result()} | {:run, Run.t()}}
           | {:error, start_error()}
-  def request_run(%Account{} = account, recipe_id, params, opts \\ []) do
-    with {:ok, recipe} <- get_recipe(account, recipe_id),
+  def request_run(%Account{} = account, %Project{} = project, recipe_id, params, opts \\ []) do
+    with {:ok, recipe} <- get_recipe(account, project, recipe_id),
          {:ok, plan} <- Plan.build(recipe, params) do
       dispatch(account, recipe, plan, params, opts)
     end
@@ -241,7 +274,12 @@ defmodule GoodFlows.Spry do
     do: tag(plan_dry_run(account, plan), :plan)
 
   defp dispatch(account, recipe, _plan, params, opts),
-    do: tag(admit_run(account, recipe, params, opts), :run)
+    do: tag(with_recipe(admit_run(account, recipe, params, opts), recipe), :run)
+
+  # Sets the run's `recipe` (whose `project` is already set) so the JSON
+  # view can render the project slug without another query.
+  defp with_recipe({:ok, %Run{} = run}, recipe), do: {:ok, %{run | recipe: recipe}}
+  defp with_recipe(error, _recipe), do: error
 
   defp tag({:ok, value}, tag), do: {:ok, {tag, value}}
   defp tag({:error, _reason} = error, _tag), do: error
@@ -387,12 +425,16 @@ defmodule GoodFlows.Spry do
     |> Repo.one()
   end
 
-  @doc "Fetches one of the account's runs with its steps in order."
+  @doc """
+  Fetches one of the account's runs with its steps in order and its recipe
+  and that recipe's project preloaded (`recipe` is `nil` once the recipe is
+  deleted).
+  """
   @spec get_run(Account.t(), term()) :: {:ok, Run.t()} | {:error, :not_found}
   def get_run(%Account{id: account_id}, id) do
     with {:ok, id} <- cast_id(id),
          %Run{} = run <- Repo.get_by(Run, id: id, account_id: account_id) do
-      {:ok, Repo.preload(run, :steps)}
+      {:ok, Repo.preload(run, [:steps, recipe: :project])}
     else
       _ -> {:error, :not_found}
     end
@@ -402,7 +444,7 @@ defmodule GoodFlows.Spry do
   @type run_page :: %{runs: [Run.t()], next_cursor: String.t() | nil}
 
   @doc """
-  Lists one page of a recipe's runs, newest first, without steps and
+  Lists one page of a project recipe's runs, newest first, without steps and
   loading only the rendered columns.
 
   Params (string keys, as from a query string): `"limit"` (1 to
@@ -411,10 +453,10 @@ defmodule GoodFlows.Spry do
   `(inserted_at, id)`, so runs started meanwhile never shift a page.
   Invalid params return a changeset (`422`).
   """
-  @spec list_runs(Account.t(), term(), map()) ::
+  @spec list_runs(Account.t(), Project.t(), term(), map()) ::
           {:ok, run_page()} | {:error, :not_found | Ecto.Changeset.t()}
-  def list_runs(%Account{} = account, recipe_id, params \\ %{}) do
-    with {:ok, recipe} <- get_recipe(account, recipe_id),
+  def list_runs(%Account{} = account, %Project{} = project, recipe_id, params \\ %{}) do
+    with {:ok, recipe} <- get_recipe(account, project, recipe_id),
          {:ok, %{limit: limit, cursor: cursor}} <- page_params(params) do
       runs =
         Run
@@ -427,7 +469,9 @@ defmodule GoodFlows.Spry do
 
       {page, rest} = Enum.split(runs, limit)
       next_cursor = if rest != [], do: encode_cursor(List.last(page))
-      {:ok, %{runs: page, next_cursor: next_cursor}}
+      # Every run on the page belongs to `recipe` (whose `project` is set),
+      # so the association is set without a query per run.
+      {:ok, %{runs: Enum.map(page, &%{&1 | recipe: recipe}), next_cursor: next_cursor}}
     end
   end
 

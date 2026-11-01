@@ -21,6 +21,7 @@ defmodule GoodFlows.Spry.ConcurrencyTest do
     compile_jobs!()
 
     account = account_fixture()
+    project = project_fixture(account)
     credential_fixture(account)
     user = user_fixture()
     account_user = account_user_fixture(account, user, :owner)
@@ -28,7 +29,7 @@ defmodule GoodFlows.Spry.ConcurrencyTest do
 
     on_exit(fn ->
       :ok = Sandbox.checkout(Repo, sandbox: false)
-      # Accounts cascade to recipes, credentials, runs, and memberships
+      # Accounts cascade to projects, recipes, credentials, runs, and memberships
       # (and memberships to API keys); users are removed explicitly.
       Repo.delete_all(from k in GoodFlows.Accounts.ApiKey, where: k.id == ^api_key.id)
 
@@ -43,7 +44,7 @@ defmodule GoodFlows.Spry.ConcurrencyTest do
       Sandbox.checkin(Repo)
     end)
 
-    %{account: account, user: user, api_key: api_key}
+    %{account: account, project: project, user: user, api_key: api_key}
   end
 
   defp async_db(fun) do
@@ -72,11 +73,12 @@ defmodule GoodFlows.Spry.ConcurrencyTest do
 
   test "concurrent admissions for one sprite admit exactly one run", %{
     account: account,
+    project: project,
     api_key: api_key
   } do
     # Separate recipes share no row lock, so the inserts genuinely race on the
     # partial unique index.
-    recipes = for i <- 1..4, do: recipe_fixture(account, %{"name" => "r#{i}", "setup" => []})
+    recipes = for i <- 1..4, do: recipe_fixture(project, %{"name" => "r#{i}", "setup" => []})
 
     results =
       recipes
@@ -84,7 +86,7 @@ defmodule GoodFlows.Spry.ConcurrencyTest do
         async_db(fn ->
           receive do
             :go ->
-              start_run(account, recipe.id, %{"phase" => "setup", "sprite" => "shared"},
+              start_run(account, project, recipe.id, %{"phase" => "setup", "sprite" => "shared"},
                 started_by_api_key_id: api_key.id
               )
           end
@@ -104,8 +106,8 @@ defmodule GoodFlows.Spry.ConcurrencyTest do
   end
 
   describe "deletion and admission serialize on the recipe row" do
-    setup %{account: account} do
-      recipe = recipe_fixture(account, %{"name" => "locked", "setup" => ["echo"]})
+    setup %{project: project} do
+      recipe = recipe_fixture(project, %{"name" => "locked", "setup" => ["echo"]})
       test_pid = self()
 
       holder =
@@ -126,10 +128,12 @@ defmodule GoodFlows.Spry.ConcurrencyTest do
 
     test "admission first: deletion returns active_run", ctx do
       admission =
-        async_db(fn -> start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup"}) end)
+        async_db(fn ->
+          start_run(ctx.account, ctx.project, ctx.recipe.id, %{"phase" => "setup"})
+        end)
 
       wait_for_lock_waiters(1)
-      deletion = async_db(fn -> Spry.delete_recipe(ctx.account, ctx.recipe.id) end)
+      deletion = async_db(fn -> Spry.delete_recipe(ctx.account, ctx.project, ctx.recipe.id) end)
       wait_for_lock_waiters(2)
 
       send(ctx.holder.pid, :release)
@@ -137,15 +141,17 @@ defmodule GoodFlows.Spry.ConcurrencyTest do
 
       assert {:ok, %Run{status: "queued"}} = Task.await(admission)
       assert Task.await(deletion) == {:error, :active_run}
-      assert {:ok, _} = Spry.get_recipe(ctx.account, ctx.recipe.id)
+      assert {:ok, _} = Spry.get_recipe(ctx.account, ctx.project, ctx.recipe.id)
     end
 
     test "deletion first: admission returns not_found", ctx do
-      deletion = async_db(fn -> Spry.delete_recipe(ctx.account, ctx.recipe.id) end)
+      deletion = async_db(fn -> Spry.delete_recipe(ctx.account, ctx.project, ctx.recipe.id) end)
       wait_for_lock_waiters(1)
 
       admission =
-        async_db(fn -> start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup"}) end)
+        async_db(fn ->
+          start_run(ctx.account, ctx.project, ctx.recipe.id, %{"phase" => "setup"})
+        end)
 
       wait_for_lock_waiters(2)
 

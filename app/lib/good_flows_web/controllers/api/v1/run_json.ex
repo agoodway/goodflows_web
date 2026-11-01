@@ -3,12 +3,16 @@ defmodule GoodFlowsWeb.Api.V1.RunJSON do
   Renders runs, run steps, and dry-run plans for the JSON API.
 
   Worker bookkeeping (`owner_id`, `pgflow_run_id`, `action_started_at`,
-  `reaper_checked_at`) and the stored `plan` are never rendered. Step
+  `reaper_checked_at`) and the stored `plan` are never rendered. `project`
+  is the slug of the run's recipe's project, read from the `recipe` and
+  `project` associations that `GoodFlows.Spry` sets or preloads (no Repo
+  call here); it is `null` once the recipe has been deleted. Step
   `command` and `output` are rendered only when `full_steps?` is true
   (private keys), because step lines and their output can carry secrets.
   """
 
-  alias GoodFlows.Spry.{Run, RunStep}
+  alias GoodFlows.Projects.Project
+  alias GoodFlows.Spry.{Recipe, Run, RunStep}
 
   @run_fields [
     :id,
@@ -71,7 +75,17 @@ defmodule GoodFlowsWeb.Api.V1.RunJSON do
     }
   end
 
-  defp run(%Run{} = run), do: Map.take(run, @run_fields)
+  defp run(%Run{} = run), do: run |> Map.take(@run_fields) |> Map.put(:project, project(run))
+
+  defp project(%Run{recipe: %Recipe{project: %Project{slug: slug}}}), do: slug
+  defp project(%Run{recipe: nil}), do: nil
+  defp project(%Run{recipe_id: nil}), do: nil
+
+  defp project(%Run{id: id}) do
+    raise ArgumentError,
+          "cannot render run #{inspect(id)}: its recipe and the recipe's project " <>
+            "must be preloaded"
+  end
 
   defp step(%RunStep{} = step, true), do: Map.take(step, @step_fields ++ @private_step_fields)
   defp step(%RunStep{} = step, false), do: Map.take(step, @step_fields)

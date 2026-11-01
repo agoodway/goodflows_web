@@ -2,6 +2,7 @@ defmodule GoodFlows.Spry.RecipeTest do
   use GoodFlows.DataCase, async: true
 
   import GoodFlows.AccountsFixtures
+  import GoodFlows.SpryFixtures
 
   alias GoodFlows.Spry
   alias GoodFlows.Spry.Recipe
@@ -97,6 +98,21 @@ defmodule GoodFlows.Spry.RecipeTest do
     assert message =~ "not supported"
   end
 
+  test "rejects a project body key on create and replace" do
+    assert %{project: [message]} = errors_on(changeset(%{"name" => "x", "project" => "other"}))
+    assert message =~ "comes from the URL"
+
+    assert %{project: [_]} =
+             errors_on(Recipe.changeset(%Recipe{name: "x"}, %{"name" => "x", "project" => nil}))
+  end
+
+  test "does not cast project_id or account_id from attrs" do
+    project_id = Ecto.UUID.generate()
+    cs = changeset(%{"name" => "x", "project_id" => project_id, "account_id" => project_id})
+    refute Map.has_key?(cs.changes, :project_id)
+    refute Map.has_key?(cs.changes, :account_id)
+  end
+
   describe "placeholders" do
     test "rejects unknown placeholders in a step, naming it and the phase" do
       errors = errors_on(changeset(%{"name" => "x", "start" => ["echo {{foo}}"]}))
@@ -124,17 +140,32 @@ defmodule GoodFlows.Spry.RecipeTest do
   end
 
   describe "uniqueness" do
-    test "names are unique per account" do
+    test "names are unique per project" do
       account = account_fixture()
-      assert {:ok, _} = Spry.create_recipe(account, %{"name" => "myapp-{{branch_slug}}"})
+      project = project_fixture(account)
+      assert {:ok, _} = Spry.create_recipe(account, project, %{"name" => "myapp-{{branch_slug}}"})
 
-      assert {:error, cs} = Spry.create_recipe(account, %{"name" => "myapp-{{branch_slug}}"})
-      assert %{name: [_]} = errors_on(cs)
+      assert {:error, cs} =
+               Spry.create_recipe(account, project, %{"name" => "myapp-{{branch_slug}}"})
+
+      assert %{name: ["has already been taken by another recipe in this project"]} =
+               errors_on(cs)
+    end
+
+    test "the same name is allowed in another project of the account" do
+      account = account_fixture()
+      goodcases = project_fixture(account)
+      other = project_fixture(account, %{"slug" => "other"})
+
+      assert {:ok, _} = Spry.create_recipe(account, goodcases, %{"name" => "demo"})
+      assert {:ok, _} = Spry.create_recipe(account, other, %{"name" => "demo"})
     end
 
     test "the same name is allowed in another account" do
-      assert {:ok, _} = Spry.create_recipe(account_fixture(), %{"name" => "demo"})
-      assert {:ok, _} = Spry.create_recipe(account_fixture(), %{"name" => "demo"})
+      for account <- [account_fixture(), account_fixture()] do
+        assert {:ok, _} =
+                 Spry.create_recipe(account, project_fixture(account), %{"name" => "demo"})
+      end
     end
   end
 

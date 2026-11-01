@@ -14,16 +14,18 @@ defmodule GoodFlows.Spry.RunsContextTest do
   setup do
     account = account_fixture()
     credential_fixture(account)
+    project = project_fixture(account)
+    sibling = project_fixture(account, %{"slug" => "other"})
 
     recipe =
-      recipe_fixture(account, %{
+      recipe_fixture(project, %{
         "name" => "app-{{branch_slug}}",
         "setup" => ["echo setup {{sprite}}", "echo two"],
         "start" => ["echo start"],
         "teardown" => ["echo bye"]
       })
 
-    %{account: account, recipe: recipe}
+    %{account: account, project: project, sibling: sibling, recipe: recipe}
   end
 
   defp reject_mutations do
@@ -32,16 +34,17 @@ defmodule GoodFlows.Spry.RunsContextTest do
     reject(&Wrapper.destroy/3)
   end
 
-  describe "request_run/4 dry run" do
+  describe "request_run/5 dry run" do
     test "setup with a missing VM plans create then the lines", %{
       account: account,
+      project: project,
       recipe: recipe
     } do
       expect(Wrapper, :exists?, fn _client, "app-feat-x", _opts -> {:ok, false} end)
       reject_mutations()
 
       assert {:ok, %{sprite_exists: false, steps: steps, plan: plan}} =
-               dry_run(account, recipe.id, %{"phase" => "setup", "branch" => "feat/x"})
+               dry_run(account, project, recipe.id, %{"phase" => "setup", "branch" => "feat/x"})
 
       assert plan.sprite_name == "app-feat-x"
 
@@ -59,10 +62,13 @@ defmodule GoodFlows.Spry.RunsContextTest do
       reject_mutations()
 
       assert {:ok, %{steps: [%{kind: "exec"}, %{kind: "destroy"}]}} =
-               dry_run(ctx.account, ctx.recipe.id, %{"phase" => "teardown", "branch" => "x"})
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "teardown",
+                 "branch" => "x"
+               })
 
       assert {:ok, %{steps: [%{kind: "exec"}]}} =
-               dry_run(ctx.account, ctx.recipe.id, %{
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{
                  "phase" => "teardown",
                  "branch" => "x",
                  "no_destroy" => true
@@ -74,12 +80,15 @@ defmodule GoodFlows.Spry.RunsContextTest do
       reject_mutations()
 
       assert {:error, {:unprocessable, message}} =
-               dry_run(ctx.account, ctx.recipe.id, %{"phase" => "start", "branch" => "x"})
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "start",
+                 "branch" => "x"
+               })
 
       assert message =~ "does not exist"
 
       assert {:error, {:unprocessable, message}} =
-               dry_run(ctx.account, ctx.recipe.id, %{
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{
                  "phase" => "setup",
                  "branch" => "x",
                  "no_create" => true
@@ -94,7 +103,10 @@ defmodule GoodFlows.Spry.RunsContextTest do
       end)
 
       assert {:error, {:unprocessable, message}} =
-               dry_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "setup",
+                 "branch" => "x"
+               })
 
       assert message =~ "unauthorized"
     end
@@ -106,7 +118,10 @@ defmodule GoodFlows.Spry.RunsContextTest do
       end)
 
       assert {:ok, _} =
-               dry_run(ctx.account, ctx.recipe.id, %{"phase" => "start", "branch" => "x"})
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "start",
+                 "branch" => "x"
+               })
     end
 
     test "an invalid phase is reported before a missing credential", ctx do
@@ -114,27 +129,45 @@ defmodule GoodFlows.Spry.RunsContextTest do
       Spry.delete_credential(ctx.account)
 
       assert {:error, %Ecto.Changeset{} = cs} =
-               dry_run(ctx.account, ctx.recipe.id, %{"phase" => "deploy"})
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{"phase" => "deploy"})
 
       assert %{phase: [_]} = errors_on(cs)
+    end
+
+    test "a recipe under another project is not found before any lookup", ctx do
+      reject(&Wrapper.exists?/3)
+      reject_mutations()
+      # Without a credential a matching recipe would fail with `:unprocessable`;
+      # the project mismatch must win before the credential lookup.
+      Spry.delete_credential(ctx.account)
+
+      assert dry_run(ctx.account, ctx.sibling, ctx.recipe.id, %{
+               "phase" => "setup",
+               "branch" => "x"
+             }) == {:error, :not_found}
+
+      assert Repo.aggregate(Run, :count) == 0
     end
 
     test "requires a credential and valid inputs", ctx do
       reject(&Wrapper.exists?/3)
 
       assert {:error, %Ecto.Changeset{}} =
-               dry_run(ctx.account, ctx.recipe.id, %{"phase" => "setup"})
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{"phase" => "setup"})
 
       Spry.delete_credential(ctx.account)
 
       assert {:error, {:unprocessable, message}} =
-               dry_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
+               dry_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "setup",
+                 "branch" => "x"
+               })
 
       assert message =~ "Sprites credential"
     end
   end
 
-  describe "request_run/4 admission" do
+  describe "request_run/5 admission" do
     setup do
       compile_jobs!()
       reject(&Wrapper.exists?/3)
@@ -142,9 +175,13 @@ defmodule GoodFlows.Spry.RunsContextTest do
       :ok
     end
 
-    test "queues a run with its plan snapshot and job", %{account: account, recipe: recipe} do
+    test "queues a run with its plan snapshot and job", %{
+      account: account,
+      project: project,
+      recipe: recipe
+    } do
       assert {:ok, run} =
-               start_run(account, recipe.id, %{"phase" => "setup", "branch" => "feat/x"})
+               start_run(account, project, recipe.id, %{"phase" => "setup", "branch" => "feat/x"})
 
       assert run.status == "queued"
       assert run.sprite_name == "app-feat-x"
@@ -154,11 +191,11 @@ defmodule GoodFlows.Spry.RunsContextTest do
       assert queued_job_messages() == 1
     end
 
-    test "requires a credential", %{account: account, recipe: recipe} do
+    test "requires a credential", %{account: account, project: project, recipe: recipe} do
       Spry.delete_credential(account)
 
       assert {:error, {:unprocessable, message}} =
-               start_run(account, recipe.id, %{"phase" => "setup", "branch" => "x"})
+               start_run(account, project, recipe.id, %{"phase" => "setup", "branch" => "x"})
 
       assert message =~ "Sprites credential"
       assert Repo.aggregate(Run, :count) == 0
@@ -168,23 +205,31 @@ defmodule GoodFlows.Spry.RunsContextTest do
       Spry.delete_credential(ctx.account)
 
       assert {:error, %Ecto.Changeset{} = cs} =
-               start_run(ctx.account, ctx.recipe.id, %{"phase" => "deploy"})
+               start_run(ctx.account, ctx.project, ctx.recipe.id, %{"phase" => "deploy"})
 
       assert %{phase: [_]} = errors_on(cs)
     end
 
-    test "missing inputs fail before anything is created", %{account: account, recipe: recipe} do
+    test "missing inputs fail before anything is created", %{
+      account: account,
+      project: project,
+      recipe: recipe
+    } do
       assert {:error, %Ecto.Changeset{} = cs} =
-               start_run(account, recipe.id, %{"phase" => "setup"})
+               start_run(account, project, recipe.id, %{"phase" => "setup"})
 
       assert %{branch: [_]} = errors_on(cs)
       assert Repo.aggregate(Run, :count) == 0
     end
 
-    test "conflicts with an active run for the same sprite", %{account: account, recipe: recipe} do
+    test "conflicts with an active run for the same sprite", %{
+      account: account,
+      project: project,
+      recipe: recipe
+    } do
       active = run_fixture(account, recipe, sprite_name: "app-feat-x", status: "running")
 
-      assert start_run(account, recipe.id, %{"phase" => "teardown", "branch" => "feat/x"}) ==
+      assert start_run(account, project, recipe.id, %{"phase" => "teardown", "branch" => "feat/x"}) ==
                {:error, {:conflict, active.id}}
 
       assert Repo.aggregate(Run, :count) == 1
@@ -195,13 +240,13 @@ defmodule GoodFlows.Spry.RunsContextTest do
       run_fixture(ctx.account, ctx.recipe, sprite_name: "app-feat-z", status: "failed")
 
       assert {:ok, _} =
-               start_run(ctx.account, ctx.recipe.id, %{
+               start_run(ctx.account, ctx.project, ctx.recipe.id, %{
                  "phase" => "setup",
                  "branch" => "feat/y"
                })
 
       assert {:ok, _} =
-               start_run(ctx.account, ctx.recipe.id, %{
+               start_run(ctx.account, ctx.project, ctx.recipe.id, %{
                  "phase" => "setup",
                  "branch" => "feat/z"
                })
@@ -209,10 +254,10 @@ defmodule GoodFlows.Spry.RunsContextTest do
 
     test "queued plans do not change when the recipe is edited", ctx do
       {:ok, run} =
-        start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
+        start_run(ctx.account, ctx.project, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
 
       {:ok, _} =
-        Spry.replace_recipe(ctx.account, ctx.recipe.id, %{
+        Spry.replace_recipe(ctx.account, ctx.project, ctx.recipe.id, %{
           "name" => "renamed",
           "setup" => ["rm -rf /"]
         })
@@ -229,7 +274,10 @@ defmodule GoodFlows.Spry.RunsContextTest do
       end)
 
       assert {:error, {:enqueue_failed, :boom}} =
-               start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
+               start_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "setup",
+                 "branch" => "x"
+               })
 
       assert Repo.aggregate(Run, :count) == 0
       assert queued_job_messages() == 0
@@ -246,7 +294,10 @@ defmodule GoodFlows.Spry.RunsContextTest do
       end)
 
       assert {:error, %Ecto.Changeset{} = cs} =
-               start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
+               start_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "setup",
+                 "branch" => "x"
+               })
 
       assert %{sprite_name: ["is reserved"]} = errors_on(cs)
       assert Repo.aggregate(Run, :count) == 0
@@ -254,16 +305,20 @@ defmodule GoodFlows.Spry.RunsContextTest do
 
     test "records the API key that started the run", ctx do
       assert {:ok, %Run{started_by_api_key_id: nil}} =
-               start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
+               start_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "setup",
+                 "branch" => "x"
+               })
 
       user = user_fixture()
       account_user = account_user_fixture(ctx.account, user, :owner)
       {api_key, _token} = api_key_fixture(account_user, %{type: :private})
 
+      params = %{"phase" => "setup", "branch" => "y"}
+      opts = [started_by_api_key_id: api_key.id]
+
       assert {:ok, %Run{started_by_api_key_id: id}} =
-               start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "y"},
-                 started_by_api_key_id: api_key.id
-               )
+               start_run(ctx.account, ctx.project, ctx.recipe.id, params, opts)
 
       assert id == api_key.id
     end
@@ -274,7 +329,10 @@ defmodule GoodFlows.Spry.RunsContextTest do
       log =
         ExUnit.CaptureLog.capture_log(fn ->
           assert {:error, {:enqueue_failed, :queue_down}} =
-                   start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
+                   start_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                     "phase" => "setup",
+                     "branch" => "x"
+                   })
         end)
 
       assert log =~ ~r/Could not enqueue Spry run [0-9a-f-]{36}/
@@ -290,7 +348,10 @@ defmodule GoodFlows.Spry.RunsContextTest do
       end)
 
       assert {:ok, run} =
-               start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"})
+               start_run(ctx.account, ctx.project, ctx.recipe.id, %{
+                 "phase" => "setup",
+                 "branch" => "x"
+               })
 
       assert run.sprite_name == "app-x"
     end
@@ -301,25 +362,57 @@ defmodule GoodFlows.Spry.RunsContextTest do
       # with a retryable error instead of {:conflict, nil}.
       expect(Spry, :active_run_id, 5, fn _account, "app-x" -> nil end)
 
-      assert start_run(ctx.account, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"}) ==
+      assert start_run(ctx.account, ctx.project, ctx.recipe.id, %{
+               "phase" => "setup",
+               "branch" => "x"
+             }) ==
                {:error, :admission_contended}
 
       assert Repo.aggregate(Run, :count) == 1
     end
 
     test "unknown recipes are not found", ctx do
-      assert start_run(ctx.account, Ecto.UUID.generate(), %{"phase" => "setup"}) ==
+      assert start_run(ctx.account, ctx.project, Ecto.UUID.generate(), %{"phase" => "setup"}) ==
                {:error, :not_found}
 
       other = account_fixture()
       credential_fixture(other)
 
-      assert start_run(other, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"}) ==
+      assert start_run(other, project_fixture(other), ctx.recipe.id, %{
+               "phase" => "setup",
+               "branch" => "x"
+             }) == {:error, :not_found}
+
+      assert start_run(other, ctx.project, ctx.recipe.id, %{"phase" => "setup", "branch" => "x"}) ==
                {:error, :not_found}
+    end
+
+    test "a recipe under another project is not found and inserts no run", ctx do
+      Spry.delete_credential(ctx.account)
+
+      assert start_run(ctx.account, ctx.sibling, ctx.recipe.id, %{
+               "phase" => "setup",
+               "branch" => "x"
+             }) == {:error, :not_found}
+
+      assert Repo.aggregate(Run, :count) == 0
+      assert queued_job_messages() == 0
+    end
+
+    test "the same sprite name under another project still conflicts", ctx do
+      sibling_recipe = recipe_fixture(ctx.sibling, %{"name" => ctx.recipe.name})
+      active = run_fixture(ctx.account, ctx.recipe, sprite_name: "app-feat-x", status: "running")
+
+      assert start_run(ctx.account, ctx.sibling, sibling_recipe.id, %{
+               "phase" => "setup",
+               "branch" => "feat/x"
+             }) == {:error, {:conflict, active.id}}
+
+      assert Repo.aggregate(Run, :count) == 1
     end
   end
 
-  describe "request_run/3" do
+  describe "request_run/4" do
     setup do
       compile_jobs!()
       :ok
@@ -331,7 +424,7 @@ defmodule GoodFlows.Spry.RunsContextTest do
 
       for value <- [true, "true", "1"] do
         assert {:ok, {:plan, %{plan: %{dry_run: true}}}} =
-                 Spry.request_run(ctx.account, ctx.recipe.id, %{
+                 Spry.request_run(ctx.account, ctx.project, ctx.recipe.id, %{
                    "phase" => "start",
                    "branch" => "x",
                    "dry_run" => value
@@ -345,7 +438,7 @@ defmodule GoodFlows.Spry.RunsContextTest do
       reject(&Wrapper.exists?/3)
 
       assert {:ok, {:run, %Run{status: "queued"}}} =
-               Spry.request_run(ctx.account, ctx.recipe.id, %{
+               Spry.request_run(ctx.account, ctx.project, ctx.recipe.id, %{
                  "phase" => "start",
                  "branch" => "x",
                  "dry_run" => "0"
@@ -353,14 +446,33 @@ defmodule GoodFlows.Spry.RunsContextTest do
     end
   end
 
-  describe "request_run/4 admission without compiled jobs" do
-    test "flow_not_compiled rolls back the run", %{account: account, recipe: recipe} do
+  describe "request_run/5 admission without compiled jobs" do
+    test "flow_not_compiled rolls back the run", %{
+      account: account,
+      project: project,
+      recipe: recipe
+    } do
       _ = PgFlow.delete_flow("spry_run")
 
       assert {:error, {:enqueue_failed, {:flow_not_compiled, _}}} =
-               start_run(account, recipe.id, %{"phase" => "setup", "branch" => "x"})
+               start_run(account, project, recipe.id, %{"phase" => "setup", "branch" => "x"})
 
       assert Repo.aggregate(Run, :count) == 0
+    end
+  end
+
+  describe "list_runs/4" do
+    test "lists the project's recipe runs and hides them under another project", ctx do
+      run = run_fixture(ctx.account, ctx.recipe, status: "succeeded")
+
+      assert {:ok, %{runs: [%{id: id} = listed], next_cursor: nil}} =
+               Spry.list_runs(ctx.account, ctx.project, ctx.recipe.id)
+
+      assert id == run.id
+      # The recipe and its project are set from the arguments, with no query per run.
+      assert listed.recipe.id == ctx.recipe.id
+      assert listed.recipe.project.slug == ctx.project.slug
+      assert Spry.list_runs(ctx.account, ctx.sibling, ctx.recipe.id) == {:error, :not_found}
     end
   end
 end

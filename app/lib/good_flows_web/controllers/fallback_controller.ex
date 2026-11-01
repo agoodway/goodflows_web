@@ -22,6 +22,12 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "The recipe has a queued or running run"}})
   end
 
+  def call(conn, {:error, :has_recipes}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "The project still has recipes; delete them first"}})
+  end
+
   def call(conn, {:error, {:conflict, active_run_id}}) when is_binary(active_run_id) do
     conn
     |> put_status(:conflict)

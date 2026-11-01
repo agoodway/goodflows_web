@@ -17,9 +17,11 @@ defmodule GoodFlowsWeb.Schemas.RecipeRequest do
     description: """
     Full recipe body. `PUT` replaces the recipe: omitted lists become empty.
     `name` may use `{{branch}}`, `{{branch_slug}}`, `{{commit}}`, and `{{remote}}`;
-    step lines may also use `{{sprite}}`. There is no `org` field.
+    step lines may also use `{{sprite}}`. There is no `org` or `project`
+    field: the project comes from the URL, and either key is rejected.
 
-    `name` is the sprite name template and is unique per account. Its
+    `name` is the sprite name template and is unique per project; another
+    project of the account may reuse it. Its
     literal text must be lowercase letters, digits, and hyphens (starting
     with a letter or digit), and the expanded name must be at most 63
     characters; prefer `{{branch_slug}}` over `{{branch}}`.

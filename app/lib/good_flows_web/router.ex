@@ -40,6 +40,11 @@ defmodule GoodFlowsWeb.Router do
     plug GoodFlowsWeb.Plugs.ApiAuth, :require_write_access
   end
 
+  # Resolves the `:project` path segment; always the last plug of a scope.
+  pipeline :load_project do
+    plug GoodFlowsWeb.Plugs.LoadProject
+  end
+
   pipeline :load_account do
     plug GoodFlowsWeb.Plugs.LoadAccount
   end
@@ -66,24 +71,39 @@ defmodule GoodFlowsWeb.Router do
     pipe_through [:api, :api_authenticated]
 
     get "/me", MeController, :show
+    get "/projects", ProjectController, :index
+    get "/runs/:id", RunController, :show
+    get "/sprites-credential", SpritesCredentialController, :show
+  end
 
+  # Project-scoped reads: any valid API key, then the URL's project.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :load_project]
+
+    get "/", ProjectController, :show
     get "/recipes", RecipeController, :index
     get "/recipes/:id", RecipeController, :show
     get "/recipes/:id/runs", RunController, :index
-    get "/runs/:id", RunController, :show
-    get "/sprites-credential", SpritesCredentialController, :show
   end
 
   # Write endpoints: private (sk_) API keys only.
   scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
     pipe_through [:api, :api_authenticated, :api_write]
 
+    post "/projects", ProjectController, :create
+    put "/sprites-credential", SpritesCredentialController, :update
+    delete "/sprites-credential", SpritesCredentialController, :delete
+  end
+
+  # Project-scoped writes: private (sk_) API keys only, then the URL's project.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write, :load_project]
+
+    delete "/", ProjectController, :delete
     post "/recipes", RecipeController, :create
     put "/recipes/:id", RecipeController, :update
     delete "/recipes/:id", RecipeController, :delete
     post "/recipes/:id/runs", RunController, :create
-    put "/sprites-credential", SpritesCredentialController, :update
-    delete "/sprites-credential", SpritesCredentialController, :delete
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
