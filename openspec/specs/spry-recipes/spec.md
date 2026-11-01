@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Stores Spry recipes per account and manages them over the JSON API. A recipe describes how a Sprite VM is named and which in-VM commands each lifecycle phase runs.
+Stores Spry recipes per project within an account and manages them over the JSON API under `/api/v1/projects/:project/recipes`. A recipe describes how a Sprite VM is named and which in-VM commands each lifecycle phase runs.
 
 ## Requirements
 
 ### Requirement: Recipe schema
 
-A recipe SHALL have a required `name` (a sprite name template, non-empty after trimming, at most 255 characters) and four optional lists, `setup`, `start`, `stop`, and `teardown`. Each list item MUST be a non-empty string of at most 10,000 characters that runs inside the VM. Each list MUST hold at most 500 items. An omitted list MUST be stored as an empty list. Oversized values MUST be rejected with `422`, never a server error.
+A recipe SHALL have a required `name` (a sprite name template, non-empty after trimming, at most 255 characters) and four optional lists, `setup`, `start`, `stop`, and `teardown`. Each list item MUST be a non-empty string of at most 10,000 characters that runs inside the VM. Each list MUST hold at most 500 items. An omitted list MUST be stored as an empty list. Oversized values MUST be rejected with `422`, never a server error. The recipe SHALL belong to the project row identified by the URL slug. Every recipe response MUST include `project_id` and `project` (that project's slug). Replacing a recipe MUST NOT change its project.
 
 #### Scenario: Valid recipe with all fields
 
@@ -39,6 +39,16 @@ A recipe SHALL have a required `name` (a sprite name template, non-empty after t
 
 - **WHEN** a phase list contains an empty or whitespace-only string
 - **THEN** the API responds `422` with an error identifying the phase and item index
+
+#### Scenario: Response includes project
+
+- **WHEN** a client creates a recipe at `/api/v1/projects/goodcases/recipes`
+- **THEN** the API responds `201`, the recipe's `project` is `goodcases`, and `project_id` is that project's id
+
+#### Scenario: Replace keeps project
+
+- **WHEN** a client replaces a recipe under the project URL that stored it
+- **THEN** the recipe's `project` is unchanged
 
 ### Requirement: Host steps are rejected
 
@@ -91,13 +101,13 @@ The `name` is the template for the sprite name, and its literal text MUST be abl
 - **WHEN** a client saves a recipe whose `name` is `app-{{branch_slug}}`
 - **THEN** the API responds `201`
 
-### Requirement: Recipe names are unique per account
+### Requirement: Recipe names are unique per project
 
-Within one account, no two recipes SHALL share the same `name` template. Recipes in different accounts MAY share a name. The name doubles as the sprite name template by design; there is no separate display name.
+Within one project, no two recipes SHALL share the same `name` template. The same account MAY use that name in a different project. Recipes in different accounts MAY share a name. The name doubles as the sprite name template by design; there is no separate display name.
 
 #### Scenario: Duplicate name in the same account
 
-- **WHEN** an account already has a recipe named `myapp-{{branch_slug}}` and a client creates another with the same name
+- **WHEN** an account already has a recipe named `myapp-{{branch_slug}}` in project `goodcases` and a client creates another with the same name in `goodcases`
 - **THEN** the API responds `422` with an error on `name`
 
 #### Scenario: Same name in another account
@@ -105,14 +115,19 @@ Within one account, no two recipes SHALL share the same `name` template. Recipes
 - **WHEN** account A has a recipe named `demo` and a client authenticated to account B creates a recipe named `demo`
 - **THEN** the API responds `201`
 
+#### Scenario: Same name in another project
+
+- **WHEN** an account has a recipe named `demo` in project `goodcases` and a client creates a recipe named `demo` in project `other`
+- **THEN** the API responds `201`
+
 ### Requirement: Recipe CRUD endpoints
 
-The API SHALL provide `POST /api/v1/recipes`, `GET /api/v1/recipes`, `GET /api/v1/recipes/:id`, `PUT /api/v1/recipes/:id` (full replacement), and `DELETE /api/v1/recipes/:id`. Each operation MUST be described in the OpenAPI document.
+The API SHALL provide `POST /api/v1/projects/:project/recipes`, `GET /api/v1/projects/:project/recipes`, `GET /api/v1/projects/:project/recipes/:id`, `PUT /api/v1/projects/:project/recipes/:id` (full replacement), and `DELETE /api/v1/projects/:project/recipes/:id`. Each operation MUST be described in the OpenAPI document. The unscoped `/api/v1/recipes` routes MUST NOT be served. Show, replace, and delete MUST apply only when the URL slug identifies the project row the recipe belongs to.
 
 #### Scenario: List recipes
 
-- **WHEN** a client lists recipes
-- **THEN** the API responds `200` with the account's recipes only
+- **WHEN** a client lists recipes for a project
+- **THEN** the API responds `200` with that project's recipes only
 
 #### Scenario: Replace a recipe
 
@@ -139,9 +154,19 @@ The API SHALL provide `POST /api/v1/recipes`, `GET /api/v1/recipes`, `GET /api/v
 - **WHEN** deletion and a new run request concurrently target the same recipe
 - **THEN** they serialize on the account-scoped recipe row: an admitted run makes deletion return `409`, or a completed deletion makes run admission return `404`
 
+#### Scenario: Other project omitted from the list
+
+- **WHEN** the account has a recipe in project `other` and the client lists project `goodcases`
+- **THEN** the response does not include that recipe
+
+#### Scenario: Unscoped recipe route
+
+- **WHEN** a client requests `GET /api/v1/recipes` or `POST /api/v1/recipes`
+- **THEN** the API responds `404`
+
 ### Requirement: Recipe access control
 
-Reading recipes SHALL accept any valid API key for the account. Creating, replacing, and deleting recipes MUST require a private (`sk_`) key. A recipe belonging to another account MUST respond `404`.
+Reading recipes SHALL accept any valid API key for the account. Creating, replacing, and deleting recipes MUST require a private (`sk_`) key. A recipe belonging to another account MUST respond `404`. A recipe addressed under a different project of the same account MUST respond `404`.
 
 #### Scenario: Public key cannot create
 
@@ -157,3 +182,41 @@ Reading recipes SHALL accept any valid API key for the account. Creating, replac
 
 - **WHEN** a client requests a recipe id owned by a different account
 - **THEN** the API responds `404`
+
+#### Scenario: Other project of the same account
+
+- **WHEN** a client requests a recipe id under a project other than the one that stores it
+- **THEN** the API responds `404`
+
+### Requirement: Project slugs are validated
+
+The `:project` path segment on recipe routes and on run routes nested under a recipe SHALL be a lowercase slug of 1 to 64 UTF-8 bytes matching `[a-z0-9][a-z0-9_-]*`. A segment that violates this MUST be rejected with `422` and an error on `project`, and MUST NOT read or write a recipe or a run. A valid slug MUST resolve to a project row of the authenticated account. When no such row exists the API MUST respond `404` and MUST NOT create a project, recipe, or run. An existing project with no recipes MUST list as `200` with an empty list.
+
+#### Scenario: Invalid project slug
+
+- **WHEN** a client lists recipes with project `GoodCases`, `-app`, or a slug longer than 64 bytes
+- **THEN** the API responds `422` with an error on `project` and stores nothing
+
+#### Scenario: Valid project with no recipes
+
+- **WHEN** a client lists recipes for an existing project that has none
+- **THEN** the API responds `200` with an empty list
+
+#### Scenario: Missing project
+
+- **WHEN** a client creates or lists recipes for a valid slug that has no project row
+- **THEN** the API responds `404` and stores nothing
+
+### Requirement: Project is not a recipe body field
+
+A recipe create or replace request body containing `project` MUST be rejected with `422` and an error on `project`. The stored project comes only from the URL, and a rejected body MUST leave storage unchanged.
+
+#### Scenario: Project supplied in the body
+
+- **WHEN** a client creates a recipe whose JSON body includes `project`
+- **THEN** the API responds `422` with an error on `project` and stores nothing
+
+#### Scenario: Project supplied on replace
+
+- **WHEN** a client replaces a recipe with a body that includes `project`
+- **THEN** the API responds `422` with an error on `project` and the stored recipe is unchanged
