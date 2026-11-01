@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "git": {
+      "source": "agoodway/GoodSkills",
+      "sourceType": "github",
+      "skillPath": "skills/git/SKILL.md",
+      "computedHash": "924d0484351f50c060b2c56de05310ffbcc4701f33aac754d5c457ddae297d5f"
+    },
+    "goodreview": {
+      "source": "agoodway/GoodSkills",
+      "sourceType": "github",
+      "skillPath": "skills/goodreview/SKILL.md",
+      "computedHash": "4fc971805cbcc211c1ecccb19fee809a2ec39913e499999a25333e17b38399b3"
+    },
+    "inspector-review-update": {
+      "source": "agoodway/GoodSkills",
+      "sourceType": "github",
+      "skillPath": "skills/inspector-review-update/SKILL.md",
+      "computedHash": "fade5c7a1728ad2f214abe1b27b979a38045afe8862b64234fbc240e465b60a6"
+    },
+    "scratchpad": {
+      "source": "agoodway/GoodSkills",
+      "sourceType": "github",
+      "skillPath": "skills/scratchpad/SKILL.md",
+      "computedHash": "43232ee3adceb152c0e2aceb8749166c1994b3a6369badbdc3389166d4edf6ef"
+    },
+    "workie": {
+      "source": "agoodway/GoodSkills",
+      "sourceType": "github",
+      "skillPath": "skills/workie/SKILL.md",
+      "computedHash": "affb699a54c360b18ce26c526b304ae6fc586f1307a9a4758d6313063d7958fa"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+<Layouts.app flash={@flash} current_scope={@current_scope}>
+  <section id="home-hero" class="py-12 space-y-6">
+    <h1 class="text-4xl font-bold tracking-tight text-base-content sm:text-5xl">GoodFlows</h1>
+    <p class="text-lg text-base-content/60 max-w-xl">
+      Background jobs and workflows for your accounts.
+    </p>
+    <div class="flex gap-3">
+      <%= if @current_scope do %>
+        <.link id="home-dashboard-link" href={~p"/dashboard"} class="btn btn-primary">
+          Go to dashboard <span aria-hidden="true">&rarr;</span>
+        </.link>
+      <% else %>
+        <.link id="home-login-link" navigate={~p"/users/log-in"} class="btn btn-primary">
+          Log in
+        </.link>
+        <.link id="home-register-link" navigate={~p"/users/register"} class="btn btn-ghost">
+          Create an account
+        </.link>
+      <% end %>
+    </div>
+  </section>
+</Layouts.app>
