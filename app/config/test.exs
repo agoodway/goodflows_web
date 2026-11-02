@@ -23,6 +23,48 @@ config :good_flows, GoodFlowsWeb.Endpoint,
   secret_key_base: "WOfQglvaxzm4BnsDuxAim8osKhtzkaIagyoNYnJxtNd9wVZq2jGcTRq3X41iKb0u",
   server: false
 
+# Fixed encryption key for tests only.
+config :good_flows, GoodFlows.Vault, key: "OItCtf1i+OuEvu0P7Ik+csu7g7Rx1cO0Jz/7NNwFjwk="
+
+# Short Spry deadlines so timeout tests run quickly.
+config :good_flows, GoodFlows.Spry,
+  step_timeout_ms: 300,
+  run_timeout_ms: 1_500,
+  output_limit_bytes: 65_536,
+  # Unroutable so a test that misses a stub can never reach the real API.
+  sprites_base_url: "http://127.0.0.1:9"
+
+# Sprite pools: a committed fixture helper manifest keeps pools enabled
+# without cargo, a per-run spool directory, and short timers so expiry and
+# transfer tests run quickly.
+config :good_flows, GoodFlows.Pools,
+  helper_artifact_dir: Path.expand("../test/support/fixtures/gf-transfer", __DIR__),
+  spool_dir: Path.join(System.tmp_dir!(), "goodflows-pools-test-#{System.os_time()}"),
+  workspace_max_bytes: 1_048_576,
+  transfer_chunk_bytes: 65_536,
+  transfer_ack_timeout_ms: 1_000,
+  transfer_backoff_ms: 1,
+  helper_idle_timeout_ms: 1_000,
+  report_fetch_timeout_ms: 2_000,
+  owner_rpc_timeout_ms: 2_000,
+  exec_max_ms: 5_000,
+  fingerprint_secret: "WOfQglvaxzm4BnsDuxAim8osKhtzkaIagyoNYnJxtNd9wVZq2jGcTRq3X41iKb0u"
+
+# Small test report body limit so size tests stay fast (fixtures are ~10 KB);
+# high admission caps so concurrent async tests are never refused. Tests for
+# the real limit and for cap exhaustion override these temporarily.
+# (config/runtime.exs leaves test report settings alone in test.)
+config :good_flows,
+  test_report_max_body_bytes: 32_768,
+  test_report_max_concurrent_uploads: 1_000,
+  test_report_max_concurrent_uploads_per_account: 1_000,
+  test_report_read_timeout_ms: 60_000,
+  test_report_max_heap_bytes: 2_147_483_648,
+  test_report_db_timeout_ms: 15_000
+
+# Lets tests collect Sentry events (none are sent: there is no DSN).
+config :sentry, test_mode: true
+
 # In test we don't send emails
 config :good_flows, GoodFlows.Mailer, adapter: Swoosh.Adapters.Test
 

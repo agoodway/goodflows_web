@@ -14,7 +14,7 @@ defmodule GoodFlows.MixProject do
       listeners: [Phoenix.CodeReloader],
       dialyzer: [
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
-        plt_add_apps: [:ex_unit]
+        plt_add_apps: [:ex_unit, :mix]
       ]
     ]
   end
@@ -88,6 +88,7 @@ defmodule GoodFlows.MixProject do
 
       # Security
       {:bcrypt_elixir, "~> 3.0"},
+      {:cloak_ecto, "~> 1.3"},
 
       # Environment & Config
       {:dotenvy, "~> 1.1"},
@@ -154,7 +155,11 @@ defmodule GoodFlows.MixProject do
         "doctor",
         "sobelow --config",
         "dialyzer",
-        "test"
+        # Builds the gf-transfer helper so the :helper_binary tests (real
+        # workspace and report transfers) run instead of being skipped.
+        "cmd cargo build --quiet --manifest-path ../sprite-transfer/Cargo.toml",
+        # Includes the :slow tests that a plain `mix test` excludes.
+        "test --include slow"
       ],
       precommit: ["check"]
     ]

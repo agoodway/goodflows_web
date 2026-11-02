@@ -55,6 +55,9 @@ config :good_flows, GoodFlowsWeb.Endpoint,
 # Browser origins allowed to call the JSON API (e.g. local frontend dev servers)
 config :good_flows, :cors_origins, ["http://localhost:3000", "http://localhost:4321"]
 
+# Development-only encryption key. Override with CLOAK_KEY; never use in production.
+config :good_flows, GoodFlows.Vault, key: "ZFIoYeoEAZIjAlGdNBAuI8RQKARKLSn+GtHGoKMKnIo="
+
 # Enable dev routes for dashboard and mailbox
 config :good_flows, dev_routes: true
 
@@ -78,3 +81,8 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# Sprite pools: the credential fingerprint secret (production reads
+# POOL_FINGERPRINT_SECRET, falling back to SECRET_KEY_BASE).
+config :good_flows, GoodFlows.Pools,
+  fingerprint_secret: "Ex49NDa1P6khwfPeLNp4a5QVlbhVQkQlCgEqV9bwPCc+dkXlU5mCKSICegOmvyOu"

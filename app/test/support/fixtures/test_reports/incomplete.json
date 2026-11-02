@@ -1,0 +1,130 @@
+{
+  "environment": "local",
+  "format": "exunit-timings",
+  "job": "test",
+  "job_status": "cancelled",
+  "report": {
+    "partition": "3",
+    "partition_count": 3,
+    "records": [
+      {
+        "elixir_version": "1.19.1",
+        "event": "suite_started",
+        "filters": {
+          "exclude": [
+            {
+              "tag": "qpdf",
+              "value": true
+            },
+            {
+              "tag": "athena_preview",
+              "value": false
+            }
+          ],
+          "include": [
+            {
+              "tag": "chrome",
+              "value": true
+            }
+          ]
+        },
+        "format": "exunit-timings",
+        "max_cases": 16,
+        "otp_release": "28",
+        "partition": "3",
+        "partition_count": 3,
+        "received_offset_us": 0,
+        "report_id": "report-3",
+        "run_id": "suite-20261101-a",
+        "schedulers": 8,
+        "seed": 412893,
+        "started_at": "2026-11-01T12:00:00.000000Z"
+      },
+      {
+        "async": true,
+        "event": "module_started",
+        "execution_id": 1,
+        "file": "test/gc/delta_test.exs",
+        "module": "GC.DeltaTest",
+        "parameter_id": null,
+        "received_offset_us": 100,
+        "report_id": "report-3",
+        "run_id": "suite-20261101-a",
+        "setup_all": false,
+        "started_offset_us": 100
+      },
+      {
+        "async": true,
+        "describe": null,
+        "description": "first",
+        "event": "test_started",
+        "execution_id": 2,
+        "file": "test/gc/delta_test.exs",
+        "line": 4,
+        "module": "GC.DeltaTest",
+        "name": "test first",
+        "parameter_id": null,
+        "received_offset_us": 131,
+        "report_id": "report-3",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 130
+      },
+      {
+        "async": true,
+        "describe": null,
+        "description": "first",
+        "duration_us": 1850,
+        "event": "test_finished",
+        "execution_id": 2,
+        "file": "test/gc/delta_test.exs",
+        "line": 4,
+        "module": "GC.DeltaTest",
+        "name": "test first",
+        "outcome": "failed",
+        "parameter_id": null,
+        "received_offset_us": 2000,
+        "report_id": "report-3",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 130
+      },
+      {
+        "event": "max_failures_reached",
+        "received_offset_us": 2010,
+        "report_id": "report-3",
+        "run_id": "suite-20261101-a"
+      },
+      {
+        "async": true,
+        "describe": null,
+        "description": "second",
+        "event": "test_started",
+        "execution_id": 3,
+        "file": "test/gc/delta_test.exs",
+        "line": 9,
+        "module": "GC.DeltaTest",
+        "name": "test second",
+        "parameter_id": null,
+        "received_offset_us": 2101,
+        "report_id": "report-3",
+        "run_id": "suite-20261101-a",
+        "started_offset_us": 2100
+      },
+      {
+        "event": "interrupted",
+        "received_offset_us": 4000,
+        "report_id": "report-3",
+        "run_id": "suite-20261101-a"
+      }
+    ],
+    "report_id": "report-3",
+    "suite_id": "suite-20261101-a",
+    "truncated": false
+  },
+  "source": {
+    "branch": "main",
+    "commit": "3f786850e387550fdab836ed7e6dc881de23001b",
+    "dirty": false
+  },
+  "workflow": "default",
+  "workflow_run_id": "67f7946d-136b-4608-ab01-e1f251a09754"
+}

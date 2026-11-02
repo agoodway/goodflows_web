@@ -32,12 +32,35 @@ defmodule GoodFlowsWeb.Router do
     plug OpenApiSpex.Plug.PutApiSpec, module: GoodFlowsWeb.ApiSpec
   end
 
+  # :api without content negotiation, for non-JSON downloads.
+  pipeline :api_any_accept do
+    plug CORSPlug,
+      origin: &GoodFlowsWeb.CORS.origins/0,
+      methods: ["GET", "OPTIONS"],
+      headers: ["Content-Type", "Authorization", "Accept"],
+      max_age: 86_400
+
+    plug OpenApiSpex.Plug.PutApiSpec, module: GoodFlowsWeb.ApiSpec
+  end
+
   pipeline :api_authenticated do
     plug GoodFlowsWeb.Plugs.ApiAuth
   end
 
   pipeline :api_write do
     plug GoodFlowsWeb.Plugs.ApiAuth, :require_write_access
+    plug GoodFlowsWeb.Plugs.RequireParsedBody
+  end
+
+  # Resolves the `:project` path segment; always the last plug of a scope.
+  pipeline :load_project do
+    plug GoodFlowsWeb.Plugs.LoadProject
+  end
+
+  # 503 for pool (except deletion), session, workspace, and report routes
+  # while pools are disabled.
+  pipeline :pools_enabled do
+    plug GoodFlowsWeb.Plugs.PoolsEnabled
   end
 
   pipeline :load_account do
@@ -66,14 +89,92 @@ defmodule GoodFlowsWeb.Router do
     pipe_through [:api, :api_authenticated]
 
     get "/me", MeController, :show
+    get "/projects", ProjectController, :index
+    get "/runs/:id", RunController, :show
+    get "/sprites-credential", SpritesCredentialController, :show
+  end
+
+  # Project-scoped reads: any valid API key, then the URL's project.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :load_project]
+
+    get "/", ProjectController, :show
+    get "/recipes", RecipeController, :index
+    get "/recipes/:id", RecipeController, :show
+    get "/recipes/:id/runs", RunController, :index
+  end
+
+  # Pool reads: any valid API key, pools enabled, then the URL's project.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :pools_enabled, :load_project]
+
+    get "/pools", PoolController, :index
+    get "/pools/:pool", PoolController, :show
+    get "/pools/:pool/members", PoolController, :members
   end
 
   # Write endpoints: private (sk_) API keys only.
-  # scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
-  #   pipe_through [:api, :api_authenticated, :api_write]
-  #
-  #   post "/resources", ResourceController, :create
-  # end
+  scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write]
+
+    post "/projects", ProjectController, :create
+    put "/sprites-credential", SpritesCredentialController, :update
+    delete "/sprites-credential", SpritesCredentialController, :delete
+  end
+
+  # Project-scoped writes: private (sk_) API keys only, then the URL's project.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write, :load_project]
+
+    delete "/", ProjectController, :delete
+    post "/recipes", RecipeController, :create
+    put "/recipes/:id", RecipeController, :update
+    delete "/recipes/:id", RecipeController, :delete
+    post "/recipes/:id/runs", RunController, :create
+    post "/test-reports", TestReportController, :create
+  end
+
+  # Pool writes: private (sk_) API keys only, pools enabled, then the URL's project.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write, :pools_enabled, :load_project]
+
+    post "/pools", PoolController, :create
+    put "/pools/:pool", PoolController, :update
+    post "/pools/:pool/sessions", PoolSessionController, :create
+  end
+
+  # Pool deletion works even while pools are disabled, so a rollback
+  # (POOLS_ENABLED=false) can still be cleaned up: the reconciler keeps
+  # destroying members and removes the row.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write, :load_project]
+
+    delete "/pools/:pool", PoolController, :delete
+  end
+
+  # Pool session reads: any valid API key of the account.
+  scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :pools_enabled]
+
+    get "/pool-sessions/:id", PoolSessionController, :show
+  end
+
+  # Pool session writes: private keys; the controllers also require the
+  # creating key. The workspace route reads its own raw body
+  # (GoodFlowsWeb.Plugs.BodyParsers.raw_body_route?/1).
+  scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write, :pools_enabled]
+
+    delete "/pool-sessions/:id", PoolSessionController, :delete
+    put "/pool-sessions/:id/workspace", PoolWorkspaceController, :update
+  end
+
+  # Report downloads accept any Accept header (application/x-ndjson).
+  scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api_any_accept, :api_authenticated, :pools_enabled]
+
+    get "/pool-execs/:id/reports/:name", PoolReportController, :show
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:good_flows, :dev_routes) do
