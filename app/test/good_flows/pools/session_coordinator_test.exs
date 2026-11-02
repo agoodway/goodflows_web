@@ -117,6 +117,33 @@ defmodule GoodFlows.Pools.SessionCoordinatorTest do
     end)
   end
 
+  defp report_exec(ctx) do
+    ready!(ctx.m1)
+
+    exec_fixture(ctx.session, Repo.reload!(ctx.m1), %{
+      status: "exited",
+      collect_reports: true,
+      reports: %{"files" => [%{"name" => "a.jsonl", "size" => 10, "too_large" => false}]}
+    })
+  end
+
+  # A download that commits part of the report, then fails; `Transfers`
+  # keeps the partial file for resumption.
+  defp fail_partial_report!(ctx, exec) do
+    stub(Transfers, :fetch_report, fn _client, _member, _exec, _name, dir, _deadline ->
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "r.part"), "01234")
+      {:error, :transfer_failed}
+    end)
+
+    assert OwnerRPC.call(ctx.owner, {:fetch_report, exec.id, "a.jsonl"}) ==
+             {:error, :transfer_failed}
+
+    reports_dir = Path.join([Spool.session_dir(ctx.session.id), "reports", exec.id])
+    assert File.exists?(Path.join(reports_dir, "r.part"))
+    reports_dir
+  end
+
   describe "cancels never block the coordinator" do
     test "release_member waits on the exec stop in a task; the coordinator stays responsive",
          ctx do
@@ -219,6 +246,31 @@ defmodule GoodFlows.Pools.SessionCoordinatorTest do
       assert Spool.reserved_bytes(ctx.account.id) == 0
     end
 
+    test "a failed report download stays reserved, and a retry reuses the reservation", ctx do
+      exec = report_exec(ctx)
+      fail_partial_report!(ctx, exec)
+      assert Spool.reserved_bytes(ctx.account.id) == Config.report_max_bytes()
+
+      stub(Transfers, :fetch_report, fn _client, _member, _exec, _name, dir, _deadline ->
+        path = Path.join(dir, "r")
+        File.rename!(Path.join(dir, "r.part"), path)
+        File.write!(path, "56789", [:append])
+        {:ok, %{path: path, size: 10, sha256: "abc"}}
+      end)
+
+      assert {:ok, %{size: 10}} = OwnerRPC.call(ctx.owner, {:fetch_report, exec.id, "a.jsonl"})
+      assert Spool.reserved_bytes(ctx.account.id) == 10
+    end
+
+    test "a failed report download is released and deleted by the member's next exec", ctx do
+      exec = report_exec(ctx)
+      reports_dir = fail_partial_report!(ctx, exec)
+
+      assert {:ok, _} = start_exec(ctx, Repo.reload!(ctx.m1))
+      assert Spool.reserved_bytes(ctx.account.id) == 0
+      refute File.exists?(reports_dir)
+    end
+
     test "a report download is refused with busy when the spool budget is exhausted", ctx do
       Application.put_env(
         :good_flows,
@@ -303,8 +355,6 @@ defmodule GoodFlows.Pools.SessionCoordinatorTest do
 
       assert OwnerRPC.call(ctx.owner, {:fetch_report, exec.id, "a.jsonl"}) ==
                {:error, :transfer_failed}
-
-      assert Spool.reserved_bytes(ctx.account.id) == 0
     end
   end
 

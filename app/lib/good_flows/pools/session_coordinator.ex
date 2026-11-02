@@ -849,6 +849,13 @@ defmodule GoodFlows.Pools.SessionCoordinator do
         {:noreply,
          %{state | reports: Map.put(state.reports, key, %{entry | waiters: [from | waiters]})}}
 
+      # A failed download keeps its reservation (and any partial download,
+      # which `Transfers` resumes), so a retry reuses both.
+      %{status: :failed} = entry ->
+        task = start_report_task(state, exec, member, name)
+        entry = %{entry | status: {:running, task}, waiters: [from]}
+        {:noreply, %{state | reports: Map.put(state.reports, key, entry)}}
+
       nil ->
         # The download is spooled to disk: reserve the report cap first.
         case Spool.reserve(state.account_id, Config.report_max_bytes(), self(), :report) do
@@ -908,17 +915,16 @@ defmodule GoodFlows.Pools.SessionCoordinator do
 
     Enum.each(waiters, &GenServer.reply(&1, reply))
 
-    reports =
-      case status do
-        :failed ->
-          Spool.release(reservation)
-          Map.delete(state.reports, key)
+    # A failed download stays tracked with its reservation: `Transfers`
+    # keeps its partial files for resumption, and they must stay within the
+    # spool budget until a retry finishes or `drop_member_reports/2` (or the
+    # session's end) deletes them.
+    case status do
+      {:ready, _path, size, _sha} -> Spool.settle(reservation, size)
+      :failed -> :ok
+    end
 
-        {:ready, _path, size, _sha} ->
-          Spool.settle(reservation, size)
-          Map.put(state.reports, key, %{entry | status: status, waiters: []})
-      end
-
+    reports = Map.put(state.reports, key, %{entry | status: status, waiters: []})
     {:noreply, %{state | reports: reports}}
   end
 
