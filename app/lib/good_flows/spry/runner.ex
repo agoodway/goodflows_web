@@ -193,9 +193,13 @@ defmodule GoodFlows.Spry.Runner do
     end
   end
 
+  # The budget is checked again after `start_step/2`, whose transaction may
+  # wait on a connection or row lock, so no action starts past the deadline.
+  # A step left running is failed with `run_timeout` by `finalize/5`.
   defp run_step(state, client, name, step) do
-    with {:ok, timeout, budget_limited?} <- action_timeout(state),
-         {:ok, _} <- start_step(state, step) do
+    with {:ok, _, _} <- action_timeout(state),
+         {:ok, _} <- start_step(state, step),
+         {:ok, timeout, budget_limited?} <- action_timeout(state) do
       result = perform(step.kind, client, name, step.command, timeout)
       record(state, step, result, budget_limited?)
     end
