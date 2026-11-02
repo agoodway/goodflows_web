@@ -225,17 +225,21 @@ defmodule GoodFlows.Pools.Archive do
   end
 
   defp entry(state, type, path, link, size) do
-    segments = normalize_path!(path)
     kind = kind!(type)
+    segments = normalize_path!(path, kind == :dir)
     entries = state.entries + 1
     expanded = state.expanded + if(kind == :file, do: size, else: 0)
     check_limits!(state.limits, entries, expanded)
-
-    key = Enum.join(segments, "/")
-    check_type_conflict!(state.types, key, kind, path)
-
     state = %{state | entries: entries, expanded: expanded}
-    record_entry(state, kind, segments, key, path, link)
+
+    # The workspace root itself (`./`, as `tar -C dir .` writes it).
+    if segments == [] do
+      state
+    else
+      key = Enum.join(segments, "/")
+      check_type_conflict!(state.types, key, kind, path)
+      record_entry(state, kind, segments, key, path, link)
+    end
   end
 
   defp check_limits!(limits, entries, _expanded) when entries > limits.max_entries,
@@ -339,7 +343,7 @@ defmodule GoodFlows.Pools.Archive do
     end
   end
 
-  defp normalize_path!(path) do
+  defp normalize_path!(path, allow_root? \\ false) do
     cond do
       path == "" -> reject!("an entry has an empty path")
       String.contains?(path, <<0>>) -> reject!("an entry path contains NUL")
@@ -349,7 +353,7 @@ defmodule GoodFlows.Pools.Archive do
 
     segments = path |> String.split("/") |> Enum.reject(&(&1 in ["", "."]))
     if ".." in segments, do: reject!("#{path} contains a .. segment")
-    if segments == [], do: reject!("an entry has an empty path")
+    if segments == [] and not allow_root?, do: reject!("an entry has an empty path")
     segments
   end
 

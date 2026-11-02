@@ -47,6 +47,29 @@ defmodule GoodFlows.Pools.ArchiveTest do
     assert Archive.validate(path, @limits) == :ok
   end
 
+  test "accepts the workspace root directory entry that tar -C dir . writes", ctx do
+    assert validate(ctx, tar_gz([{:dir, "./"}, {:file, "./README", "hi"}])) == :ok
+    assert validate(ctx, tar_gz([{:dir, "."}, {:dir, "./src"}])) == :ok
+
+    src = Path.join(ctx.dir, "ws")
+    File.mkdir_p!(Path.join(src, "lib"))
+    File.write!(Path.join(src, "lib/a"), "a")
+    path = Path.join(ctx.dir, "root.tar.gz")
+    {_, 0} = System.cmd("tar", ["-czf", path, "-C", src, "."])
+    assert Archive.validate(path, @limits) == :ok
+  end
+
+  test "a root path is only accepted for a directory entry", ctx do
+    for entries <- [
+          [{:file, "./", "x"}],
+          [{:symlink, ".", "src"}],
+          [{:dir, "src"}, {:file, "f", "x"}, {:hardlink, "h", "./"}]
+        ] do
+      assert {:error, {:invalid, "an entry has an empty path"}} = validate(ctx, tar_gz(entries)),
+             inspect(entries)
+    end
+  end
+
   test "rejects escapes, special entries, and link tricks with 422-class errors", ctx do
     hostile = [
       [{:file, "../etc/passwd", "x"}],
