@@ -348,6 +348,87 @@ defmodule GoodFlowsWeb.Api.V1.TestReportControllerTest do
       assert report_count() == 0
     end
 
+    test "suite filters with any boolean identifier tag are stored in order", ctx do
+      include = [%{"tag" => "slow", "value" => true}]
+
+      exclude = [
+        %{"tag" => "Chrome", "value" => true},
+        %{"tag" => "chrome", "value" => true},
+        %{"tag" => "slow", "value" => true},
+        %{"tag" => "slow", "value" => false}
+      ]
+
+      document =
+        put_at(report("complete"), ["report", "records", 0, "filters"], %{
+          "include" => include,
+          "exclude" => exclude
+        })
+
+      body =
+        ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(201)
+
+      %Report{payload: payload} = Repo.get!(Report, body["data"]["id"])
+
+      assert hd(payload["report"]["records"])["filters"] == %{
+               "include" => include,
+               "exclude" => exclude
+             }
+    end
+
+    test "a suite filter tag outside the identifier grammar is 422 without echo", ctx do
+      count = report_count()
+
+      document =
+        put_at(report("complete"), ["report", "records", 0, "filters", "include"], [
+          %{"tag" => "slow test", "value" => true}
+        ])
+
+      conn = upload(ctx.sk_conn, ctx.project.slug, Jason.encode!(document))
+      body = json_response(conn, 422)
+
+      assert body["errors"]["report.records[0].filters.include[0].tag"] == ["has invalid format"]
+      refute conn.resp_body =~ "slow test"
+      assert report_count() == count
+    end
+
+    test "a suite filter list over 256 entries is 422 on the list", ctx do
+      count = report_count()
+
+      document =
+        put_at(
+          report("complete"),
+          ["report", "records", 0, "filters", "include"],
+          List.duplicate(%{"tag" => "slow", "value" => true}, 257)
+        )
+
+      body =
+        ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(422)
+
+      assert body["errors"] == %{
+               "report.records[0].filters.include" => ["must not have more than 256 entries"]
+             }
+
+      assert report_count() == count
+    end
+
+    test "a non-boolean suite filter value is 422", ctx do
+      count = report_count()
+
+      document =
+        put_at(report("complete"), ["report", "records", 0, "filters", "exclude"], [
+          %{"tag" => "qpdf", "value" => "on"}
+        ])
+
+      body =
+        ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(422)
+
+      assert body["errors"] == %{
+               "report.records[0].filters.exclude[0].value" => ["must be a boolean"]
+             }
+
+      assert report_count() == count
+    end
+
     test "an empty source branch is 422 on source.branch", ctx do
       document = put_at(report("complete"), ["source", "branch"], "")
 

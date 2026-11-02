@@ -71,6 +71,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     import GoodFlows.TestReportFixtures
     import OpenApiSpex.TestAssertions
 
+    alias GoodFlows.TestReports.Validator
     alias GoodFlowsWeb.ApiSpec
 
     setup %{conn: conn} do
@@ -134,6 +135,55 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       assert description =~ "exact retry"
       assert description =~ "33,554,432 bytes"
       refute description =~ "test-timing-reports"
+      assert description =~ "uses the `suite_id` grammar"
+      assert Validator.max_filters() == 256
+      assert description =~ "each list has at most #{Validator.max_filters()} entries"
+    end
+
+    test "suite filter tags are bounded identifiers in capped lists", %{doc: doc} do
+      suite_started =
+        Enum.find(
+          doc["components"]["schemas"]["TestReportEvent"]["oneOf"],
+          &(&1["title"] == "TestReport_SuiteStarted")
+        )
+
+      filters = suite_started["properties"]["filters"]["properties"]
+
+      for list <- ["include", "exclude"] do
+        assert filters[list]["maxItems"] == 256
+        tag = filters[list]["items"]["properties"]["tag"]
+
+        assert tag == %{
+                 "type" => "string",
+                 "minLength" => 1,
+                 "maxLength" => 128,
+                 "pattern" => "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+               }
+
+        refute Map.has_key?(tag, "enum")
+      end
+    end
+
+    test "a report with any identifier filter tag matches the request schema" do
+      document =
+        put_at(report("complete"), ["report", "records", 0, "filters", "include"], [
+          %{"tag" => "slow", "value" => true}
+        ])
+
+      assert_schema(document, "TestReportRequest", ApiSpec.spec())
+    end
+
+    test "the request schema rejects a filter list over the cap" do
+      spec = ApiSpec.spec()
+      schema = spec.components.schemas["TestReportRequest"]
+      path = ["report", "records", 0, "filters", "include"]
+      entry = %{"tag" => "slow", "value" => true}
+
+      at_cap = put_at(report("complete"), path, List.duplicate(entry, 256))
+      assert {:ok, _} = OpenApiSpex.cast_value(at_cap, schema, spec)
+
+      over_cap = put_at(report("complete"), path, List.duplicate(entry, 257))
+      assert {:error, _} = OpenApiSpex.cast_value(over_cap, schema, spec)
     end
   end
 

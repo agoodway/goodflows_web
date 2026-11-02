@@ -9,6 +9,9 @@ defmodule GoodFlows.TestReports.Shape do
     * `{:string, opts}` with `:min`/`:max` UTF-8 byte bounds, an optional
       `:format` regex and `:no_control` (no Unicode control characters)
     * `{:enum, values}`, `{:nullable, spec}`, `{:list, spec}`
+    * `{:list, spec, opts}` with a required `:max` (e.g. `max: n`): a list
+      of at most `n` entries; a longer list gets only `"must not have more
+      than n entries"` on the list itself and its entries are not checked
     * `{:object, %{key => spec}}`: every key is required and no other key
       is allowed
     * `{:fun, (value, path -> [error]), kind}` for custom checks; `kind`
@@ -25,7 +28,16 @@ defmodule GoodFlows.TestReports.Shape do
   @control ~r/[\x{0000}-\x{001F}\x{007F}-\x{009F}]/u
 
   @typedoc "A shape spec, see the module documentation."
-  @type spec :: term()
+  @type spec ::
+          :boolean
+          | {:int, 0 | 1 | nil}
+          | {:string, keyword()}
+          | {:enum, [String.t()]}
+          | {:nullable, spec()}
+          | {:list, spec()}
+          | {:list, spec(), keyword()}
+          | {:object, %{optional(String.t()) => spec()}}
+          | {:fun, (term(), list() -> list()), atom()}
 
   @doc "Checks `value` against `spec` at `path` (a reversed path)."
   @spec check(term(), spec(), list()) :: [GoodFlows.TestReports.Document.error()]
@@ -81,6 +93,17 @@ defmodule GoodFlows.TestReports.Shape do
   end
 
   defp do_check(_value, {:list, _spec}, path, errors), do: [{path, "must be an array"} | errors]
+
+  defp do_check(list, {:list, spec, opts}, path, errors) when is_list(list) and is_list(opts) do
+    max = Keyword.fetch!(opts, :max)
+
+    if length(list) > max,
+      do: [{path, "must not have more than #{max} entries"} | errors],
+      else: do_check(list, {:list, spec}, path, errors)
+  end
+
+  defp do_check(value, {:list, spec, _opts}, path, errors),
+    do: do_check(value, {:list, spec}, path, errors)
 
   defp do_check(map, {:object, fields}, path, errors) when is_map(map) do
     errors =

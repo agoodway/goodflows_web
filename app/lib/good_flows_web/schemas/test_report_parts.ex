@@ -49,6 +49,9 @@ defmodule GoodFlowsWeb.Schemas.TestReportParts do
   defp to_schema({:nullable, spec}, events), do: %{to_schema(spec, events) | nullable: true}
   defp to_schema({:list, spec}, events), do: %Schema{type: :array, items: to_schema(spec, events)}
 
+  defp to_schema({:list, spec, opts}, events) when is_list(opts),
+    do: %{to_schema({:list, spec}, events) | maxItems: Keyword.fetch!(opts, :max)}
+
   defp to_schema({:object, fields}, events) do
     %Schema{
       type: :object,

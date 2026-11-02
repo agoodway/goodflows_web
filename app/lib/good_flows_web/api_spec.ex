@@ -6,6 +6,7 @@ defmodule GoodFlowsWeb.ApiSpec do
   """
   @behaviour OpenApiSpex.OpenApi
 
+  alias GoodFlows.TestReports.Validator
   alias GoodFlowsWeb.{Endpoint, Router}
   alias OpenApiSpex.{Components, Info, OpenApi, Paths, SecurityScheme, Server}
 
@@ -189,6 +190,10 @@ defmodule GoodFlowsWeb.ApiSpec do
           fields of `suite_started`, `test_started`, `test_finished`,
           `module_started`, `module_finished`, `suite_finished`,
           `max_failures_reached` and `interrupted`.
+        - `suite_started` `filters.include` and `filters.exclude` entries are
+          `{tag, value}`: `tag` uses the `suite_id` grammar and `value` is a
+          boolean; each list has at most #{Validator.max_filters()} entries;
+          non-boolean filters are not accepted.
 
         Times are integer microseconds and are stored as sent; measured
         durations are never checked against receipt offsets. A finish event
