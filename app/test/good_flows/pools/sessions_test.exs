@@ -375,7 +375,17 @@ defmodule GoodFlows.Pools.SessionsTest do
 
     Repo.update_all(Ecto.Query.where(Session, id: ^ended.id), set: [status: "released"])
     # A coordinator killed without running terminate/2 leaves its spool behind.
-    Process.exit(coordinator(orphaned), :kill)
+    pid = coordinator(orphaned)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    # The registry drops the dead owner's entry when its partition handles
+    # the exit; a round trip to each partition waits for that.
+    for {_id, partition, _type, _modules} <-
+          Supervisor.which_children(GoodFlows.Spry.ExecutionRegistry),
+        do: :sys.get_state(partition)
+
+    assert Executions.lookup(orphaned.owner_id) == :error
 
     unknown = Ecto.UUID.generate()
 
@@ -385,18 +395,6 @@ defmodule GoodFlows.Pools.SessionsTest do
 
     Enum.each(dirs, &File.mkdir_p!/1)
     on_exit(fn -> Enum.each(dirs, &File.rm_rf/1) end)
-
-    eventually = fn eventually, n ->
-      if Executions.lookup(orphaned.owner_id) == :error or n == 0,
-        do: :ok,
-        else:
-          (
-            Process.sleep(10)
-            eventually.(eventually, n - 1)
-          )
-    end
-
-    eventually.(eventually, 100)
 
     assert Spool.sweep() == 3
     assert Enum.map(dirs, &File.exists?/1) == [true, false, false, false]
