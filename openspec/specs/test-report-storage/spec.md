@@ -129,7 +129,7 @@ The API SHALL mark a report complete only when its final record is a suite-finis
 - **THEN** it is stored as incomplete
 
 ### Requirement: Only structural report data is accepted
-The API SHALL validate event types, allowlisted fields, identifiers, nullable metadata, nonnegative integer timings, outcomes and nested file aggregates. Unknown fields, duplicate object keys, strings containing U+0000, captured logs, exception payloads, assertion values, arbitrary tags/parameters and unsupported formats MUST be rejected with 422. Objects and arrays MUST NOT nest more than 16 levels deep; a deeper body SHALL return 422 on `body` and SHALL be rejected before it is decoded. Error bodies SHALL use the existing validation error shape keyed by JSON path with fixed messages, without reflecting submitted values or submitted key names in errors or logs: an unknown or duplicate key SHALL be reported on its enclosing object. At most the first 50 errors, in document order, SHALL be returned.
+The API SHALL validate event types, allowlisted fields, identifiers, nullable metadata, nonnegative integer timings, outcomes and nested file aggregates. Unknown fields, duplicate object keys, strings containing U+0000, captured logs, exception payloads, assertion values, per-test tags (suite filter tags are governed by "Suite filters accept boolean identifier tags"), parameter values and unsupported formats MUST be rejected with 422. Objects and arrays MUST NOT nest more than 16 levels deep; a deeper body SHALL return 422 on `body` and SHALL be rejected before it is decoded. Error bodies SHALL use the existing validation error shape keyed by JSON path with fixed messages, without reflecting submitted values or submitted key names in errors or logs: an unknown or duplicate key SHALL be reported on its enclosing object. At most the first 50 errors, in document order, SHALL be returned.
 
 #### Scenario: Raw failure payload
 - **WHEN** an otherwise valid report includes an exception message or captured logs
@@ -146,6 +146,37 @@ The API SHALL validate event types, allowlisted fields, identifiers, nullable me
 #### Scenario: Unknown nonexecuted metadata
 - **WHEN** skipped tests have null duration, async status or parameter identity
 - **THEN** those nulls are accepted without fabricating execution cost
+
+### Requirement: Suite filters accept boolean identifier tags
+Each entry in `suite_started` `filters.include` and `filters.exclude` SHALL contain only `tag` and `value`; an extra key MUST return 422 `has an unknown field` on that entry. `tag` MUST be 1 to 128 bytes matching the whole of `[A-Za-z0-9][A-Za-z0-9._-]*` (a trailing newline does not match). Tags are case-sensitive and SHALL be stored without normalization. `value` MUST be a JSON boolean. Each of `include` and `exclude` MUST have at most 256 entries. Entries MUST be stored in the supplied order, including a repeated tag. A tag outside that grammar, a value that is not a boolean, or a list over 256 entries MUST return 422 on that field with a fixed message and store nothing. A list over 256 entries SHALL be reported only on the list itself; its entries are not checked.
+
+#### Scenario: Boolean identifier tags from any project
+- **WHEN** `filters.include` is `[{"tag": "slow", "value": true}]` and `filters.exclude` is `[{"tag": "chrome", "value": true}]`
+- **THEN** the report is accepted and both entries are stored unchanged
+
+#### Scenario: Repeated tags keep their order
+- **WHEN** `filters.exclude` lists `{"tag": "slow", "value": true}` and then `{"tag": "slow", "value": false}`
+- **THEN** the stored array has those two entries in that order
+
+#### Scenario: Tag outside the identifier grammar
+- **WHEN** a filter `tag` is `slow test`, `ok?`, `slow` followed by a newline, or longer than 128 bytes
+- **THEN** the API returns 422 on that `tag` with a fixed message that does not include the submitted tag, and stores nothing
+
+#### Scenario: Non-boolean filter value
+- **WHEN** a filter entry has `tag` `qpdf` and `value` `on`
+- **THEN** the API returns 422 on that `value` and stores nothing
+
+#### Scenario: Case-sensitive tags
+- **WHEN** `filters.include` lists `{"tag": "Chrome", "value": true}` and `{"tag": "chrome", "value": true}`
+- **THEN** the report is accepted and both entries are stored as distinct, unnormalized tags
+
+#### Scenario: Extra key in a filter entry
+- **WHEN** a filter entry is `{"tag": "slow", "value": true, "note": "x"}`
+- **THEN** the API returns 422 `has an unknown field` on that entry, without echoing `note`, and stores nothing
+
+#### Scenario: Too many filter entries
+- **WHEN** `filters.include` has 257 entries
+- **THEN** the API returns 422 with the single error `must not have more than 256 entries` on that `suite_started` record's `filters.include` (e.g. `report.records[0].filters.include`) and stores nothing
 
 ### Requirement: Invalid or oversized requests are atomic failures
 Requests SHALL be limited to 32 MiB before JSON decoding and 100,000 event records. A declared Content-Length over the limit SHALL return 413 without reading the body, and a streamed body exceeding the limit SHALL return 413. Requests whose Content-Type is not `application/json`, or whose Content-Encoding is present and not `identity`, SHALL return 415. Malformed JSON SHALL return 400, reports with more than 100,000 records SHALL return 422 on `report.records`, other structurally invalid documents SHALL return 422, and connection failures or timeouts during report persistence SHALL return 503 with `Retry-After`. A project deleted between project lookup and insert SHALL return 404; any other referenced row (the submitting API key or the account) disappearing before the insert SHALL return 503 with `Retry-After` and store nothing. Parser errors SHALL render JSON bodies regardless of the Accept header. A configurable per-node cap (default 2) and a configurable per-account cap (default 1) SHALL limit concurrent uploads; an admitted upload SHALL hold its slot through body reads, decoding, validation and persistence. An authenticated upload denied admission by either cap MUST return 503 with `Retry-After` without reading its body or writing a report. Admission MUST be released on success, errors and request-process termination. The body SHALL be read against a configurable overall deadline (default 60 seconds); a body not fully received by then SHALL return 408, store nothing and release admission. Transient database errors during persistence (connection failures, timeouts, serialization failures, deadlocks, insufficient resources, operator intervention and lock unavailability) SHALL return 503 with `Retry-After`; other database errors SHALL NOT expose the database message. Requests rejected before persistence MUST leave no report row behind. A persistence connection failure or timeout MAY leave a committed row when commit confirmation was lost; the API MUST return 503 without acknowledging an uncertain outcome, and an exact frozen retry MUST resolve through the same idempotency rules. Ingestion MUST NOT change unrelated API body limits.

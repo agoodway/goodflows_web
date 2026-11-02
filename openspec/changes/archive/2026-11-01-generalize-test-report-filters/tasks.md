@@ -1,0 +1,26 @@
+# Tasks
+
+## 1. Suite filter tags
+
+- [x] 1.1 In `app/test/good_flows/test_reports/validator_test.exs`, in the `suite_started fields are checked` test, replace the assertion that `{"tag": "slow", "value": true}` is `is invalid` on `report.records[0].filters.include[0].tag`. Error paths below are rendered paths on the `complete` fixture's `suite_started` record (record 0), e.g. `report.records[0].filters.include[0].tag`. Assert that:
+  - `filters.include` of `slow`/`true` and `filters.exclude` of `chrome`/`true` validate and are kept;
+  - `Chrome`/`true` and `chrome`/`true` in one `include` both validate as distinct entries, and `1x.a-b` validates;
+  - `exclude` of `slow`/`true` then `slow`/`false` stays in that order;
+  - tags `slow test`, `ok?` and `"slow\n"` return an error on that `tag` path with `has invalid format`, a 129-byte tag returns `is too long`, `""` returns `can't be blank`, and integer `1` returns `must be a string`, and no error list contains the submitted tag;
+  - `qpdf` with value `on` is still rejected on `value`;
+  - a filter entry `{"tag": "slow", "value": true, "note": "x"}` returns `has an unknown field` on that entry's path, without `note` in the errors;
+  - a `test_started` or `test_finished` event with a per-test `tags` key returns `has an unknown field` on its enclosing object;
+  - `filters.include` with 257 entries returns exactly one error, `must not have more than 256 entries` on `report.records[0].filters.include`, and no per-entry errors (257 `ok?` entries still yield only that error); 256 valid entries validate.
+
+  Build these from the frozen fixtures with `put_at`; do not edit `test/support/fixtures/test_reports/*.json`, which are shared with goodci and goodcases. Run `mix test test/good_flows/test_reports/validator_test.exs` from `app/` and confirm the new acceptance cases fail before changing the validator.
+- [x] 1.2 In `app/lib/good_flows/test_reports/validator.ex`, type each filter `tag` with `identifier/0`, and delete `@filter_tags` and `filter_tags/0`. Add a list length bound to `GoodFlows.TestReports.Shape` as `{:list, spec, opts}` with a required `:max` in the keyword list `opts` (matched as `{:list, spec, opts} when is_list(opts)` and read with `Keyword.fetch!(opts, :max)`, so `max: n` is one form of it, not the only one), returning `must not have more than n entries`; a non-list value falls through to the `{:list, spec}` clause (`must be an array`): like `records_errors/2` in the validator, a list over the bound gets only that error on the list path and its entries are not checked. Document the new spec form in the `Shape` moduledoc. Use it with 256 (`@max_filters`, exposed as `Validator.max_filters/0`) for `filters.include` and `filters.exclude`. Add a matching `to_schema({:list, spec, opts}, events) when is_list(opts)` clause to `GoodFlowsWeb.Schemas.TestReportParts` that publishes the bound as `maxItems` (the existing `{:list, spec}` clause stays for `files`). Re-run `mix test test/good_flows/test_reports/validator_test.exs` from `app/` and confirm it passes.
+- [x] 1.3 In `app/test/good_flows_web/controllers/api/v1/test_report_controller_test.exs`, post a report whose include is `slow`/`true` and whose exclude is `chrome`/`true` then `slow`/`true` then `slow`/`false`, assert `201`, and assert `Report.payload` keeps every entry in that order. Post a tag `slow test` and assert `422` with `body["errors"]["report.records[0].filters.include[0].tag"] == ["has invalid format"]`, a raw response body that does not contain `slow test`, and no new row (`report_count/0` unchanged). Run `mix test test/good_flows_web/controllers/api/v1/test_report_controller_test.exs` from `app/` and confirm it passes.
+- [x] 1.4 In the test-report section of `app/lib/good_flows_web/api_spec.ex`, add a bullet after the `records` bullet: "`suite_started` `filters.include` and `filters.exclude` entries are `{tag, value}`: `tag` uses the `suite_id` grammar and `value` is a boolean; each list has at most 256 entries; non-boolean filters are not accepted." Generate the 256 from `Validator.max_filters/0` rather than typing it. Extend `app/test/good_flows_web/controllers/api/v1/openapi_test.exs` to:
+  - assert the description contains `uses the \`suite_id\` grammar`;
+  - assert the description contains `each list has at most 256 entries`, built from `Validator.max_filters/0`;
+  - assert `OpenApiSpex.cast_value/3` accepts the `TestReportRequest` schema with 256 `include` entries and rejects it with 257;
+  - find the `TestReportEvent` `oneOf` entry titled `TestReport_SuiteStarted` and assert, for both `filters.properties.include` and `filters.properties.exclude`, that `maxItems` is 256 and `items.properties.tag` is `%{"type" => "string", "minLength" => 1, "maxLength" => 128, "pattern" => "^[A-Za-z0-9][A-Za-z0-9._-]*$"}` with no `"enum"` key;
+  - `assert_schema` the `complete` fixture with a `slow`/`true` include added via `put_at`.
+
+  Do not use `cast_value` to test trailing-newline rejection (PCRE `$` matches before a final newline); that case is covered by the validator in 1.1. Run `mix test test/good_flows_web/controllers/api/v1/openapi_test.exs` from `app/` and confirm it passes.
+- [x] 1.5 Run `mix precommit` from `app/` and `openspec validate generalize-test-report-filters --strict` from the repo root, and confirm both pass.
