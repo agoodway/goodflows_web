@@ -81,3 +81,8 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# Sprite pools: the credential fingerprint secret (production reads
+# POOL_FINGERPRINT_SECRET, falling back to SECRET_KEY_BASE).
+config :good_flows, GoodFlows.Pools,
+  fingerprint_secret: "Ex49NDa1P6khwfPeLNp4a5QVlbhVQkQlCgEqV9bwPCc+dkXlU5mCKSICegOmvyOu"

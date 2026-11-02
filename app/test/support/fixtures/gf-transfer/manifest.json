@@ -1,0 +1,9 @@
+{
+  "name": "gf-transfer",
+  "version": "0.1.0",
+  "protocol": 1,
+  "artifacts": [
+    {"target": "x86_64-unknown-linux-musl", "arch": "x86_64", "path": "x86_64-unknown-linux-musl/gf-transfer", "sha256": "4177f80c59decb2d1d7add84d4d87d710358fd4e6ad5c8aeed7c66b80bf65f55", "size": 31},
+    {"target": "aarch64-unknown-linux-musl", "arch": "aarch64", "path": "aarch64-unknown-linux-musl/gf-transfer", "sha256": "466a4c531c1f3387a84b01f292c6afa58525eb0dde7033bb1bbeba0758cbce86", "size": 32}
+  ]
+}

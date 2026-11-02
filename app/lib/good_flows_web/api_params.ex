@@ -29,6 +29,18 @@ defmodule GoodFlowsWeb.ApiParams do
     project() ++ [id: [in: :path, type: :string, description: "Recipe ID", required: true]]
   end
 
+  @doc "The `:project` and `:pool` (pool slug) path parameters."
+  @spec pool() :: keyword()
+  def pool do
+    project() ++ [pool: [in: :path, type: :string, description: "Pool slug", required: true]]
+  end
+
+  @doc "The `503` response for pool routes while pools are disabled on the server."
+  @spec pools_disabled() :: {String.t(), String.t(), module()}
+  def pools_disabled do
+    {"Sprite pools are disabled on this server", "application/json", ErrorResponse}
+  end
+
   @doc "The `404` response for a route scoped to a project's recipe."
   @spec recipe_not_found() :: {String.t(), String.t(), module()}
   def recipe_not_found do

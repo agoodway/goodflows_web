@@ -9,13 +9,16 @@ defmodule GoodFlows.Spry.ReaperScheduler do
   tick a scheduler claims the `:global` leader name if nobody holds it, and
   enqueues only while it holds that name. When the leader's node goes away
   `:global` drops its registration and the next tick on another node takes
-  over. If a netsplit heals with two leaders, `:global` unregisters both
-  and the next tick elects one again. Sweeps are idempotent, so the rare
+  over. If a netsplit heals with two leaders, `:global` keeps the name for
+  one of them (at random) and unregisters the other, which then finds the
+  name taken on its next tick. Sweeps are idempotent, so the rare
   overlap during such a handover is harmless.
   """
   use GenServer
 
   require Logger
+
+  alias GoodFlows.Leadership
 
   @interval_ms 5 * 60_000
   @leader_name __MODULE__.Leader
@@ -55,27 +58,15 @@ defmodule GoodFlows.Spry.ReaperScheduler do
 
   @impl GenServer
   def handle_info(:tick, state) do
-    if claim_leadership(state.leader_name), do: state.enqueue.()
+    if Leadership.claim(state.leader_name), do: state.enqueue.()
     schedule(state.interval_ms)
     {:noreply, state}
   end
 
   # Sent by :global.random_notify_name/3 when a healed netsplit finds two
-  # leaders; both are unregistered and the next tick elects one.
+  # leaders: one keeps the name and the other is unregistered and gets this;
+  # its next tick finds the name taken.
   def handle_info({:global_name_conflict, _name}, state), do: {:noreply, state}
-
-  defp claim_leadership(name) do
-    case :global.whereis_name(name) do
-      pid when pid == self() ->
-        true
-
-      :undefined ->
-        :global.register_name(name, self(), &:global.random_notify_name/3) == :yes
-
-      _other ->
-        false
-    end
-  end
 
   defp enqueue_sweep do
     case PgFlow.enqueue(GoodFlows.Spry.ReapRunsJob, %{}) do

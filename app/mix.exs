@@ -155,6 +155,9 @@ defmodule GoodFlows.MixProject do
         "doctor",
         "sobelow --config",
         "dialyzer",
+        # Builds the gf-transfer helper so the :helper_binary tests (real
+        # workspace and report transfers) run instead of being skipped.
+        "cmd cargo build --quiet --manifest-path ../sprite-transfer/Cargo.toml",
         # Includes the :slow tests that a plain `mix test` excludes.
         "test --include slow"
       ],

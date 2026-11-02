@@ -9,8 +9,9 @@ defmodule GoodFlowsWeb.Plugs.RequireParsedBody do
   Requests without a `Content-Type` are parsed to `%{}` and pass through.
 
   Runs after `GoodFlowsWeb.Plugs.ApiAuth` on write scopes, so `401` and
-  `403` come first. Test report uploads are skipped: their body is
-  deliberately unparsed and read by `GoodFlowsWeb.Plugs.TestReportBody`.
+  `403` come first. Raw-body routes (`GoodFlowsWeb.Plugs.BodyParsers.raw_body_route?/1`:
+  test report and pool workspace uploads) are skipped: their body is
+  deliberately unparsed and read by their own controllers.
   """
   @behaviour Plug
 
@@ -28,7 +29,7 @@ defmodule GoodFlowsWeb.Plugs.RequireParsedBody do
   @impl Plug
   def call(%Plug.Conn{method: method, body_params: %Plug.Conn.Unfetched{}} = conn, _opts)
       when method in @body_methods do
-    if BodyParsers.test_report_upload?(conn) do
+    if BodyParsers.raw_body_route?(conn) do
       conn
     else
       conn

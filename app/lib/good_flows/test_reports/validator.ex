@@ -1,7 +1,10 @@
 defmodule GoodFlows.TestReports.Validator do
   @moduledoc """
   Validates an `exunit-timings` test report document against the wire
-  contract (design D1 of the `store-test-timings` change).
+  contract specified in `openspec/specs/test-report-storage/spec.md`.
+  `suite_started` filter tags use the same identifier grammar as
+  `suite_id`, with boolean values and at most `max_filters/0` entries in
+  each of `include` and `exclude`.
 
   Validation runs in two passes. The structural pass checks every field's
   presence, type and bounds and rejects unknown fields at every level,
@@ -19,10 +22,10 @@ defmodule GoodFlows.TestReports.Validator do
   alias GoodFlows.TestReports.{Completion, Consistency, Document, Shape}
 
   @max_records 100_000
+  @max_filters 256
 
   @outcomes ~w(passed failed skipped excluded invalid)
   @job_statuses ~w(passed failed timed_out cancelled skipped unknown)
-  @filter_tags ~w(chrome goodaudit_integration athena_preview chromic_teardown qpdf)
 
   @uuid ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/
   @identifier ~r/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/
@@ -36,6 +39,10 @@ defmodule GoodFlows.TestReports.Validator do
   @spec max_records() :: pos_integer()
   def max_records, do: @max_records
 
+  @doc "Maximum number of entries in each `suite_started` filter list."
+  @spec max_filters() :: pos_integer()
+  def max_filters, do: @max_filters
+
   @doc "Test and module outcome vocabulary."
   @spec outcomes() :: [String.t()]
   def outcomes, do: @outcomes
@@ -43,10 +50,6 @@ defmodule GoodFlows.TestReports.Validator do
   @doc "Accepted `job_status` values."
   @spec job_statuses() :: [String.t()]
   def job_statuses, do: @job_statuses
-
-  @doc "Accepted filter tags."
-  @spec filter_tags() :: [String.t()]
-  def filter_tags, do: @filter_tags
 
   @doc """
   Validates a decoded document (the result of `Document.decode/1`, or plain
@@ -189,7 +192,7 @@ defmodule GoodFlows.TestReports.Validator do
   end
 
   defp event_fields("suite_started") do
-    filter = {:object, %{"tag" => {:enum, @filter_tags}, "value" => :boolean}}
+    filter = {:list, {:object, %{"tag" => identifier(), "value" => :boolean}}, max: @max_filters}
 
     %{
       "format" => {:enum, ["exunit-timings"]},
@@ -201,7 +204,7 @@ defmodule GoodFlows.TestReports.Validator do
       "schedulers" => positive(),
       "elixir_version" => {:string, min: 1, max: 128},
       "otp_release" => {:string, min: 1, max: 128},
-      "filters" => {:object, %{"include" => {:list, filter}, "exclude" => {:list, filter}}}
+      "filters" => {:object, %{"include" => filter, "exclude" => filter}}
     }
   end
 

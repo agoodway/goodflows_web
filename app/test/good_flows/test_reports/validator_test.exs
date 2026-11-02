@@ -536,6 +536,148 @@ defmodule GoodFlows.TestReports.ValidatorTest do
       )
     end
 
+    test "suite filters accept boolean identifier tags in supplied order" do
+      complete = report("complete")
+      include = [%{"tag" => "slow", "value" => true}]
+
+      exclude = [
+        %{"tag" => "chrome", "value" => true},
+        %{"tag" => "slow", "value" => true},
+        %{"tag" => "slow", "value" => false}
+      ]
+
+      document =
+        complete
+        |> put_at(["report", "records", 0, "filters"], %{
+          "include" => include,
+          "exclude" => exclude
+        })
+
+      assert {:ok, accepted, "complete"} = validate(document)
+      assert hd(records(accepted))["filters"] == %{"include" => include, "exclude" => exclude}
+
+      cased = [
+        %{"tag" => "Chrome", "value" => true},
+        %{"tag" => "chrome", "value" => true},
+        %{"tag" => "1x.a-b", "value" => false}
+      ]
+
+      assert {:ok, accepted, "complete"} =
+               validate(put_at(complete, ["report", "records", 0, "filters", "include"], cased))
+
+      assert hd(records(accepted))["filters"]["include"] == cased
+
+      longest = [%{"tag" => String.duplicate("a", 128), "value" => true}]
+
+      assert {:ok, accepted, "complete"} =
+               validate(put_at(complete, ["report", "records", 0, "filters", "include"], longest))
+
+      assert hd(records(accepted))["filters"]["include"] == longest
+    end
+
+    test "suite filter tags outside the identifier grammar are rejected without echo" do
+      complete = report("complete")
+      path = "report.records[0].filters.include[0].tag"
+
+      for {tag, message} <- [
+            {"slow test", "has invalid format"},
+            {"ok?", "has invalid format"},
+            {"slow\n", "has invalid format"},
+            {String.duplicate("a", 129), "is too long"},
+            {"", "can't be blank"},
+            {1, "must be a string"}
+          ] do
+        document =
+          put_at(complete, ["report", "records", 0, "filters", "include"], [
+            %{"tag" => tag, "value" => true}
+          ])
+
+        errors = assert_error(document, path, message)
+        assert errors[path] == [message], inspect({tag, errors})
+
+        if is_binary(tag) and tag != "",
+          do: refute(inspect(errors) =~ inspect(tag) or Jason.encode!(errors) =~ tag)
+      end
+    end
+
+    test "suite filter values and entries keep their shape" do
+      complete = report("complete")
+
+      assert_error(
+        put_at(complete, ["report", "records", 0, "filters", "exclude"], [
+          %{"tag" => "qpdf", "value" => "on"}
+        ]),
+        "report.records[0].filters.exclude[0].value",
+        "must be a boolean"
+      )
+
+      errors =
+        assert_error(
+          put_at(complete, ["report", "records", 0, "filters", "include"], [
+            %{"tag" => "slow", "value" => true, "note" => "x"}
+          ]),
+          "report.records[0].filters.include[0]",
+          "has an unknown field"
+        )
+
+      refute Jason.encode!(errors) =~ "note"
+    end
+
+    test "per-test tags are rejected on test events" do
+      complete = report("complete")
+
+      for event <- ["test_started", "test_finished"] do
+        index = record_index(complete, event)
+
+        assert_error(
+          put_at(complete, ["report", "records", index, "tags"], ["slow"]),
+          "report.records[#{index}]",
+          "has an unknown field"
+        )
+      end
+    end
+
+    test "suite filter lists are capped at 256 entries" do
+      complete = report("complete")
+      path = ["report", "records", 0, "filters", "include"]
+      entry = &%{"tag" => &1, "value" => true}
+
+      for tag <- ["slow", "ok?"] do
+        assert {:error, {:invalid, errors}} =
+                 validate(put_at(complete, path, List.duplicate(entry.(tag), 257)))
+
+        assert errors == %{
+                 "report.records[0].filters.include" => ["must not have more than 256 entries"]
+               }
+      end
+
+      assert {:error, {:invalid, errors}} =
+               validate(
+                 put_at(
+                   complete,
+                   ["report", "records", 0, "filters", "exclude"],
+                   List.duplicate(entry.("slow"), 257)
+                 )
+               )
+
+      assert errors == %{
+               "report.records[0].filters.exclude" => ["must not have more than 256 entries"]
+             }
+
+      entries = Enum.map(1..256, &entry.("t#{&1}"))
+      assert {:ok, _document, "complete"} = validate(put_at(complete, path, entries))
+
+      assert {:ok, _document, "complete"} =
+               validate(put_at(complete, ["report", "records", 0, "filters", "exclude"], entries))
+
+      for {list, value} <- [{"include", %{}}, {"exclude", "x"}] do
+        assert {:error, {:invalid, errors}} =
+                 validate(put_at(complete, ["report", "records", 0, "filters", list], value))
+
+        assert errors == %{"report.records[0].filters.#{list}" => ["must be an array"]}
+      end
+    end
+
     test "suite_started fields are checked" do
       complete = report("complete")
 
@@ -553,21 +695,6 @@ defmodule GoodFlows.TestReports.ValidatorTest do
         put_at(complete, ["report", "records", 0, "max_cases"], 0),
         "report.records[0].max_cases",
         "must be a positive integer"
-      )
-
-      assert_error(
-        put_at(complete, ["report", "records", 0, "filters", "include"], [
-          %{"tag" => "slow", "value" => true}
-        ]),
-        "report.records[0].filters.include[0].tag",
-        "is invalid"
-      )
-
-      assert_error(
-        put_at(complete, ["report", "records", 0, "filters", "exclude"], [
-          %{"tag" => "qpdf", "value" => "on"}
-        ]),
-        "report.records[0].filters.exclude[0].value"
       )
 
       assert_error(
