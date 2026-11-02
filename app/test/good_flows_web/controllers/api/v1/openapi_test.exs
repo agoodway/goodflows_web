@@ -35,7 +35,14 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/recipes/{id}", "delete"},
     {"/api/v1/projects/{project}/recipes/{id}/runs", "get"},
     {"/api/v1/projects/{project}/recipes/{id}/runs", "post"},
-    {"/api/v1/projects/{project}/test-reports", "post"}
+    {"/api/v1/projects/{project}/test-reports", "post"},
+    {"/api/v1/projects/{project}/pools", "get"},
+    {"/api/v1/projects/{project}/pools", "post"},
+    {"/api/v1/projects/{project}/pools/{pool}", "get"},
+    {"/api/v1/projects/{project}/pools/{pool}", "put"},
+    {"/api/v1/projects/{project}/pools/{pool}", "delete"},
+    {"/api/v1/projects/{project}/pools/{pool}/members", "get"},
+    {"/api/v1/projects/{project}/pools/{pool}/sessions", "post"}
   ]
 
   test "documents the project slug rule on every project path parameter", %{conn: conn} do

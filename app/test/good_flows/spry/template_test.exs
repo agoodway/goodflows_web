@@ -101,4 +101,15 @@ defmodule GoodFlows.Spry.TemplateTest do
       assert Template.expand("echo hi", %{}) == {:ok, "echo hi"}
     end
   end
+
+  describe "reserved_sprite_name?/1" do
+    test "only a literal gfp- prefix is reserved" do
+      assert Template.reserved_sprite_name?("gfp-x")
+      assert Template.reserved_sprite_name?("gfp-")
+      refute Template.reserved_sprite_name?("app-gfp")
+      refute Template.reserved_sprite_name?("gfp")
+      refute Template.reserved_sprite_name?("gfpx-a")
+      refute Template.reserved_sprite_name?("GFP-x")
+    end
+  end
 end

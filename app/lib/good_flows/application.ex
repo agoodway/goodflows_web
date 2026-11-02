@@ -5,6 +5,7 @@ defmodule GoodFlows.Application do
 
   use Application
 
+  alias GoodFlows.Pools.Config, as: PoolsConfig
   alias GoodFlows.Spry.Config, as: SpryConfig
   alias GoodFlows.Spry.Redaction, as: SpryRedaction
 
@@ -15,6 +16,7 @@ defmodule GoodFlows.Application do
     SpryRedaction.install_logger_filter()
     Logger.add_handlers(:good_flows)
     SpryConfig.validate!()
+    PoolsConfig.validate!()
 
     children =
       [
@@ -23,7 +25,14 @@ defmodule GoodFlows.Application do
         GoodFlows.Vault,
         GoodFlows.Spry.Executions,
         {Task.Supervisor, name: GoodFlows.Spry.TaskSupervisor},
-        {Phoenix.PubSub, name: GoodFlows.PubSub}
+        {Phoenix.PubSub, name: GoodFlows.PubSub},
+        # Pools: the drain starts first so it stops last, after the endpoint
+        # (channels), exec servers, and session coordinators.
+        GoodFlows.Pools.ShutdownDrain,
+        GoodFlows.Pools.Spool,
+        GoodFlows.Pools.TransferSemaphore,
+        {DynamicSupervisor, name: GoodFlows.Pools.CoordinatorSupervisor, strategy: :one_for_one},
+        {DynamicSupervisor, name: GoodFlows.Pools.ExecSupervisor, strategy: :one_for_one}
       ] ++
         pgflow_children() ++
         [
@@ -49,7 +58,21 @@ defmodule GoodFlows.Application do
   # workers and finalizes any run they left running.
   @doc false
   def pgflow_children(opts) do
-    [GoodFlows.Spry.ShutdownDrain, {PgFlow, opts}, GoodFlows.Spry.ReaperScheduler]
+    [
+      GoodFlows.Spry.ShutdownDrain,
+      {PgFlow, opts},
+      GoodFlows.Spry.ReaperScheduler,
+      GoodFlows.Pools.Reconciler
+    ]
+  end
+
+  # Before any child stops: pool admission ends at once, so no session,
+  # upload, or exec starts while the endpoint and coordinators wind down
+  # (Pools.ShutdownDrain ends the node's sessions after them).
+  @impl true
+  def prep_stop(state) do
+    GoodFlows.Pools.ShutdownDrain.stop_admission()
+    state
   end
 
   # Tell Phoenix to update the endpoint configuration

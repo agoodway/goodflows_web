@@ -228,6 +228,48 @@ defmodule GoodFlowsWeb.Api.V1.RunControllerTest do
       assert GoodFlows.Repo.aggregate(GoodFlows.Spry.Run, :count) == 0
     end
 
+    test "an expanded name on the reserved gfp- prefix is 422 on sprite_name", ctx do
+      recipe = recipe_fixture(ctx.project, %{"name" => "{{branch_slug}}-app", "start" => ["x"]})
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{recipe.id}/runs"
+
+      body =
+        ctx.sk_conn
+        |> post(path, %{"phase" => "start", "branch" => "gfp"})
+        |> json_response(422)
+
+      assert [message] = body["errors"]["sprite_name"]
+      assert message =~ "gfp-app"
+      assert message =~ "reserved"
+
+      body =
+        ctx.sk_conn
+        |> post(path, %{"phase" => "start", "branch" => "gfp", "dry_run" => true})
+        |> json_response(422)
+
+      assert body["errors"]["sprite_name"]
+      assert GoodFlows.Repo.aggregate(GoodFlows.Spry.Run, :count) == 0
+    end
+
+    test "a sprite override on the reserved gfp- prefix is 422 on sprite", ctx do
+      path = ~p"/api/v1/projects/#{ctx.project.slug}/recipes/#{ctx.recipe.id}/runs"
+
+      body =
+        ctx.sk_conn
+        |> post(path, %{"phase" => "start", "sprite" => "gfp-demo"})
+        |> json_response(422)
+
+      assert [message] = body["errors"]["sprite"]
+      assert message =~ "reserved"
+
+      body =
+        ctx.sk_conn
+        |> post(path, %{"phase" => "start", "sprite" => "gfp-demo", "dry_run" => true})
+        |> json_response(422)
+
+      assert [_message] = body["errors"]["sprite"]
+      assert GoodFlows.Repo.aggregate(GoodFlows.Spry.Run, :count) == 0
+    end
+
     test "dry run returns the plan with 200 and creates nothing", ctx do
       stub(Wrapper, :exists?, fn _client, "app-feat-x", _opts -> {:ok, false} end)
 

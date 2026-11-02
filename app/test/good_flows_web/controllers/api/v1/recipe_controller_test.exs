@@ -86,6 +86,22 @@ defmodule GoodFlowsWeb.Api.V1.RecipeControllerTest do
       assert body["errors"]["name"]
     end
 
+    test "a name with the reserved gfp- prefix is 422 on name", %{sk_conn: conn} = ctx do
+      for name <- ["gfp-{{branch_slug}}", "gfp-app"] do
+        body = conn |> post(recipes_path(ctx.project), %{"name" => name}) |> json_response(422)
+        assert [message] = body["errors"]["name"]
+        assert message =~ "gfp-"
+        assert message =~ "reserved"
+      end
+
+      # Only the literal prefix is reserved.
+      conn |> post(recipes_path(ctx.project), %{"name" => "app-gfp"}) |> json_response(201)
+
+      conn
+      |> post(recipes_path(ctx.project), %{"name" => "{{branch_slug}}-app"})
+      |> json_response(201)
+    end
+
     test "duplicate names in one account are 422, other accounts may reuse", ctx do
       ctx.sk_conn |> post(recipes_path(ctx.project), %{"name" => "demo"}) |> json_response(201)
 

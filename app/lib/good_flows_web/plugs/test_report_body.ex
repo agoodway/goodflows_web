@@ -50,7 +50,7 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
   import Plug.Conn
 
   alias GoodFlows.TestReports.Document
-  alias GoodFlowsWeb.TestReportAdmission
+  alias GoodFlowsWeb.{RawBodyHeaders, TestReportAdmission}
   alias Plug.Conn.Utils
 
   @default_max_body_bytes 33_554_432
@@ -81,8 +81,8 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
     limit = max_body_bytes()
 
     with :ok <- check_content_type(conn),
-         :ok <- check_content_encoding(conn),
-         :ok <- check_declared_length(conn, limit),
+         :ok <- RawBodyHeaders.check_content_encoding(conn),
+         :ok <- RawBodyHeaders.check_declared_length(conn, limit),
          {:ok, conn} <- admit(conn) do
       conn
       |> read_and_decode(limit)
@@ -125,30 +125,6 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
     do: String.downcase(charset) == "utf-8"
 
   defp utf8_params?(_params), do: false
-
-  defp check_content_encoding(conn) do
-    case get_req_header(conn, "content-encoding") do
-      [] ->
-        :ok
-
-      [encoding] ->
-        if encoding |> String.trim() |> String.downcase() == "identity",
-          do: :ok,
-          else: {:error, :unsupported_encoding}
-
-      _several ->
-        {:error, :unsupported_encoding}
-    end
-  end
-
-  defp check_declared_length(conn, limit) do
-    with [value] <- get_req_header(conn, "content-length"),
-         {length, ""} when length > limit <- Integer.parse(String.trim(value)) do
-      {:error, :too_large}
-    else
-      _other -> :ok
-    end
-  end
 
   defp admit(conn) do
     account_id = with %{id: id} <- conn.assigns[:current_account], do: id

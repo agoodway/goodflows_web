@@ -41,7 +41,8 @@ defmodule GoodFlowsWeb.ApiSpec do
            starting with a letter or digit; unique in the account). Recipes
            live under `/api/v1/projects/{project}`; a slug with no project
            is `404` and is never created implicitly. A project that still
-           has recipes or stored test reports cannot be deleted (`409`).
+           has recipes, stored test reports, or pools cannot be deleted
+           (`409`).
         2. **Set the Sprites credential** with `PUT /api/v1/sprites-credential`
            (a private key of an account owner or admin). The token is stored
            encrypted and is never returned; every VM operation for the account
@@ -105,6 +106,55 @@ defmodule GoodFlowsWeb.ApiSpec do
           `active_run_id`. If runs for the same sprite keep starting and
           finishing while a request is admitted, the API responds `503` with
           `Retry-After`; retry the request.
+
+        ## Sprite pools
+
+        A pool is a project's set of pre-built Sprite VMs ("members") that a
+        client leases to run jobs, so the Sprites token never leaves the
+        server. Members run the pool `setup` once and are restored to that
+        golden state after every lease. The full client contract (channel
+        events, payloads, error codes, resume) is in `docs/pool-protocol.md`.
+
+        1. **Create a pool** with `POST /api/v1/projects/{project}/pools`
+           (`slug`, `setup`, `min_ready`, `max_members`; the account needs a
+           Sprites credential). Members are named `gfp-…`; recipe names and
+           run sprite names may not use that prefix. A project with pools
+           cannot be deleted (`409`).
+        2. **Start a session** with
+           `POST /api/v1/projects/{project}/pools/{pool}/sessions`. It
+           returns a channel `topic`. Only the creating key may use it.
+        3. **Connect** to the Phoenix Channels v2 WebSocket at
+           `/api/v1/socket/websocket?vsn=2.0.0` with the private key as the
+           socket auth token (`Sec-WebSocket-Protocol: phoenix,
+           base64url.bearer.phx.<unpadded standard base64 of the key>`; a key
+           in the query string is refused) and join `pool_session:<id>`.
+           Join errors: `not_found`, `forbidden`, `ended`.
+        4. **Upload the workspace** once with
+           `PUT /api/v1/pool-sessions/{id}/workspace` (`application/gzip`
+           tar, 256 MiB by default). Members are announced `member_granted`,
+           then `member_ready` once it is extracted into `/workspace`.
+        5. **Run commands** with the channel event `exec` (`member_id`,
+           `command` or `argv`, `cwd`, `env`, `timeout_ms`,
+           `collect_reports`, `job`, `step`): `output` events (base64 `data`,
+           per-exec `seq`), then `exit` with the status, exit code, the
+           `GOODFLOWS_OUTPUT` file (at most 65,537 bytes), and the report
+           manifest. `cancel` kills an exec. After a reconnect, `resume`
+           replays buffered output (a `gap` names lost ranges) and the exit.
+           Reports download from
+           `GET /api/v1/pool-execs/{exec_id}/reports/{name}` until the
+           member runs another exec (`410`).
+        6. **Release** with the channel event `release` or
+           `DELETE /api/v1/pool-sessions/{id}`. A session with no client
+           for 60 seconds expires (`client_disconnected`), as does one with
+           no member by its acquisition timeout (`no_member_available`),
+           after its lifetime (`lifetime_exceeded`), when its key is
+           revoked (`key_revoked`), or when its server is lost
+           (`session_owner_lost`). Running execs end before `session_ended`.
+
+        Pool, session, workspace, and report routes answer `503` while pools
+        are disabled on the server (except pool deletion, which stays
+        available so a rollback can be cleaned up), and the pool socket
+        refuses connections (HTTP `403`).
 
         ## Test reports
 

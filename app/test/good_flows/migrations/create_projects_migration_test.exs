@@ -13,16 +13,19 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
   @version 20_261_101_190_000
   @migration GoodFlows.Repo.Migrations.CreateProjects
 
-  # `test_reports` references `projects`, so it is rolled back first.
+  # `test_reports` and `pools` reference `projects`, so they are rolled back first.
   @reports_version 20_261_101_200_000
   @reports_migration GoodFlows.Repo.Migrations.CreateTestReports
+  @pools_version 20_261_102_100_000
+  @pools_migration GoodFlows.Repo.Migrations.CreateSpritePools
 
   setup_all do
     # `mix test` usually loaded them already through `ecto.migrate`;
     # compiling them again would only warn about redefining the modules.
     for {module, file} <- [
           {@migration, "#{@version}_create_projects.exs"},
-          {@reports_migration, "#{@reports_version}_create_test_reports.exs"}
+          {@reports_migration, "#{@reports_version}_create_test_reports.exs"},
+          {@pools_migration, "#{@pools_version}_create_sprite_pools.exs"}
         ],
         not Code.ensure_loaded?(module) do
       Code.require_file(file, Migrator.migrations_path(Repo))
@@ -61,6 +64,7 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
   test "down and up round-trip; up refuses existing recipes" do
     assert migrated?()
+    assert migrate(@pools_version, @pools_migration, :down) == [@pools_version]
     assert migrate(@reports_version, @reports_migration, :down) == [@reports_version]
     refute table?("test_reports")
     assert migrate(:down) == [@version]
@@ -94,6 +98,8 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
     assert migrate(@reports_version, @reports_migration, :up) == [@reports_version]
     assert table?("test_reports")
+    assert migrate(@pools_version, @pools_migration, :up) == [@pools_version]
+    assert table?("pools")
   end
 
   test "down refuses while two projects of an account share a recipe name" do

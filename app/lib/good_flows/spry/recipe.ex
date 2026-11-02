@@ -29,6 +29,7 @@ defmodule GoodFlows.Spry.Recipe do
   import Ecto.Changeset
 
   alias GoodFlows.Accounts.Account
+  alias GoodFlows.ChangesetErrors
   alias GoodFlows.Projects.Project
   alias GoodFlows.Spry.Template
 
@@ -77,7 +78,7 @@ defmodule GoodFlows.Spry.Recipe do
     |> cast(Map.put(phase_values, "name", Map.get(attrs, "name")), [:name | @phases])
     |> validate_required([:name])
     |> validate_length(:name, max: @max_name_length)
-    |> add_errors(phase_errors)
+    |> ChangesetErrors.prepend(phase_errors)
     |> validate_no_org(attrs)
     |> validate_no_project(attrs)
     |> validate_name_placeholders()
@@ -144,14 +145,6 @@ defmodule GoodFlows.Spry.Recipe do
   # create atoms from request data.
   defp item_field(phase, index), do: "#{phase}[#{index}]"
 
-  # `Ecto.Changeset.add_error/4` is specced for atom keys, so errors are
-  # prepended directly; atom and string keys are both supported downstream.
-  defp add_errors(changeset, []), do: changeset
-
-  defp add_errors(%Ecto.Changeset{errors: existing} = changeset, errors) do
-    %{changeset | errors: Enum.reverse(errors) ++ existing, valid?: false}
-  end
-
   defp validate_no_org(changeset, attrs) do
     if Map.has_key?(attrs, "org") do
       add_error(
@@ -190,9 +183,20 @@ defmodule GoodFlows.Spry.Recipe do
   end
 
   defp name_format_errors(:name, name) do
-    if Template.valid_name_template?(name),
-      do: [],
-      else: [name: {"must form a valid sprite name (#{Template.sprite_name_rule()})", []}]
+    cond do
+      not Template.valid_name_template?(name) ->
+        [
+          name:
+            {"must form a valid sprite name (#{Template.sprite_name_rule()})",
+             validation: :format}
+        ]
+
+      Template.reserved_sprite_name?(name) ->
+        [name: {Template.reserved_prefix_message(), validation: :reserved_prefix}]
+
+      true ->
+        []
+    end
   end
 
   defp name_placeholder_error("sprite") do
@@ -215,6 +219,6 @@ defmodule GoodFlows.Spry.Recipe do
           placeholder: placeholder, phase: phase}}
       end
 
-    add_errors(changeset, errors)
+    ChangesetErrors.prepend(changeset, errors)
   end
 end

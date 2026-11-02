@@ -16,6 +16,7 @@ defmodule GoodFlows.DataCase do
   use ExUnit.CaseTemplate
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias GoodFlows.Pools.ShutdownDrain
 
   using do
     quote do
@@ -39,6 +40,23 @@ defmodule GoodFlows.DataCase do
   def setup_sandbox(tags) do
     pid = Sandbox.start_owner!(GoodFlows.Repo, shared: not tags[:async])
     on_exit(fn -> Sandbox.stop_owner(pid) end)
+
+    # Pool session coordinators and exec servers outlive the test process;
+    # stop them (before the sandbox owner) so they never touch the next
+    # test's data. Only shared-mode tests can have started any.
+    unless tags[:async], do: on_exit(&stop_pool_processes/0)
+  end
+
+  @doc "Stops every pool session coordinator and exec server on this node."
+  def stop_pool_processes do
+    for sup <- [GoodFlows.Pools.CoordinatorSupervisor, GoodFlows.Pools.ExecSupervisor],
+        {_, pid, _, _} <- DynamicSupervisor.which_children(sup),
+        is_pid(pid) do
+      DynamicSupervisor.terminate_child(sup, pid)
+    end
+
+    ShutdownDrain.reset()
+    :ok
   end
 
   @doc """
