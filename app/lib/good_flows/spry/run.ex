@@ -71,8 +71,7 @@ defmodule GoodFlows.Spry.Run do
       :inputs,
       :no_create,
       :no_destroy,
-      :plan,
-      :started_by_api_key_id
+      :plan
     ])
     |> validate_required([:phase, :sprite_name, :plan])
     |> validate_inclusion(:phase, @phases)

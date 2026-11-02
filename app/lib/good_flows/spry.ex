@@ -360,13 +360,16 @@ defmodule GoodFlows.Spry do
       inputs: plan.inputs,
       no_create: plan.no_create,
       no_destroy: plan.no_destroy,
-      plan: Plan.snapshot(plan),
+      plan: Plan.snapshot(plan)
+    }
+
+    run = %Run{
+      account_id: account.id,
+      recipe_id: recipe.id,
       started_by_api_key_id: Keyword.get(opts, :started_by_api_key_id)
     }
 
-    case Repo.insert(
-           Run.admission_changeset(%Run{account_id: account.id, recipe_id: recipe.id}, attrs)
-         ) do
+    case Repo.insert(Run.admission_changeset(run, attrs)) do
       {:ok, run} ->
         {:ok, run}
 
