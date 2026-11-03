@@ -1,0 +1,15 @@
+services:
+  postgres:
+    platforms: [linux]
+    command: sudo -u postgres /usr/lib/postgresql/15/bin/postgres -D /var/lib/postgresql/15/main -c config_file=/etc/postgresql/15/main/postgresql.conf
+    port: 5432
+  web:
+    platforms: [linux]
+    cwd: app
+    command: >-
+      ../.agents/resume &&
+      PHX_HOST="$(printf '%s' "$PUBLIC_URL" | cut -d/ -f3)" exec mix phx.server
+    health: /users/log-in
+    portal:
+      title: GoodFlows
+      description: 'Development login: user@example.com / password1234password1234'

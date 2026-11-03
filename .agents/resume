@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# No installs on wake. The database runs in Amp's supervisor, not a shell job.
+if ! pg_isready -q -h localhost -p 5432; then
+  amp orb service restart postgres
+fi
