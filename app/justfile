@@ -1,0 +1,24 @@
+up:
+  bash scripts/start_dev.sh
+
+port:
+  @bash scripts/dev_port.sh
+
+install:
+    mix deps.get
+    mix assets.setup
+
+deploy:
+
+test:
+    mix test
+
+test-scripts:
+    python3 -m unittest discover -s scripts/tests
+
+build:
+    mix compile
+
+clean:
+    mix clean
+    rm -rf _build deps
