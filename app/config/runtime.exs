@@ -29,6 +29,31 @@ if config_env() in [:dev, :test] do
   end)
 end
 
+# Worktrees get their own databases via BRANCH_DB (written to .env.*.local by
+# scripts/setup_branch_db.sh). Explicit test prefixes and partition suffixes
+# must override saved branch settings.
+if config_env() in [:dev, :test] do
+  branch = System.get_env("BRANCH_DB")
+
+  if branch && !Regex.match?(~r/\A[a-zA-Z0-9_]{1,24}\z/, branch) do
+    raise "BRANCH_DB must contain 1 to 24 letters, digits or underscores"
+  end
+
+  database =
+    if branch,
+      do: "good_flows_#{branch}_#{config_env()}",
+      else: "good_flows_#{config_env()}"
+
+  database =
+    if config_env() == :test,
+      do:
+        (System.get_env("TEST_DATABASE_PREFIX") || database) <>
+          (System.get_env("MIX_TEST_PARTITION") || ""),
+      else: database
+
+  config :good_flows, GoodFlows.Repo, database: database
+end
+
 # Sentry error tracking
 if sentry_dsn = System.get_env("SENTRY_DSN") do
   config :sentry,

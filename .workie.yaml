@@ -1,0 +1,24 @@
+# Workie configuration: each worktree gets its own directory and its own
+# dev and test databases (see app/scripts/setup_branch_db.sh).
+#
+#   workie begin feat/my-change    # create a worktree and its databases
+#   workie finish feat/my-change   # drop the databases and remove it
+
+# .env.dev and .env.test are committed and come with the worktree.
+# app/.env.local is gitignored, so copy it from the checkout workie runs in.
+# The Phoenix app lives in app/, so mix runs there.
+files_to_copy:
+  - app/.env.local
+
+hooks:
+  post_create:
+    - "app/scripts/warm_worktree_build.sh"
+    - "cd app && mix deps.get"
+    - "cd app && mix compile"
+    - "cd app && mix assets.setup"
+    - "cd app && mix assets.build"
+    - "app/scripts/setup_branch_db.sh"
+  pre_remove:
+    - "app/scripts/cleanup_branch_db.sh"
+  # Each command, not the whole list. A cold compile can pass 5 minutes.
+  timeout_minutes: 15
