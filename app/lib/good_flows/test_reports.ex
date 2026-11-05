@@ -2,7 +2,7 @@ defmodule GoodFlows.TestReports do
   @moduledoc """
   Storage-only ingestion of externally generated test reports.
 
-  `ingest/4` validates one `exunit-timings` report
+  `ingest/4` validates one `test-timings/1` report
   (`GoodFlows.TestReports.Validator`), derives its per-report completion
   (`GoodFlows.TestReports.Completion`) and stores it immutably under the
   authenticated account and the project from the request path. The project
@@ -69,7 +69,7 @@ defmodule GoodFlows.TestReports do
 
   @typedoc "Reasons `ingest/4` can fail."
   @type error ::
-          {:invalid, Validator.errors()}
+          {:invalid_test_report, Validator.errors()}
           | :not_found
           | :test_report_conflict
           | :test_report_storage_unavailable

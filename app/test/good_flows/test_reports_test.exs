@@ -304,7 +304,40 @@ defmodule GoodFlows.TestReportsTest do
       assert durations ==
                for(%{"event" => "test_finished", "duration_us" => d} <- kept, do: d)
 
-      assert 1500 in durations and 3050 in durations
+      assert 1500 in durations and 6300 in durations
+    end
+
+    test "reports from different runners are stored under the same rules", ctx do
+      exunit = report("complete")
+      jest = report("failed")
+
+      for document <- [exunit, jest] do
+        assert {:ok, %{id: id}} = TestReports.ingest(ctx.account, ctx.project, nil, document)
+        payload = Repo.get!(Report, id).payload
+
+        assert payload == document
+        assert hd(records(payload))["runner"] == hd(records(document))["runner"]
+
+        for {stored, sent} <- Enum.zip(records(payload), records(document)),
+            do: assert(stored["meta"] == sent["meta"])
+      end
+
+      assert [%{"name" => "exunit"}, %{"name" => "jest"}] =
+               Enum.map([exunit, jest], &hd(records(&1))["runner"])
+
+      assert count(project_id: ctx.project.id) == 2
+    end
+
+    test "a retired-format report is rejected and stores nothing", ctx do
+      retired =
+        report("complete")
+        |> Map.put("format", "exunit-timings")
+        |> put_at(["report", "records", 0, "format"], "exunit-timings")
+
+      assert TestReports.ingest(ctx.account, ctx.project, nil, retired) ==
+               {:error, {:invalid_test_report, %{"format" => ["is invalid"]}}}
+
+      assert count(project_id: ctx.project.id) == 0
     end
   end
 
@@ -392,18 +425,31 @@ defmodule GoodFlows.TestReportsTest do
 
       assert id == first.id
 
-      index = length(records(report("complete"))) - 1
-      files = Enum.at(records(report("complete")), index)["files"]
+      # `meta` objects are reordered too.
+      assert map_size(hd(records(report("complete")))["meta"]) > 1
+
+      # A test's nested `path` (Jest), reversed on both events of each pair.
+      failed = report("failed")
+      {:ok, _} = TestReports.ingest(ctx.account, ctx.project, nil, failed)
+
+      indexes =
+        for {%{"path" => [_, _ | _]}, index} <- Enum.with_index(records(failed)), do: index
+
+      # Two attempts of one retried test, each a started/finished pair.
+      assert [_, _, _, _] = indexes
 
       swapped =
-        put_at(report("complete"), ["report", "records", index, "files"], Enum.reverse(files))
+        Enum.reduce(indexes, failed, fn index, document ->
+          path = Enum.at(records(document), index)["path"]
+          put_at(document, ["report", "records", index, "path"], Enum.reverse(path))
+        end)
 
       assert {:ok, _payload, "complete"} = Validator.validate(swapped)
 
       assert TestReports.ingest(ctx.account, ctx.project, nil, swapped) ==
                {:error, :test_report_conflict}
 
-      assert count(project_id: ctx.project.id) == 1
+      assert count(project_id: ctx.project.id) == 2
     end
 
     test "a retry that loses the insert is compared by digest, not by payload", ctx do

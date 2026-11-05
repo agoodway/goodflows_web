@@ -1,20 +1,36 @@
 defmodule GoodFlows.TestReportFixtures do
   @moduledoc """
-  Synthetic `exunit-timings` test reports for the test report ingestion
-  contract (design D1 of `store-test-timings`).
+  Hand-written `test-timings/1` test reports for the test report ingestion
+  contract (`openspec/specs/test-timing-contract/spec.md`, mirrored from
+  goodflows `src/reporting/contract.rs`).
 
-  The JSON files in `test/support/fixtures/test_reports/` are the frozen
-  contract samples shared with the publisher (`goodci`) and producer
-  (`goodcases`) companion changes:
+  The JSON files in `test/support/fixtures/test_reports/` are:
 
-    * `complete.json` – a passing partition with every completed-run event
-      kind and nested file totals
-    * `failed.json` – a complete partition with a failed test and a failed job
-    * `incomplete.json` – a cancelled partition with `max_failures_reached`,
-      an unmatched `test_started` and `interrupted`, and no `suite_finished`
+    * `complete.json` – an ExUnit-shaped passing partition with filters,
+      a one-entry describe `path`, and skipped and excluded tests with a
+      null duration (the excluded one also with a null `file` and `line`)
+    * `failed.json` – a Jest-shaped complete partition with `filters: null`,
+      a nested describe `path`, a retried test written as two pairs with
+      distinct `execution_id`s and counted once, an errored group, and a
+      failed job
+    * `incomplete.json` – an ExUnit-shaped cancelled partition with
+      `max_failures_reached`, an unmatched `test_started` and
+      `interrupted`, and no `suite_finished`
 
-  They are synthetic: no logs, assertion data, failure payloads, parameter
-  values or project slug.
+  They are hand-written, not captured reporter output, but their `meta`
+  keys and field conventions follow what goodflows' reporters emit
+  (`reporters/exunit/lib/goodflows/ex_unit_reporter.ex` and
+  `reporters/jest/index.js`): `reporter`, `reporter_version` and
+  `filtered` on every `suite_started`; ExUnit's `async`/`setup_all`/
+  `parameter_id` on group and test events, `skip_reason` on skipped
+  tests, run-time buckets on `suite_finished` and no `test ` prefix in
+  `name`; Jest's `node_version`, `max_workers` and
+  `duration_resolution_us` on `suite_started`, null `line` with
+  `meta.line` on `test_finished`, `meta.invocations` only above one,
+  millisecond-resolution times and one `execution_id` counter for groups
+  and tests. Neither reporter writes `meta` on `interrupted` or
+  `max_failures_reached`. They contain no logs, assertion data, failure
+  payloads, parameter values or project slug.
   """
 
   alias GoodFlows.Accounts.Account
@@ -77,19 +93,18 @@ defmodule GoodFlows.TestReportFixtures do
 
   @doc """
   A valid, complete report of exactly `records` records (an even number of
-  at least 4): `suite_started`, `(records - 2) / 2` passed async tests in
-  one file, and a consistent `suite_finished`. Each test's `describe` is
-  padded so the JSON encoding is as close to `bytes` as possible without
-  exceeding it (it is never smaller than the unpadded report).
+  at least 4): `suite_started`, `(records - 2) / 2` passed tests of group
+  `M` (without group events), and a consistent `suite_finished`. Each
+  test's `name` is padded so the JSON encoding is as close to `bytes` as
+  possible without exceeding it (it is never smaller than the unpadded
+  report).
   """
   def large_report(records, bytes) when rem(records, 2) == 0 and records >= 4 do
     tests = div(records - 2, 2)
-    base = large_report_with_padding(tests, 0)
-    unpadded = base |> Jason.encode!() |> byte_size()
+    unpadded = tests |> large_report_with_padding(0) |> Jason.encode!() |> byte_size()
 
-    # `describe` appears in both events of a test; each padding byte also
-    # turns `null` into a string, which costs 2 bytes ("") minus 4 (null).
-    per_test = max(div(bytes - unpadded + 4 * tests, 2 * tests) - 2, 0)
+    # `name` appears in both events of a test.
+    per_test = max(div(bytes - unpadded, 2 * tests), 0)
     report = large_report_with_padding(tests, per_test)
     size = report |> Jason.encode!() |> byte_size()
 
@@ -102,10 +117,10 @@ defmodule GoodFlows.TestReportFixtures do
     base = report("complete")
     [suite_started | _] = records(base)
     suite_finished = List.last(records(base))
-    describe = if padding == 0, do: nil, else: String.duplicate("d", padding)
+    pad = String.duplicate("n", padding)
 
     common = %{
-      "run_id" => suite_started["run_id"],
+      "suite_id" => suite_started["suite_id"],
       "report_id" => suite_started["report_id"]
     }
 
@@ -115,14 +130,11 @@ defmodule GoodFlows.TestReportFixtures do
           Map.merge(common, %{
             "event" => "test_started",
             "received_offset_us" => id,
-            "module" => "M",
-            "name" => "t#{id}",
-            "description" => nil,
+            "group" => "M",
+            "path" => [],
+            "name" => "t#{id}" <> pad,
             "file" => "t.exs",
             "line" => 1,
-            "describe" => describe,
-            "async" => true,
-            "parameter_id" => nil,
             "execution_id" => id,
             "started_offset_us" => id
           })
@@ -137,30 +149,9 @@ defmodule GoodFlows.TestReportFixtures do
         ]
       end)
 
-    cost = fn count ->
-      %{
-        "test_count" => count,
-        "module_count" => 0,
-        "counts" => if(count == 0, do: %{}, else: %{"passed" => count}),
-        "test_duration_us" => count,
-        "observed_module_duration_us" => 0
-      }
-    end
-
-    file =
-      tests
-      |> cost.()
-      |> Map.merge(%{
-        "file" => "t.exs",
-        "async" => cost.(tests),
-        "sync" => cost.(0),
-        "unknown" => cost.(0)
-      })
-
     finished =
       Map.merge(suite_finished, %{
         "counts" => %{"passed" => tests},
-        "files" => [file],
         "received_offset_us" => tests + 1
       })
 

@@ -4,10 +4,12 @@ defmodule GoodFlows.TestReports.Completion do
   and job status.
 
   A report is `"complete"` only when its last record is `suite_finished`
-  with `aborted` false and both unfinished counters zero, no `interrupted`
-  or `max_failures_reached` record appears anywhere, and `report.truncated`
-  is false. Every other accepted report is `"incomplete"`. Failed tests or a
-  failed job do not make a report incomplete.
+  with `aborted` false and `unfinished_tests` and `unfinished_groups` both
+  zero, no `interrupted` or `max_failures_reached` record appears anywhere,
+  and `report.truncated` is false. Every other accepted report is
+  `"incomplete"`. Failed or errored tests and groups, or a failed job, do
+  not make a report incomplete. Only core `test-timings/1` fields are read,
+  never `meta`.
 
   This is a per-report claim only: a complete partition says nothing about
   whether the rest of its workflow invocation completed.
@@ -34,7 +36,7 @@ defmodule GoodFlows.TestReports.Completion do
          "event" => "suite_finished",
          "aborted" => false,
          "unfinished_tests" => 0,
-         "unfinished_modules" => 0
+         "unfinished_groups" => 0
        }),
        do: true
 

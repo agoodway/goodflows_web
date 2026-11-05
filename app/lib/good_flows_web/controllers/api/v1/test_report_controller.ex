@@ -6,11 +6,21 @@ defmodule GoodFlowsWeb.Api.V1.TestReportController do
   admits and reads the body; the action passes only the decoded body to
   `GoodFlows.TestReports.ingest/4`, never `conn.params`, and releases the
   admission slot once ingestion returns.
+
+  A report rejected only for its `format` is logged once at `info`, so
+  publishers still running an old CLI are visible on the server: the line
+  names the account and project ids, whether the declared format was the
+  retired `exunit-timings` or another value (never the value itself), and
+  the request `User-Agent` with control characters removed, cut to
+  200 bytes.
   """
   use GoodFlowsWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
+  require Logger
+
   alias GoodFlows.TestReports
+  alias GoodFlows.TestReports.{Document, Validator}
   alias GoodFlowsWeb.ApiParams
   alias GoodFlowsWeb.Plugs.TestReportBody
 
@@ -31,7 +41,7 @@ defmodule GoodFlowsWeb.Api.V1.TestReportController do
   operation(:create,
     summary: "Store a test report",
     description: """
-    Stores one `exunit-timings` report for the project in the URL, which must
+    Stores one `test-timings/1` report for the project in the URL, which must
     already exist (it is never created here). The body has no `project` or
     `account_id`; either is rejected as an unknown field.
 
@@ -91,10 +101,61 @@ defmodule GoodFlowsWeb.Api.V1.TestReportController do
         TestReportBody.finish(conn)
       end
 
-    with {:ok, ack} <- result do
-      conn
-      |> put_status(if ack.duplicate, do: :ok, else: :created)
-      |> render(:show, ack: ack)
+    case result do
+      {:ok, ack} ->
+        conn
+        |> put_status(if ack.duplicate, do: :ok, else: :created)
+        |> render(:show, ack: ack)
+
+      {:error, {:invalid_test_report, _errors}} = error ->
+        log_format_rejection(conn)
+        error
+
+      error ->
+        error
     end
   end
+
+  @max_user_agent_bytes 200
+  @control ~r/[\x{0000}-\x{001F}\x{007F}-\x{009F}]/u
+
+  defp log_format_rejection(conn) do
+    %{current_account: account, project: project, test_report_document: document} = conn.assigns
+
+    case Validator.format_rejection(document) do
+      nil ->
+        :ok
+
+      {path, declared} ->
+        format =
+          if declared == :retired,
+            do: "the retired format exunit-timings",
+            else: "an unsupported format"
+
+        Logger.info(
+          "Test reports: rejected a report declaring #{format} on " <>
+            "#{Document.render_path(path)}, account #{account.id}, project #{project.id}, " <>
+            "user agent #{user_agent(conn)}"
+        )
+    end
+  end
+
+  # The header is client text: invalid UTF-8 and control characters are
+  # dropped before it is cut to a byte budget on a character boundary.
+  defp user_agent(conn) do
+    case get_req_header(conn, "user-agent") do
+      [agent | _] ->
+        agent
+        |> String.replace_invalid("")
+        |> String.replace(@control, "")
+        |> truncate_bytes(@max_user_agent_bytes)
+        |> inspect()
+
+      [] ->
+        "none"
+    end
+  end
+
+  defp truncate_bytes(text, max) when byte_size(text) <= max, do: text
+  defp truncate_bytes(text, max), do: text |> binary_part(0, max) |> String.replace_invalid("")
 end

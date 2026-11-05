@@ -13,7 +13,9 @@ defmodule GoodFlows.TestReports.Shape do
       of at most `n` entries; a longer list gets only `"must not have more
       than n entries"` on the list itself and its entries are not checked
     * `{:object, %{key => spec}}`: every key is required and no other key
-      is allowed
+      is allowed, except a key whose spec is `{:optional, spec}`: it may be
+      absent, and when present (including as `null`) it is checked against
+      `spec`. `{:optional, spec}` is valid only as an object field
     * `{:fun, (value, path -> [error]), kind}` for custom checks; `kind`
       is an atom naming the check, so other modules (such as the OpenAPI
       schemas) can describe it
@@ -36,7 +38,7 @@ defmodule GoodFlows.TestReports.Shape do
           | {:nullable, spec()}
           | {:list, spec()}
           | {:list, spec(), keyword()}
-          | {:object, %{optional(String.t()) => spec()}}
+          | {:object, %{optional(String.t()) => spec() | {:optional, spec()}}}
           | {:fun, (term(), list() -> list()), atom()}
 
   @doc "Checks `value` against `spec` at `path` (a reversed path)."
@@ -108,9 +110,11 @@ defmodule GoodFlows.TestReports.Shape do
   defp do_check(map, {:object, fields}, path, errors) when is_map(map) do
     errors =
       Enum.reduce(fields, errors, fn {key, spec}, errors ->
-        case Map.fetch(map, key) do
-          {:ok, value} -> do_check(value, spec, [key | path], errors)
-          :error -> [{[key | path], "is required"} | errors]
+        case {Map.fetch(map, key), spec} do
+          {{:ok, value}, {:optional, spec}} -> do_check(value, spec, [key | path], errors)
+          {{:ok, value}, spec} -> do_check(value, spec, [key | path], errors)
+          {:error, {:optional, _spec}} -> errors
+          {:error, _spec} -> [{[key | path], "is required"} | errors]
         end
       end)
 
