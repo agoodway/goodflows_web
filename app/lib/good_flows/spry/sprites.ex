@@ -507,7 +507,7 @@ defmodule GoodFlows.Spry.Sprites do
 
   defp write_frames(cmd, data, client) do
     size = min(byte_size(data), @stdin_frame_bytes)
-    <<frame::binary-size(size), rest::binary>> = data
+    <<frame::binary-size(^size), rest::binary>> = data
 
     case safely(fn -> Sprites.write(cmd, frame) end, client) do
       :ok -> write_frames(cmd, rest, client)

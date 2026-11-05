@@ -35,7 +35,7 @@ defmodule GoodFlowsWeb.GreedyBodyAdapter do
     Process.sleep(delay)
 
     case inner.req_body do
-      <<piece::binary-size(bytes), rest::binary>> when rest != "" ->
+      <<piece::binary-size(^bytes), rest::binary>> when rest != "" ->
         {:more, piece, %{state | inner: %{inner | req_body: rest}}}
 
       last ->
