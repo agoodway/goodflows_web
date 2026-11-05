@@ -73,6 +73,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
     alias GoodFlows.TestReports.Validator
     alias GoodFlowsWeb.ApiSpec
+    alias GoodFlowsWeb.Schemas.TestReportParts
 
     setup %{conn: conn} do
       %{doc: conn |> get(~p"/api/v1/openapi") |> json_response(200)}
@@ -138,6 +139,13 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       assert description =~ "uses the `suite_id` grammar"
       assert Validator.max_filters() == 256
       assert description =~ "each list has at most #{Validator.max_filters()} entries"
+      assert description =~ "`test-timings/1`"
+      assert description =~ "exactly what goodflows collection accepts"
+      assert description =~ "`meta`"
+      assert description =~ "`suite_id` (= `report.suite_id`)"
+      refute description =~ "exunit-timings"
+      refute description =~ "`run_id`"
+      refute description =~ "module_started"
     end
 
     test "suite filter tags are bounded identifiers in capped lists", %{doc: doc} do
@@ -162,6 +170,108 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
         refute Map.has_key?(tag, "enum")
       end
+    end
+
+    test "meta is optional on every event and documented as flat and bounded", %{doc: doc} do
+      for event <- doc["components"]["schemas"]["TestReportEvent"]["oneOf"] do
+        refute "meta" in event["required"], event["title"]
+        assert "suite_id" in event["required"]
+        refute Map.has_key?(event["properties"], "run_id")
+
+        meta = event["properties"]["meta"]
+        assert meta["type"] == "object"
+        assert meta["maxProperties"] == 32
+        assert meta["description"] =~ "256 bytes"
+        # OAS 3.0 ignores `nullable` without `type`, so every branch has it.
+        branches = meta["additionalProperties"]["anyOf"]
+        assert Enum.map(branches, & &1["type"]) == ~w(boolean integer string)
+        assert Enum.all?(branches, &(&1["nullable"] == true))
+        refute Map.has_key?(meta["additionalProperties"], "nullable")
+      end
+    end
+
+    test "started_at documents the contract grammar", %{doc: doc} do
+      suite_started =
+        Enum.find(
+          doc["components"]["schemas"]["TestReportEvent"]["oneOf"],
+          &(&1["title"] == "TestReport_SuiteStarted")
+        )
+
+      started_at = suite_started["properties"]["started_at"]
+      assert started_at["maxLength"] == 64
+
+      for text <- ["never a space", "`-00:00`", "at most 60", "at least one", "64 bytes"],
+          do: assert(started_at["description"] =~ text)
+
+      assert suite_started["properties"]["filters"]["nullable"] == true
+      refute Map.has_key?(started_at, "format")
+      assert started_at["pattern"] == TestReportParts.timestamp_pattern()
+      assert started_at["description"] =~ "checked by the server only"
+    end
+
+    @accepted_timestamps [
+      "2026-11-01T00:00:00Z",
+      "2026-11-01t00:00:00z",
+      "2026-11-01T00:00:00.123456Z",
+      "2026-11-01T00:00:00+00:00",
+      "2026-11-01T00:00:00-00:00",
+      "2026-12-31T23:59:60Z",
+      "2024-02-29T12:00:00.1Z"
+    ]
+
+    @rejected_timestamps [
+      "2026-11-01 00:00:00Z",
+      "2026-11-01T00:00:00+01:00",
+      "2026-11-01T00:00:00.Z",
+      "2026-11-01T00:00:00",
+      "2026-11-01",
+      "2026-13-01T00:00:00Z",
+      "2026-11-32T00:00:00Z",
+      "2026-11-01T24:00:00Z",
+      "2026-11-01T00:60:00Z",
+      "2026-11-01T00:00:61Z",
+      "2026-11-01T00:00:00.123456789012345678901234567890123456789012345Z"
+    ]
+
+    test "the started_at pattern matches the validator's grammar" do
+      spec = ApiSpec.spec()
+      schema = spec.components.schemas["TestReportRequest"]
+      path = ["report", "records", 0, "started_at"]
+
+      for value <- @accepted_timestamps do
+        document = put_at(report("complete"), path, value)
+        assert {:ok, _} = OpenApiSpex.cast_value(document, schema, spec), value
+        assert {:ok, _, _} = Validator.validate(document), value
+      end
+
+      for value <- @rejected_timestamps do
+        document = put_at(report("complete"), path, value)
+        assert {:error, _} = OpenApiSpex.cast_value(document, schema, spec), value
+        assert {:error, _} = Validator.validate(document), value
+      end
+
+      # Calendar validity is the server's alone: the pattern cannot see it.
+      impossible = put_at(report("complete"), path, "2026-02-30T00:00:00Z")
+      assert {:ok, _} = OpenApiSpex.cast_value(impossible, schema, spec)
+      assert {:error, _} = Validator.validate(impossible)
+    end
+
+    test "meta values may be null in the request schema" do
+      spec = ApiSpec.spec()
+      schema = spec.components.schemas["TestReportRequest"]
+      path = ["report", "records", 0, "meta"]
+
+      for meta <- [%{"a" => nil}, %{"a" => true, "b" => 1, "c" => "x"}] do
+        assert {:ok, _} =
+                 OpenApiSpex.cast_value(put_at(report("complete"), path, meta), schema, spec)
+      end
+
+      assert {:error, _} =
+               OpenApiSpex.cast_value(
+                 put_at(report("complete"), path, %{"a" => [1]}),
+                 schema,
+                 spec
+               )
     end
 
     test "a report with any identifier filter tag matches the request schema" do

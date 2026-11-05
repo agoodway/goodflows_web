@@ -74,7 +74,7 @@ defmodule GoodFlowsWeb.Plugs.TestReportBodyTest do
     defp nested(depth), do: String.duplicate("[", depth) <> String.duplicate("]", depth)
 
     test "the cap leaves room for the deepest contract structure" do
-      # body → report → records → suite_finished → files → file → bucket → counts
+      # body → report → records → suite_started → filters → include → entry
       assert Document.max_depth() == 16
       assert Document.check_depth(report_json("complete")) == :ok
     end

@@ -337,6 +337,21 @@ defmodule GoodFlowsWeb.Api.V1.TestReportControllerTest do
       assert json_response(conn, 400)
     end
 
+    test "a retired-format report is 422 with only the format error", ctx do
+      retired =
+        report("complete")
+        |> Map.put("format", "exunit-timings")
+        |> put_at(["report", "records", 0, "format"], "exunit-timings")
+        |> put_at(["report", "records", 0, "run_id"], "suite-20261101-a")
+
+      body =
+        ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(retired)) |> json_response(422)
+
+      assert_schema(body, "ValidationErrorResponse", spec())
+      assert body == %{"errors" => %{"format" => ["is invalid"]}}
+      assert report_count() == 0
+    end
+
     test "validation errors are 422 keyed by JSON path", ctx do
       document = put_at(report("complete"), ["report", "records", 3, "duration_us"], -1)
 

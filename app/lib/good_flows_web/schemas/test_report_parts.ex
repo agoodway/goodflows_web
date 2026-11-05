@@ -12,6 +12,16 @@ defmodule GoodFlowsWeb.Schemas.TestReportParts do
   alias GoodFlows.TestReports.{Document, Validator}
   alias OpenApiSpex.Schema
 
+  # The validator's `started_at` grammar (goodflows `valid_timestamp`),
+  # except calendar validity, which a regular expression cannot express.
+  @timestamp_pattern "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[Tt]" <>
+                       "([01][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)" <>
+                       "(\\.[0-9]+)?(Z|z|\\+00:00|-00:00)$"
+
+  @doc "The OpenAPI `pattern` of `suite_started.started_at`."
+  @spec timestamp_pattern() :: String.t()
+  def timestamp_pattern, do: @timestamp_pattern
+
   @doc "Schema of the request body; `records` items reference `event_schema/0`."
   @spec envelope(module()) :: Schema.t()
   def envelope(event_schema), do: to_schema(Validator.envelope_spec(), event_schema)
@@ -55,11 +65,14 @@ defmodule GoodFlowsWeb.Schemas.TestReportParts do
   defp to_schema({:object, fields}, events) do
     %Schema{
       type: :object,
-      required: fields |> Map.keys() |> Enum.sort(),
+      required:
+        for({key, spec} <- fields, not match?({:optional, _}, spec), do: key) |> Enum.sort(),
       properties: Map.new(fields, fn {key, spec} -> {key, to_schema(spec, events)} end),
       additionalProperties: false
     }
   end
+
+  defp to_schema({:optional, spec}, events), do: to_schema(spec, events)
 
   defp to_schema({:fun, _fun, :counts}, _events) do
     %Schema{
@@ -70,17 +83,43 @@ defmodule GoodFlowsWeb.Schemas.TestReportParts do
     }
   end
 
-  defp to_schema({:fun, _fun, :relative_file}, _events) do
+  defp to_schema({:fun, _fun, :timestamp}, _events) do
+    # No `format: date-time`: RFC 3339 tools reject spellings the contract
+    # accepts (second 60, `-00:00`) and accept ones it rejects.
     %Schema{
       type: :string,
-      minLength: 1,
-      maxLength: 4096,
-      description: "Relative source path; never absolute and never containing `..`."
+      maxLength: 64,
+      pattern: @timestamp_pattern,
+      description:
+        "UTC timestamp of at most 64 bytes: `YYYY-MM-DD`, `T` or `t` (never a space), " <>
+          "`HH:MM:SS` with seconds at most 60, an optional `.` followed by at least one " <>
+          "digit, then `Z`, `z`, `+00:00` or `-00:00`. The pattern checks this grammar " <>
+          "and the month, day, hour, minute and second ranges; whether the day exists in " <>
+          "its month (so `2026-02-30` or `2025-02-29` is rejected) is checked by the " <>
+          "server only, since a pattern cannot express it."
     }
   end
 
-  defp to_schema({:fun, _fun, :timestamp}, _events),
-    do: %Schema{type: :string, format: :"date-time", description: "UTC ISO 8601 timestamp"}
+  defp to_schema({:fun, _fun, :meta}, _events) do
+    %Schema{
+      type: :object,
+      maxProperties: Validator.max_meta_keys(),
+      # OAS 3.0 ignores `nullable` on a schema without `type`, so each
+      # branch allows `null` itself.
+      additionalProperties: %Schema{
+        anyOf: [
+          %Schema{type: :boolean, nullable: true},
+          %{to_schema({:int, nil}, nil) | nullable: true},
+          %Schema{type: :string, maxLength: Validator.max_meta_string_bytes(), nullable: true}
+        ]
+      },
+      description:
+        "Optional, flat runner metadata. Keys follow the identifier grammar " <>
+          "(1 to 128 bytes of `[A-Za-z0-9._-]`, starting with a letter or digit); " <>
+          "values are null, booleans, integers or strings of at most 256 bytes. " <>
+          "Stored as supplied."
+    }
+  end
 
   defp to_schema({:fun, _fun, :records}, events) do
     %Schema{

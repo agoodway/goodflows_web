@@ -160,7 +160,8 @@ defmodule GoodFlowsWeb.ApiSpec do
         ## Test reports
 
         `POST /api/v1/projects/{project}/test-reports` stores one
-        `exunit-timings` report produced by a local or CI test run. It needs a
+        `test-timings/1` report produced by goodflows (v0.6.0 or later) from
+        a local or CI test run of any supported runner. It needs a
         private (`sk_…`) key, and the project must already exist: the path
         slug selects it (an invalid slug is `422` on `project`, a slug the
         account does not have is `404`). The body has no `project` or
@@ -171,13 +172,13 @@ defmodule GoodFlowsWeb.ApiSpec do
         The body (`Content-Type: application/json`, no `Content-Encoding`
         other than `identity`, otherwise `415`) has exactly these keys:
 
-        - `format` (`exunit-timings`), `workflow_run_id` (lowercase UUID of
+        - `format` (`test-timings/1`), `workflow_run_id` (lowercase UUID of
           the workflow invocation), `workflow` and `job` (1 to 64 bytes, no
           control characters), `environment` (the same, or `null`) and
           `job_status` (`passed`, `failed`, `timed_out`, `cancelled`,
           `skipped` or `unknown`)
-        - `source`: `commit` (40 or 64 hex characters), `branch` (up to 256
-          bytes) and `dirty` (boolean), each nullable
+        - `source`: `commit` (40 or 64 hex characters), `branch` (1 to 256
+          bytes, no control characters) and `dirty` (boolean), each nullable
         - `report`: `suite_id` and `report_id` (1 to 128 bytes of
           `[A-Za-z0-9._-]`, starting with a letter or digit; `report_id` is
           unique within a job), `partition` (1 to 64 bytes of `[A-Za-z0-9._-]`
@@ -185,24 +186,45 @@ defmodule GoodFlowsWeb.ApiSpec do
           (whether collection dropped an invalid final line) and `records`
         - `records`: 1 to 100,000 producer events in original order, starting
           with the only `suite_started`; a `suite_finished`, if present, is
-          last. Every event has `event`, `run_id` (= `suite_id`),
+          last. Every event has `event`, `suite_id` (= `report.suite_id`),
           `report_id` and `received_offset_us`. See `TestReportEvent` for the
-          fields of `suite_started`, `test_started`, `test_finished`,
-          `module_started`, `module_finished`, `suite_finished`,
-          `max_failures_reached` and `interrupted`.
-        - `suite_started` `filters.include` and `filters.exclude` entries are
-          `{tag, value}`: `tag` uses the `suite_id` grammar and `value` is a
-          boolean; each list has at most #{Validator.max_filters()} entries;
+          fields of `suite_started`, `group_started`, `group_finished`,
+          `test_started`, `test_finished`, `suite_finished`, `interrupted`
+          and `max_failures_reached`. Groups are the runner's scheduling
+          unit (an ExUnit module, a Jest file); tests are identified by
+          `group`, `path` (enclosing describe blocks) and `name`. Outcomes
+          are `passed`, `failed`, `skipped` or `errored`.
+        - Any record may carry `meta`: a flat object of at most
+          #{Validator.max_meta_keys()} keys in the `suite_id` grammar whose
+          values are `null`, booleans, integers or strings of at most
+          #{Validator.max_meta_string_bytes()} bytes. Runner-specific details
+          (versions, `async`, ExUnit time buckets) live there and are stored
+          as sent. A bad `meta` is reported on that record's `meta` path
+          without naming the key.
+        - `suite_started` `filters` is `null` or `{include, exclude}`, whose
+          entries are `{tag, value}`: `tag` uses the `suite_id` grammar and
+          `value` is a boolean; each list has at most #{Validator.max_filters()} entries;
           non-boolean filters are not accepted.
 
-        Times are integer microseconds and are stored as sent; measured
-        durations are never checked against receipt offsets. A finish event
-        must match an earlier start with the same `execution_id` and fields.
-        The `suite_finished` counts, file totals and `times_us` must agree
-        with the finished events. Unknown or duplicate keys, strings
+        The server accepts exactly what goodflows collection accepts, so a
+        report goodflows froze is never rejected by a server-only rule. Times
+        are integer microseconds and are stored as sent; durations are never
+        checked against receipt offsets or outcomes, `counts` are not
+        tallied against test events (a retried test is written once per
+        attempt and counted once), and `file` is any text. A finish event
+        must match an earlier start of its kind (groups and tests are
+        separate `execution_id` namespaces) with the same core fields, and
+        the `suite_finished` unfinished counts must equal the starts left
+        open. Any other envelope `format`, including a retired one, is a
+        single `422` on `format`; any other `format` on a first
+        `suite_started` record is a single `422` on
+        `report.records[0].format`. Unknown or duplicate keys, strings
         containing U+0000, numbers with a fraction or exponent and integers
-        beyond 2^53 - 1 are `422`. Logs, failure messages, assertion values
-        and parameter values are not accepted. `422` bodies are keyed by JSON
+        beyond 2^53 - 1 (and `-0`, which goodflows reads as a fraction) are
+        `422`. Beyond the event fields, only the flat `meta` scalars (strings
+        of at most #{Validator.max_meta_string_bytes()} bytes) are stored;
+        producers must not put logs, failure messages, assertion values or
+        parameter values there. `422` bodies are keyed by JSON
         path (such as `report.records[3].duration_us`) with fixed messages
         that never repeat submitted values.
 
@@ -222,9 +244,9 @@ defmodule GoodFlowsWeb.ApiSpec do
           frozen body.
         - **Per-report completeness.** `status` is `complete` only when the
           last record is `suite_finished` with `aborted` false and no
-          unfinished tests or modules, no `interrupted` or
+          unfinished tests or groups, no `interrupted` or
           `max_failures_reached` record appears and `truncated` is false;
-          otherwise `incomplete`. Failed tests do not make a report
+          otherwise `incomplete`. Failed or errored tests do not make a report
           incomplete, and one partition never says the whole workflow
           invocation completed.
         """
