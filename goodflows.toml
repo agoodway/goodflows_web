@@ -1,0 +1,79 @@
+# CI for the Phoenix app (app/) and the gf-transfer helper (sprite-transfer/).
+#
+#   goodflows run ci                # every check
+#   goodflows run ci --jobs test    # test and its prerequisites
+#   goodflows run ci --env orb      # Amp orb sizing
+#
+# The ci workflow mirrors `mix precommit` (see app/mix.exs) plus the crate's
+# own checks, which precommit does not run.
+[settings]
+workdir = "app"
+# Unprofiled runs use every logical CPU; profiles pin it per machine.
+fail_fast = false
+
+# MIX_ENV=test for every Mix job, as `mix check` prefers. CI=true makes the
+# suite fail instead of skipping the :helper_binary tests.
+[settings.env]
+MIX_ENV = "test"
+CI = "true"
+
+[environments.orb.settings]
+parallelism = 4
+
+[[workflows.ci.jobs]]
+name = "compile"
+command = "mix compile --warnings-as-errors"
+
+# Debug build used by the :helper_binary tests.
+[[workflows.ci.jobs]]
+name = "helper"
+command = "cargo build --locked --quiet --manifest-path ../sprite-transfer/Cargo.toml"
+
+[[workflows.ci.jobs]]
+name = "test"
+command = "mix test --include slow"
+depends_on = ["compile", "helper"]
+
+[[workflows.ci.jobs]]
+name = "deps"
+command = "mix deps.unlock --check-unused"
+depends_on = ["compile"]
+
+[[workflows.ci.jobs]]
+name = "format"
+command = "mix format --check-formatted"
+depends_on = ["compile"]
+
+[[workflows.ci.jobs]]
+name = "credo"
+command = "mix credo --strict"
+depends_on = ["compile"]
+
+[[workflows.ci.jobs]]
+name = "doctor"
+command = "mix doctor"
+depends_on = ["compile"]
+
+[[workflows.ci.jobs]]
+name = "sobelow"
+command = "mix sobelow --config"
+depends_on = ["compile"]
+
+[[workflows.ci.jobs]]
+name = "dialyzer"
+command = "mix dialyzer"
+depends_on = ["compile"]
+
+[[workflows.ci.jobs]]
+name = "rust-fmt"
+command = "cargo fmt --check --manifest-path ../sprite-transfer/Cargo.toml"
+
+[[workflows.ci.jobs]]
+name = "rust-clippy"
+command = "cargo clippy --locked --all-targets --manifest-path ../sprite-transfer/Cargo.toml -- -D warnings"
+depends_on = ["rust-fmt", "helper"]
+
+[[workflows.ci.jobs]]
+name = "rust-test"
+command = "cargo test --locked --manifest-path ../sprite-transfer/Cargo.toml"
+depends_on = ["rust-fmt", "helper"]

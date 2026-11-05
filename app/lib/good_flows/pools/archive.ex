@@ -138,7 +138,7 @@ defmodule GoodFlows.Pools.Archive do
   end
 
   defp parse(%{mode: {:skip, n}, buffer: buffer} = state) when byte_size(buffer) >= n do
-    <<_::binary-size(n), rest::binary>> = buffer
+    <<_::binary-size(^n), rest::binary>> = buffer
     parse(%{state | mode: :header, buffer: rest})
   end
 
@@ -147,7 +147,7 @@ defmodule GoodFlows.Pools.Archive do
 
   defp parse(%{mode: {:meta, kind, size, padded}, buffer: buffer} = state)
        when byte_size(buffer) >= padded do
-    <<data::binary-size(size), _pad::binary-size(padded - size), rest::binary>> = buffer
+    <<data::binary-size(^size), _pad::binary-size(^padded - ^size), rest::binary>> = buffer
     state = %{state | buffer: rest, mode: :header}
     parse(apply_meta(state, kind, data))
   end
@@ -215,7 +215,7 @@ defmodule GoodFlows.Pools.Archive do
   defp pax_records(data) do
     with [len_text, _] <- String.split(data, " ", parts: 2),
          {len, ""} when len > 0 <- Integer.parse(len_text),
-         <<record::binary-size(len), rest::binary>> <- data,
+         <<record::binary-size(^len), rest::binary>> <- data,
          [_len, kv] <- String.split(record, " ", parts: 2),
          [key, value] <- String.split(String.trim_trailing(kv, "\n"), "=", parts: 2) do
       [{key, value} | pax_records(rest)]

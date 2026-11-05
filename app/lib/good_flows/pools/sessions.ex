@@ -24,8 +24,6 @@ defmodule GoodFlows.Pools.Sessions do
   """
   import Ecto.Query
 
-  require Logger
-
   alias GoodFlows.Accounts.{Account, ApiKey}
   alias GoodFlows.Pools
 

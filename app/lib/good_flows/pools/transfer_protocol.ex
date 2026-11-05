@@ -168,7 +168,7 @@ defmodule GoodFlows.Pools.TransferProtocol do
   end
 
   defp drain(%{pending: {header, len}, size: size} = decoder, acc) when size >= len do
-    <<payload::binary-size(len), rest::binary>> = flatten(decoder)
+    <<payload::binary-size(^len), rest::binary>> = flatten(decoder)
     frame = %{header: header, payload: payload}
     drain(%{decoder | pending: nil, chunks: [rest], size: byte_size(rest)}, [frame | acc])
   end
@@ -205,7 +205,7 @@ defmodule GoodFlows.Pools.TransferProtocol do
     with {:ok, header} <- decode_header(json),
          {:ok, len} <- payload_length(header, max) do
       case rest do
-        <<payload::binary-size(len), rest::binary>> ->
+        <<payload::binary-size(^len), rest::binary>> ->
           decode_frames(rest, max, [%{header: header, payload: payload} | acc])
 
         _incomplete ->
