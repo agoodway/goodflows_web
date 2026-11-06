@@ -1,14 +1,13 @@
 # GoodFlows in Amp orbs
 
-`.agents/setup` prepares Debian 12 x86-64 orbs for the Phoenix app in `app/`
-and its Rust transfer helper in `sprite-transfer/`. It installs Elixir 1.19.4,
-Erlang/OTP 28.1.1, Rust 1.90.0 (including rustfmt and clippy), PostgreSQL 15,
+`.agents/setup` prepares Debian 12 x86-64 orbs for the Phoenix app in `app/`.
+It installs Elixir 1.19.4, Erlang/OTP 28.1.1, PostgreSQL 15,
 and native build tools. Elixir 1.19 is required by locked dependencies and the
 runtime configuration even though `mix.exs` permits earlier releases.
 
 Setup fetches the locked Mix dependencies, compiles dev and test builds,
-installs the pinned Tailwind/esbuild binaries, builds assets and the debug
-transfer helper, and migrates both databases. It reuses installed tools and
+installs the pinned Tailwind/esbuild binaries, builds assets,
+and migrates both databases. It reuses installed tools and
 build caches on repeat runs. No npm install is needed: assets use Mix tools.
 
 The existing dev/test configuration supplies local database credentials and
@@ -31,7 +30,7 @@ through a single login-profile hook, not just the setup process.
 Checks:
 
 - `cd app && mix precommit` — the repository's full checks and Elixir suite.
-- `cargo test --locked --manifest-path sprite-transfer/Cargo.toml` — Rust tests.
+- `goodflows run ci` — the same checks as separate workflow jobs.
 
 Lifecycle files must reach the project's default branch before future orbs
 use them. Amp then snapshots setup's installed packages and build caches;

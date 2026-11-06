@@ -11,16 +11,6 @@ defmodule GoodFlowsWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  # Pool sessions (Phoenix Channels v2). The API key travels as the socket
-  # auth token in Sec-WebSocket-Protocol, never in the URL; see
-  # GoodFlowsWeb.PoolSocket. `auth_token: true` enables header extraction.
-  # Frames are capped at 1 MiB (an exec request is at most 256 KiB of
-  # command, argv, and env), so a client cannot exhaust node memory.
-  socket "/api/v1/socket", GoodFlowsWeb.PoolSocket,
-    auth_token: true,
-    websocket: [connect_info: [:auth_token], max_frame_size: 1_048_576],
-    longpoll: false
-
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
@@ -57,8 +47,8 @@ defmodule GoodFlowsWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  # Plug.Parsers for every route except raw-body routes (test report and
-  # pool workspace uploads), which read their own body after authentication.
+  # Plug.Parsers for every route except test report uploads, which read
+  # their own raw body after authentication.
   plug GoodFlowsWeb.Plugs.BodyParsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],

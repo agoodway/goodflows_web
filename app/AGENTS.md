@@ -3,7 +3,7 @@ This is a web application written using the Phoenix web framework.
 ## Project guidelines
 
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
-- To run the full CI (precommit's checks plus the `sprite-transfer` crate's fmt, clippy and tests), run `goodflows run ci` from the repository root. `goodflows run ci --jobs test` runs the tests and their prerequisites; `--json` prints JSON Lines whose final `summary` event reports `success`
+- To run the full CI as separate workflow jobs, run `goodflows run ci` from the repository root. `goodflows run ci --jobs test` runs the tests and their prerequisites; `--json` prints JSON Lines whose final `summary` event reports `success`
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 
 ### Phoenix v1.8 guidelines

@@ -127,25 +127,6 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
       assert {:ok, _} = GoodFlows.Spry.get_recipe(ctx.account, project, recipe.id)
     end
 
-    test "a project whose only content is a pool is 409, also while the pool is deleted",
-         ctx do
-      credential_fixture(ctx.account)
-      project = project_fixture(ctx.account)
-      pool = GoodFlows.PoolsFixtures.pool_fixture(project, %{"slug" => "rust-ci"})
-
-      body = ctx.sk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> json_response(409)
-      assert_schema(body, "ConflictResponse", ApiSpec.spec())
-      assert body["errors"]["detail"] =~ "pools"
-
-      # Deleted (202) but members are still being destroyed: the row remains.
-      :ok = GoodFlows.Pools.delete_pool(ctx.account, project, "rust-ci")
-      assert ctx.sk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> json_response(409)
-      assert {:ok, _} = Projects.get_project(ctx.account, project.slug)
-
-      GoodFlows.Repo.delete!(pool)
-      assert ctx.sk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> response(204)
-    end
-
     test "public keys cannot delete", ctx do
       project = project_fixture(ctx.account)
 

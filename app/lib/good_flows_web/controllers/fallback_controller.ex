@@ -34,18 +34,6 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "The project has stored test reports and cannot be deleted"}})
   end
 
-  def call(conn, {:error, :has_pools}) do
-    conn
-    |> put_status(:conflict)
-    |> json(%{errors: %{detail: "The project still has pools; delete them first"}})
-  end
-
-  def call(conn, {:error, :pool_in_use}) do
-    conn
-    |> put_status(:conflict)
-    |> json(%{errors: %{detail: "The pool has waiting or active sessions"}})
-  end
-
   def call(conn, {:error, {:invalid_test_report, errors}}) when is_map(errors) do
     conn
     |> put_status(:unprocessable_entity)
@@ -84,13 +72,6 @@ defmodule GoodFlowsWeb.FallbackController do
     conn
     |> put_status(:unprocessable_entity)
     |> json(%{errors: %{detail: detail}})
-  end
-
-  def call(conn, {:error, :draining}) do
-    conn
-    |> put_status(:service_unavailable)
-    |> put_resp_header("retry-after", "1")
-    |> json(%{errors: %{detail: "This server is shutting down; retry the request"}})
   end
 
   def call(conn, {:error, :admission_contended}) do

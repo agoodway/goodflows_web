@@ -216,15 +216,10 @@ defmodule GoodFlows.Spry.Plan do
   end
 
   defp sprite_override_format_errors(sprite) do
-    cond do
-      not Template.valid_name_template?(sprite) ->
-        [sprite: "must form a valid sprite name (#{Template.sprite_name_rule()})"]
-
-      Template.reserved_sprite_name?(sprite) ->
-        [sprite: Template.reserved_prefix_message()]
-
-      true ->
-        []
+    if Template.valid_name_template?(sprite) do
+      []
+    else
+      [sprite: "must form a valid sprite name (#{Template.sprite_name_rule()})"]
     end
   end
 
@@ -271,11 +266,6 @@ defmodule GoodFlows.Spry.Plan do
             {:error,
              {:sprite_name, "expands to %{name}, which is not a valid sprite name (%{rule})",
               name: name, rule: Template.sprite_name_rule()}}
-
-          Template.reserved_sprite_name?(name) ->
-            {:error,
-             {:sprite_name, "expands to %{name}, which #{Template.reserved_prefix_message()}",
-              name: name}}
 
           true ->
             {:ok, name}

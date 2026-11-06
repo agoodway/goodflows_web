@@ -1,9 +1,8 @@
 defmodule GoodFlowsWeb.RawBodyHeaders do
   @moduledoc """
-  Header checks shared by the routes whose bodies the endpoint leaves
-  unparsed (`GoodFlowsWeb.Plugs.BodyParsers.raw_body_route?/1`): the test
-  report upload and the pool workspace upload. Both run before any of the
-  body is read.
+  Header checks for test report uploads, whose bodies the endpoint leaves
+  unparsed (`GoodFlowsWeb.Plugs.BodyParsers.raw_body_route?/1`). These checks
+  run before any of the body is read.
   """
 
   import Plug.Conn, only: [get_req_header: 2]

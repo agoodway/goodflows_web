@@ -86,15 +86,12 @@ defmodule GoodFlowsWeb.Api.V1.RecipeControllerTest do
       assert body["errors"]["name"]
     end
 
-    test "a name with the reserved gfp- prefix is 422 on name", %{sk_conn: conn} = ctx do
+    test "gfp- recipe names are accepted", %{sk_conn: conn} = ctx do
       for name <- ["gfp-{{branch_slug}}", "gfp-app"] do
-        body = conn |> post(recipes_path(ctx.project), %{"name" => name}) |> json_response(422)
-        assert [message] = body["errors"]["name"]
-        assert message =~ "gfp-"
-        assert message =~ "reserved"
+        body = conn |> post(recipes_path(ctx.project), %{"name" => name}) |> json_response(201)
+        assert body["data"]["name"] == name
       end
 
-      # Only the literal prefix is reserved.
       conn |> post(recipes_path(ctx.project), %{"name" => "app-gfp"}) |> json_response(201)
 
       conn

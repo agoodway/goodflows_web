@@ -102,14 +102,12 @@ defmodule GoodFlows.Spry.TemplateTest do
     end
   end
 
-  describe "reserved_sprite_name?/1" do
-    test "only a literal gfp- prefix is reserved" do
-      assert Template.reserved_sprite_name?("gfp-x")
-      assert Template.reserved_sprite_name?("gfp-")
-      refute Template.reserved_sprite_name?("app-gfp")
-      refute Template.reserved_sprite_name?("gfp")
-      refute Template.reserved_sprite_name?("gfpx-a")
-      refute Template.reserved_sprite_name?("GFP-x")
+  describe "sprite names" do
+    test "gfp- names and templates follow the ordinary sprite name rule" do
+      assert Template.valid_name_template?("gfp-{{branch_slug}}")
+      assert Template.valid_sprite_name?("gfp-app")
+      assert Template.expand("{{branch_slug}}-app", values("gfp")) == {:ok, "gfp-app"}
+      refute Template.valid_sprite_name?("GFP-app")
     end
   end
 end
