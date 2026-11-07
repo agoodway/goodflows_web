@@ -416,8 +416,8 @@ defmodule GoodFlows.Spry.RunJobTest do
   test "large output is stored as its last 64 KiB", ctx do
     stub_vm(ctx.test_pid,
       exec: fn _line, _opts ->
-        {output, truncated} = Wrapper.tail(String.duplicate("x", 1_048_575) <> "!", 65_536)
-        {:ok, %{exit_code: 0, output: output, output_truncated: truncated}}
+        output = String.duplicate("x", 65_535) <> "!"
+        {:ok, %{exit_code: 0, output: output, output_truncated: true}}
       end
     )
 

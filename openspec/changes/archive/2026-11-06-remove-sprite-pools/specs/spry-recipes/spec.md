@@ -4,7 +4,7 @@
 
 ### Requirement: Recipe names follow the sprite name rule
 
-The `name` is the template for the sprite name, and its literal text MUST be able to form a valid sprite name: lowercase letters, digits, and hyphens, starting with a letter or digit, at most 63 characters when each placeholder is counted as one character. A name violating this MUST be rejected with `422` on `name` when the recipe is saved. No prefix is reserved. Because the rule is lowercase-only, names differing only by case can never refer to the same VM. Recipes SHOULD use `{{branch_slug}}` rather than `{{branch}}`.
+Replacing each placeholder in the `name` sprite-name template with one valid character MUST yield a name of at most 63 lowercase letters, digits, and hyphens, starting with a letter or digit. Invalid templates MUST return `422` on `name` when saved. No prefix is reserved. Lowercase-only names prevent case aliases of a VM. Recipes SHOULD use `{{branch_slug}}` rather than `{{branch}}`.
 
 #### Scenario: Invalid literal name
 

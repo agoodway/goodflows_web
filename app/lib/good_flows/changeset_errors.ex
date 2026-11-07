@@ -1,7 +1,7 @@
 defmodule GoodFlows.ChangesetErrors do
   @moduledoc """
   Bulk error helpers for schemas that validate request-shaped bodies
-  (`GoodFlows.Spry.Recipe`, `GoodFlows.Pools.Pool`, `GoodFlows.Pools.Session`).
+  (`GoodFlows.Spry.Recipe`).
   """
 
   @doc """

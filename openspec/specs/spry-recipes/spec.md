@@ -87,9 +87,9 @@ The `name` and every step line SHALL be checked for placeholder syntax when a re
 - **WHEN** `name` is `app-{{sprite}}`
 - **THEN** the API responds `422` because `name` cannot refer to itself
 
-### Requirement: Recipe names are valid sprite name templates
+### Requirement: Recipe names follow the sprite name rule
 
-The `name` is the template for the sprite name, and its literal text MUST be able to form a valid sprite name: lowercase letters, digits, and hyphens, starting with a letter or digit, at most 63 characters when each placeholder is counted as one character. A name violating this MUST be rejected with `422` on `name` when the recipe is saved. A name whose literal text starts with `gfp-` MUST be rejected with `422` on `name`, because that prefix is reserved for pool members. Because the rule is lowercase-only, names differing only by case can never refer to the same VM. Recipes SHOULD use `{{branch_slug}}` rather than `{{branch}}`.
+Replacing each placeholder in the `name` sprite-name template with one valid character MUST yield a name of at most 63 lowercase letters, digits, and hyphens, starting with a letter or digit. Invalid templates MUST return `422` on `name` when saved. No prefix is reserved. Lowercase-only names prevent case aliases of a VM. Recipes SHOULD use `{{branch_slug}}` rather than `{{branch}}`.
 
 #### Scenario: Invalid literal name
 
@@ -101,10 +101,10 @@ The `name` is the template for the sprite name, and its literal text MUST be abl
 - **WHEN** a client saves a recipe whose `name` is `app-{{branch_slug}}`
 - **THEN** the API responds `201`
 
-#### Scenario: Reserved pool prefix
+#### Scenario: Former pool prefix is allowed
 
 - **WHEN** a client saves a recipe whose `name` is `gfp-{{branch_slug}}` or `gfp-app`
-- **THEN** the API responds `422` with an error on `name` stating that `gfp-` is reserved
+- **THEN** the API responds `201`
 
 ### Requirement: Recipe names are unique per project
 

@@ -11,6 +11,28 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     assert spec["components"]["securitySchemes"]["bearerAuth"]["scheme"] == "bearer"
   end
 
+  test "retired pool endpoints and socket transport return 404", %{conn: conn} do
+    id = Ecto.UUID.generate()
+
+    for {method, path} <- [
+          {:get, "/api/v1/projects/example/pools"},
+          {:get, "/api/v1/pool-sessions/#{id}"},
+          {:put, "/api/v1/pool-sessions/#{id}/workspace"},
+          {:get, "/api/v1/pool-execs/#{id}/reports/result.ndjson"},
+          {:get, "/api/v1/socket/websocket?vsn=2.0.0"}
+        ] do
+      assert dispatch(conn, @endpoint, method, path).status == 404, "#{method} #{path}"
+    end
+  end
+
+  test "OpenAPI contains no retired pool paths or schemas", %{conn: conn} do
+    spec = conn |> get(~p"/api/v1/openapi") |> json_response(200)
+
+    for name <- Map.keys(spec["paths"]) ++ Map.keys(spec["components"]["schemas"]) do
+      refute String.contains?(String.downcase(name), "pool"), name
+    end
+  end
+
   test "describes Spry in the API description", %{conn: conn} do
     description =
       conn |> get(~p"/api/v1/openapi") |> json_response(200) |> get_in(["info", "description"])
@@ -35,14 +57,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/recipes/{id}", "delete"},
     {"/api/v1/projects/{project}/recipes/{id}/runs", "get"},
     {"/api/v1/projects/{project}/recipes/{id}/runs", "post"},
-    {"/api/v1/projects/{project}/test-reports", "post"},
-    {"/api/v1/projects/{project}/pools", "get"},
-    {"/api/v1/projects/{project}/pools", "post"},
-    {"/api/v1/projects/{project}/pools/{pool}", "get"},
-    {"/api/v1/projects/{project}/pools/{pool}", "put"},
-    {"/api/v1/projects/{project}/pools/{pool}", "delete"},
-    {"/api/v1/projects/{project}/pools/{pool}/members", "get"},
-    {"/api/v1/projects/{project}/pools/{pool}/sessions", "post"}
+    {"/api/v1/projects/{project}/test-reports", "post"}
   ]
 
   test "documents the project slug rule on every project path parameter", %{conn: conn} do

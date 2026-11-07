@@ -14,8 +14,6 @@ defmodule GoodFlows.Spry.Template do
   @token ~r/\{\{(.*?)\}\}/s
   @sprite_name ~r/\A[a-z0-9][a-z0-9-]{0,62}\z/
 
-  @reserved_prefix "gfp-"
-
   @sprite_name_rule "lowercase letters, digits, and hyphens, starting with a letter or " <>
                       "digit, at most 63 characters"
 
@@ -94,24 +92,6 @@ defmodule GoodFlows.Spry.Template do
   def valid_name_template?(template) when is_binary(template) do
     @token |> Regex.replace(template, "a") |> valid_sprite_name?()
   end
-
-  @doc "The sprite name prefix reserved for pool members (`#{@reserved_prefix}`)."
-  @spec reserved_prefix() :: String.t()
-  def reserved_prefix, do: @reserved_prefix
-
-  @doc """
-  Whether `name` (an expanded sprite name, or the literal text of a name
-  template) starts with the pool-member prefix `#{@reserved_prefix}`. Only
-  pool members, whose names the server chooses, may use it.
-  """
-  @spec reserved_sprite_name?(String.t()) :: boolean()
-  def reserved_sprite_name?(name) when is_binary(name),
-    do: String.starts_with?(name, @reserved_prefix)
-
-  @doc "Error message for a sprite name that uses the reserved prefix."
-  @spec reserved_prefix_message() :: String.t()
-  def reserved_prefix_message,
-    do: "must not start with \"#{@reserved_prefix}\": that prefix is reserved for pool members"
 
   defp placeholders(string) do
     @token

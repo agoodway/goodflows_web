@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export DEBIAN_FRONTEND=noninteractive
 toolchains="$HOME/.local/share/goodflows"
-export PATH="$toolchains/elixir-1.19.4/bin:$toolchains/otp-28.1.1/bin:$HOME/.cargo/bin:$PATH"
+export PATH="$toolchains/elixir-1.19.4/bin:$toolchains/otp-28.1.1/bin:$PATH"
 export HEX_CACERTS_PATH=/etc/ssl/certs/ca-certificates.crt
 TIMEFORMAT='  completed in %3R seconds'
 
@@ -21,7 +21,7 @@ if ((${#missing[@]})); then
   time sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
 fi
 
-echo 'Preparing Elixir 1.19.4, OTP 28.1.1 and Rust 1.90.0'
+echo 'Preparing Elixir 1.19.4 and OTP 28.1.1'
 # Hex's Ubuntu 22.04 builds use the same OpenSSL 3 / ncurses 6 ABI as Debian 12.
 otp_home="$toolchains/otp-28.1.1"
 if [[ ! -x "$otp_home/bin/erl" ]]; then
@@ -43,16 +43,9 @@ if [[ ! -x "$elixir_home/bin/elixir" ]]; then
   unzip -q -o "$archive" -d "$elixir_home"
   rm -f "$archive"
 fi
-if ! command -v rustup >/dev/null; then
-  curl --proto '=https' --tlsv1.2 --fail --silent --show-error https://sh.rustup.rs | \
-    sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.90.0
-fi
-time rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
-rustup default 1.90.0
-
 # Amp and supervised services use separate login shells, not this setup shell.
 cat > "$toolchains/env" <<'ENV'
-export PATH="$HOME/.local/share/goodflows/elixir-1.19.4/bin:$HOME/.local/share/goodflows/otp-28.1.1/bin:$HOME/.cargo/bin:$PATH"
+export PATH="$HOME/.local/share/goodflows/elixir-1.19.4/bin:$HOME/.local/share/goodflows/otp-28.1.1/bin:$PATH"
 export HEX_CACERTS_PATH=/etc/ssl/certs/ca-certificates.crt
 ENV
 profile_marker='# GoodFlows orb toolchains'
@@ -80,7 +73,6 @@ time mix compile
 time mix assets.setup
 time mix assets.build
 time env MIX_ENV=test mix compile
-time cargo build --locked --manifest-path ../sprite-transfer/Cargo.toml
 
 echo 'Preparing local PostgreSQL development and test databases'
 # Only this disposable orb's cluster is tuned for speed over crash durability.

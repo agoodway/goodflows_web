@@ -87,10 +87,7 @@ if config_env() != :test do
     repo: GoodFlows.Repo,
     jobs: [
       GoodFlows.Spry.RunJob,
-      GoodFlows.Spry.ReapRunsJob,
-      GoodFlows.Pools.ProvisionMemberJob,
-      GoodFlows.Pools.ResetMemberJob,
-      GoodFlows.Pools.DestroyMemberJob
+      GoodFlows.Spry.ReapRunsJob
     ],
     flows: [],
     max_concurrency: 10,
@@ -101,18 +98,7 @@ if config_env() != :test do
       GoodFlows.Spry.RunJob => [
         max_concurrency: String.to_integer(System.get_env("SPRY_RUN_MAX_CONCURRENCY", "10"))
       ],
-      GoodFlows.Spry.ReapRunsJob => [max_concurrency: 1],
-      # Long pool setups run in their own worker pools so they cannot starve
-      # RunJob.
-      GoodFlows.Pools.ProvisionMemberJob => [
-        max_concurrency: String.to_integer(System.get_env("POOL_PROVISION_MAX_CONCURRENCY", "4"))
-      ],
-      GoodFlows.Pools.ResetMemberJob => [
-        max_concurrency: String.to_integer(System.get_env("POOL_RESET_MAX_CONCURRENCY", "4"))
-      ],
-      GoodFlows.Pools.DestroyMemberJob => [
-        max_concurrency: String.to_integer(System.get_env("POOL_DESTROY_MAX_CONCURRENCY", "2"))
-      ]
+      GoodFlows.Spry.ReapRunsJob => [max_concurrency: 1]
     },
     signal_strategy: :notify
 end
@@ -132,44 +118,6 @@ if config_env() != :test do
     test_report_read_timeout_ms: env_int.("TEST_REPORT_READ_TIMEOUT_MS", "60000"),
     test_report_max_heap_bytes: env_int.("TEST_REPORT_MAX_HEAP_BYTES", "2147483648"),
     test_report_db_timeout_ms: env_int.("TEST_REPORT_DB_TIMEOUT_MS", "15000")
-end
-
-# Sprite pools (GoodFlows.Pools.Config documents every key). Test keeps the
-# values from config/test.exs.
-if config_env() != :test do
-  env_int = fn name, default -> String.to_integer(System.get_env(name, default)) end
-
-  config :good_flows, GoodFlows.Pools,
-    enabled: System.get_env("POOLS_ENABLED", "true") not in ["false", "0"],
-    max_members_cap: env_int.("POOL_MAX_MEMBERS_CAP", "32"),
-    provision_timeout_ms: env_int.("POOL_PROVISION_TIMEOUT_MS", "1800000"),
-    workspace_max_bytes: env_int.("POOL_WORKSPACE_MAX_BYTES", "268435456"),
-    workspace_max_expanded_bytes: env_int.("POOL_WORKSPACE_MAX_EXPANDED_BYTES", "2147483648"),
-    workspace_max_entries: env_int.("POOL_WORKSPACE_MAX_ENTRIES", "100000"),
-    archive_validation_timeout_ms: env_int.("POOL_ARCHIVE_VALIDATION_TIMEOUT_MS", "60000"),
-    helper_extract_timeout_ms: env_int.("POOL_HELPER_EXTRACT_TIMEOUT_MS", "300000"),
-    workspace_read_timeout_ms: env_int.("POOL_WORKSPACE_READ_TIMEOUT_MS", "300000"),
-    workspace_max_concurrent_uploads_per_account:
-      env_int.("POOL_WORKSPACE_MAX_CONCURRENT_UPLOADS_PER_ACCOUNT", "1"),
-    transfer_chunk_bytes: env_int.("POOL_TRANSFER_CHUNK_BYTES", "1048576"),
-    transfer_concurrency: env_int.("POOL_TRANSFER_CONCURRENCY", "2"),
-    spool_max_bytes: env_int.("POOL_SPOOL_MAX_BYTES", "2147483648"),
-    spool_account_max_bytes: env_int.("POOL_SPOOL_ACCOUNT_MAX_BYTES", "1073741824"),
-    session_retention_ms: env_int.("POOL_SESSION_RETENTION_MS", "2592000000"),
-    disconnect_grace_ms: env_int.("POOL_DISCONNECT_GRACE_MS", "60000"),
-    max_session_lifetime_ms: env_int.("POOL_MAX_SESSION_LIFETIME_MS", "21600000"),
-    acquire_timeout_max_ms: env_int.("POOL_ACQUIRE_TIMEOUT_MAX_MS", "600000"),
-    exec_max_ms: env_int.("POOL_EXEC_MAX_MS", "3600000"),
-    exec_buffer_bytes: env_int.("POOL_EXEC_BUFFER_BYTES", "1048576")
-
-  if spool_dir = System.get_env("POOL_SPOOL_DIR"),
-    do: config(:good_flows, GoodFlows.Pools, spool_dir: spool_dir)
-
-  if helper_dir = System.get_env("POOL_HELPER_ARTIFACT_DIR"),
-    do: config(:good_flows, GoodFlows.Pools, helper_artifact_dir: helper_dir)
-
-  if secret = System.get_env("POOL_FINGERPRINT_SECRET"),
-    do: config(:good_flows, GoodFlows.Pools, fingerprint_secret: secret)
 end
 
 # Spry run owner ids embed the node name; production nodes must be
@@ -307,15 +255,6 @@ if config_env() == :prod do
       ip: {0, 0, 0, 0, 0, 0, 0, 0}
     ],
     secret_key_base: secret_key_base
-
-  # Pools: credential fingerprints are keyed with POOL_FINGERPRINT_SECRET,
-  # falling back to SECRET_KEY_BASE (set POOL_FINGERPRINT_SECRET to the old
-  # value before rotating SECRET_KEY_BASE, or every pool rebuilds its
-  # members). A release without the packaged gf-transfer helper refuses to
-  # boot while pools are enabled, instead of silently disabling them.
-  config :good_flows, GoodFlows.Pools,
-    fingerprint_secret: System.get_env("POOL_FINGERPRINT_SECRET") || secret_key_base,
-    require_helper_manifest: true
 
   # ## SSL Support
   #

@@ -1,7 +1,7 @@
 defmodule GoodFlows.Projects.Project do
   @moduledoc """
   An account-owned project addressed by its `slug`. A project groups the
-  account's Spry recipes, uploaded test reports, and Sprite pools; recipe names are unique
+  account's Spry recipes and uploaded test reports; recipe names are unique
   within a project.
 
   The slug is 1 to 64 bytes matching `[a-z0-9][a-z0-9_-]*` and is unique
@@ -11,7 +11,6 @@ defmodule GoodFlows.Projects.Project do
   import Ecto.Changeset
 
   alias GoodFlows.Accounts.Account
-  alias GoodFlows.Pools.Pool
   alias GoodFlows.Spry.Recipe
   alias GoodFlows.TestReports.Report
 
@@ -29,7 +28,6 @@ defmodule GoodFlows.Projects.Project do
     belongs_to :account, Account
     has_many :recipes, Recipe
     has_many :test_reports, Report
-    has_many :pools, Pool
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -64,8 +62,8 @@ defmodule GoodFlows.Projects.Project do
   end
 
   @doc """
-  Builds the delete changeset; refuses while any recipe, test report, or
-  pool (including a pool still being deleted) belongs to the project.
+  Builds the delete changeset; refuses while any recipe or test report
+  belongs to the project.
   """
   @spec delete_changeset(t()) :: Ecto.Changeset.t()
   def delete_changeset(project) do
@@ -73,6 +71,5 @@ defmodule GoodFlows.Projects.Project do
     |> change()
     |> no_assoc_constraint(:recipes, name: :recipes_project_id_fkey)
     |> no_assoc_constraint(:test_reports, name: :test_reports_project_id_fkey)
-    |> no_assoc_constraint(:pools, name: :pools_project_id_fkey)
   end
 end

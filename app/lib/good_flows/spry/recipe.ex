@@ -183,19 +183,13 @@ defmodule GoodFlows.Spry.Recipe do
   end
 
   defp name_format_errors(:name, name) do
-    cond do
-      not Template.valid_name_template?(name) ->
-        [
-          name:
-            {"must form a valid sprite name (#{Template.sprite_name_rule()})",
-             validation: :format}
-        ]
-
-      Template.reserved_sprite_name?(name) ->
-        [name: {Template.reserved_prefix_message(), validation: :reserved_prefix}]
-
-      true ->
-        []
+    if Template.valid_name_template?(name) do
+      []
+    else
+      [
+        name:
+          {"must form a valid sprite name (#{Template.sprite_name_rule()})", validation: :format}
+      ]
     end
   end
 

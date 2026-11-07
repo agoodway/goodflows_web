@@ -11,22 +11,18 @@ defmodule GoodFlowsWeb.Plugs.RequireParsedBodyTest do
   setup ctx do
     credential_fixture(ctx.account)
     project = project_fixture(ctx.account)
-    pool = GoodFlows.PoolsFixtures.pool_fixture(project, %{"slug" => "rust-ci"})
-    %{project: project, recipe: recipe_fixture(project), pool: pool}
+    %{project: project, recipe: recipe_fixture(project)}
   end
 
   defp plain(conn), do: put_req_header(conn, "content-type", "text/plain")
 
-  defp write_routes(%{project: project, recipe: recipe, pool: pool}) do
+  defp write_routes(%{project: project, recipe: recipe}) do
     [
       {:post, "/api/v1/projects"},
       {:put, "/api/v1/sprites-credential"},
       {:post, "/api/v1/projects/#{project.slug}/recipes"},
       {:put, "/api/v1/projects/#{project.slug}/recipes/#{recipe.id}"},
-      {:post, "/api/v1/projects/#{project.slug}/recipes/#{recipe.id}/runs"},
-      {:post, "/api/v1/projects/#{project.slug}/pools"},
-      {:put, "/api/v1/projects/#{project.slug}/pools/#{pool.slug}"},
-      {:post, "/api/v1/projects/#{project.slug}/pools/#{pool.slug}/sessions"}
+      {:post, "/api/v1/projects/#{project.slug}/recipes/#{recipe.id}/runs"}
     ]
   end
 

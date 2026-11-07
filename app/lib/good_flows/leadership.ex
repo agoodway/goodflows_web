@@ -1,8 +1,7 @@
 defmodule GoodFlows.Leadership do
   @moduledoc """
-  Cluster-wide single-leader election through `:global`, shared by the
-  periodic schedulers (`GoodFlows.Spry.ReaperScheduler` and
-  `GoodFlows.Pools.Reconciler`).
+  Cluster-wide single-leader election through `:global`, used by the
+  periodic scheduler `GoodFlows.Spry.ReaperScheduler`.
 
   A leader registers `name` with `:global.random_notify_name/3`: after a
   healed netsplit, `:global` keeps the name for one contender (chosen at
