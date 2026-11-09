@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "workflow": "ci",
+  "run_id": "22222222-2222-4222-8222-222222222222",
+  "started_at": "2026-11-05T12:00:01Z",
+  "outcome": "cancelled",
+  "duration_ms": 10,
+  "parallelism": 2,
+  "graph_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "max_in_flight": 1,
+  "host": {"os": "linux", "arch": "aarch64", "logical_cpus": 2},
+  "results": [
+    {
+      "name": "test",
+      "status": "passed",
+      "exit_code": 0,
+      "command": "mix test",
+      "error": null,
+      "duration_ms": 10,
+      "started": true,
+      "blocked_ms": 0,
+      "queued_ms": 0
+    }
+  ]
+}

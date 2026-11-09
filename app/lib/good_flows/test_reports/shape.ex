@@ -9,13 +9,21 @@ defmodule GoodFlows.TestReports.Shape do
     * `{:string, opts}` with `:min`/`:max` UTF-8 byte bounds, an optional
       `:format` regex and `:no_control` (no Unicode control characters)
     * `{:enum, values}`, `{:nullable, spec}`, `{:list, spec}`
-    * `{:list, spec, opts}` with a required `:max` (e.g. `max: n`): a list
-      of at most `n` entries; a longer list gets only `"must not have more
-      than n entries"` on the list itself and its entries are not checked
+    * `{:list, spec, opts}` with a required `:max` (e.g. `max: n`) and an
+      optional `:min` of `1`. A list longer than `:max` gets only `"must
+      not have more than n entries"` on the list itself, and an empty list
+      when `:min` is `1` gets only `"must not be empty"`. In either case
+      its entries are not checked. A list within bounds is checked entry
+      by entry
     * `{:object, %{key => spec}}`: every key is required and no other key
-      is allowed, except a key whose spec is `{:optional, spec}`: it may be
-      absent, and when present (including as `null`) it is checked against
-      `spec`. `{:optional, spec}` is valid only as an object field
+      is allowed, except a key whose spec is `{:optional, spec}` or
+      `{:omit, spec}`: it may be absent. `{:optional, spec}` checks a
+      present value, including `null`, against `spec`. `{:omit, spec}`
+      rejects `null` with `"is invalid"` and checks any other present
+      value against `spec`. Both wrappers are valid only as an object field
+    * `{:string, opts}` accepts `:non_blank`. A string whose trim is empty
+      is then `"can't be blank"`, which the default string check does not
+      do: `"   "` meets `:min` of `1`
     * `{:fun, (value, path -> [error]), kind}` for custom checks; `kind`
       is an atom naming the check, so other modules (such as the OpenAPI
       schemas) can describe it
@@ -38,7 +46,7 @@ defmodule GoodFlows.TestReports.Shape do
           | {:nullable, spec()}
           | {:list, spec()}
           | {:list, spec(), keyword()}
-          | {:object, %{optional(String.t()) => spec() | {:optional, spec()}}}
+          | {:object, %{optional(String.t()) => spec() | {:optional, spec()} | {:omit, spec()}}}
           | {:fun, (term(), list() -> list()), atom()}
 
   @doc "Checks `value` against `spec` at `path` (a reversed path)."
@@ -96,28 +104,14 @@ defmodule GoodFlows.TestReports.Shape do
 
   defp do_check(_value, {:list, _spec}, path, errors), do: [{path, "must be an array"} | errors]
 
-  defp do_check(list, {:list, spec, opts}, path, errors) when is_list(list) and is_list(opts) do
-    max = Keyword.fetch!(opts, :max)
-
-    if length(list) > max,
-      do: [{path, "must not have more than #{max} entries"} | errors],
-      else: do_check(list, {:list, spec}, path, errors)
-  end
+  defp do_check(list, {:list, spec, opts}, path, errors) when is_list(list) and is_list(opts),
+    do: bounded_list(list, spec, opts, path, errors)
 
   defp do_check(value, {:list, spec, _opts}, path, errors),
     do: do_check(value, {:list, spec}, path, errors)
 
   defp do_check(map, {:object, fields}, path, errors) when is_map(map) do
-    errors =
-      Enum.reduce(fields, errors, fn {key, spec}, errors ->
-        case {Map.fetch(map, key), spec} do
-          {{:ok, value}, {:optional, spec}} -> do_check(value, spec, [key | path], errors)
-          {{:ok, value}, spec} -> do_check(value, spec, [key | path], errors)
-          {:error, {:optional, _spec}} -> errors
-          {:error, _spec} -> [{[key | path], "is required"} | errors]
-        end
-      end)
-
+    errors = Enum.reduce(fields, errors, &field_errors(&1, map, path, &2))
     unknown_errors(map, fields, path, errors)
   end
 
@@ -141,11 +135,54 @@ defmodule GoodFlows.TestReports.Shape do
     size = byte_size(value)
 
     cond do
-      size < Keyword.get(opts, :min, 0) -> "can't be blank"
+      too_short?(value, size, opts) -> "can't be blank"
       size > Keyword.get(opts, :max, size) -> "is too long"
       opts[:no_control] && Regex.match?(@control, value) -> "must not contain control characters"
       opts[:format] && not Regex.match?(opts[:format], value) -> "has invalid format"
       true -> nil
+    end
+  end
+
+  # `:non_blank` rejects a string whose trim is empty. Length alone accepts
+  # `"   "` once it meets `:min`.
+  defp too_short?(value, size, opts) do
+    size < Keyword.get(opts, :min, 0) or named_blank?(value, opts)
+  end
+
+  defp named_blank?(value, opts), do: opts[:non_blank] == true and String.trim(value) == ""
+
+  # `:min` is `1` or absent. An empty list is the only value below that
+  # minimum, so the message stays `"must not be empty"`.
+  defp bounded_list(list, spec, opts, path, errors) do
+    max = Keyword.fetch!(opts, :max)
+    min = Keyword.get(opts, :min, 0)
+
+    cond do
+      length(list) > max -> [{path, "must not have more than #{max} entries"} | errors]
+      length(list) < min -> [{path, "must not be empty"} | errors]
+      true -> do_check(list, {:list, spec}, path, errors)
+    end
+  end
+
+  defp field_errors({key, {:omit, spec}}, map, path, errors) do
+    case Map.fetch(map, key) do
+      :error -> errors
+      {:ok, nil} -> [{[key | path], "is invalid"} | errors]
+      {:ok, value} -> do_check(value, spec, [key | path], errors)
+    end
+  end
+
+  defp field_errors({key, {:optional, spec}}, map, path, errors) do
+    case Map.fetch(map, key) do
+      :error -> errors
+      {:ok, value} -> do_check(value, spec, [key | path], errors)
+    end
+  end
+
+  defp field_errors({key, spec}, map, path, errors) do
+    case Map.fetch(map, key) do
+      :error -> [{[key | path], "is required"} | errors]
+      {:ok, value} -> do_check(value, spec, [key | path], errors)
     end
   end
 end

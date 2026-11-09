@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "workflow": "ci",
+  "run_id": "33333333-3333-4333-8333-333333333333",
+  "started_at": "2026-11-05T12:00:02Z",
+  "outcome": "failed",
+  "duration_ms": 40,
+  "parallelism": 1,
+  "graph_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "max_in_flight": 1,
+  "host": {"os": "macos", "arch": "aarch64", "logical_cpus": 8},
+  "results": [
+    {
+      "name": "test",
+      "status": "failed",
+      "exit_code": 1,
+      "command": "mix test",
+      "error": "exited with 1",
+      "duration_ms": 40,
+      "started": true,
+      "blocked_ms": 0,
+      "queued_ms": 0
+    }
+  ]
+}

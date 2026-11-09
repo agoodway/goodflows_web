@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "workflow": "ci",
+  "environment": "ci",
+  "requested_jobs": ["build", "test"],
+  "run_id": "44444444-4444-4444-8444-444444444444",
+  "started_at": "2026-11-05T12:00:03Z",
+  "outcome": "passed",
+  "duration_ms": 1200,
+  "parallelism": 4,
+  "graph_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "max_in_flight": 2,
+  "host": {
+    "os": "linux",
+    "arch": "x86_64",
+    "logical_cpus": 8,
+    "mem_total_bytes": 16780623872,
+    "mem_available_bytes": 4945465344
+  },
+  "source": {
+    "commit": "5a4a9715f1cd0a9795766bcd9294a77549b5b4745a4a9715f1cd0a9795766bcd",
+    "dirty": true
+  },
+  "results": [
+    {
+      "name": "build",
+      "partition": {"index": 1, "count": 2},
+      "status": "passed",
+      "exit_code": 0,
+      "command": "mix compile",
+      "error": null,
+      "duration_ms": 800,
+      "started": true,
+      "blocked_ms": 0,
+      "queued_ms": 10,
+      "commands": [
+        {
+          "kind": "condition",
+          "wall_ms": 5,
+          "cpu_user_ms": 1,
+          "cpu_system_ms": 0
+        },
+        {
+          "kind": "command",
+          "step": "compile",
+          "wall_ms": 700,
+          "cpu_user_ms": 400,
+          "cpu_system_ms": 50,
+          "peak_rss_bytes": 1048576
+        }
+      ]
+    },
+    {
+      "name": "build",
+      "partition": {"index": 2, "count": 2},
+      "status": "skipped",
+      "exit_code": null,
+      "command": null,
+      "error": null,
+      "duration_ms": 0,
+      "started": false,
+      "blocked_ms": 0,
+      "queued_ms": 0
+    }
+  ]
+}
