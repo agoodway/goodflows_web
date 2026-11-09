@@ -3,6 +3,7 @@ defmodule GoodFlows.ProjectsTest do
 
   import GoodFlows.AccountsFixtures
   import GoodFlows.SpryFixtures
+  import GoodFlows.TestReportFixtures
   import GoodFlows.WorkflowRunFixtures
 
   alias GoodFlows.Accounts.Account
@@ -10,6 +11,7 @@ defmodule GoodFlows.ProjectsTest do
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
   alias GoodFlows.Spry.{Recipe, Run}
+  alias GoodFlows.TestReports.Report
   alias GoodFlows.WorkflowRuns.Run, as: WorkflowRun
 
   setup do
@@ -112,6 +114,17 @@ defmodule GoodFlows.ProjectsTest do
     assert Projects.delete_project(ctx.account, project) == {:error, :has_workflow_runs}
     assert {:ok, _} = Projects.get_project(ctx.account, project.slug)
     assert Repo.get(WorkflowRun, id)
+  end
+
+  test "delete_project/2 reports test reports when the project also has a workflow run", ctx do
+    project = project_fixture(ctx.account)
+    %{id: report_id} = stored_report_fixture(ctx.account, project)
+    run_id = stored_run(ctx.account, project)
+
+    assert Projects.delete_project(ctx.account, project) == {:error, :has_test_reports}
+    assert {:ok, _} = Projects.get_project(ctx.account, project.slug)
+    assert Repo.get(Report, report_id)
+    assert Repo.get(WorkflowRun, run_id)
   end
 
   test "delete_project/2 of an already-deleted project is :not_found", %{account: account} do

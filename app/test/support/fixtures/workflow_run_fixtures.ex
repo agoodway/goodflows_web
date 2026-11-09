@@ -35,6 +35,7 @@ defmodule GoodFlows.WorkflowRunFixtures do
   @spec stored_run(struct(), struct(), map()) :: Ecto.UUID.t()
   def stored_run(account, project, attrs \\ %{}) do
     id = Ecto.UUID.generate()
+    payload = %{"schema_version" => 1}
 
     row =
       Map.merge(
@@ -51,14 +52,13 @@ defmodule GoodFlows.WorkflowRunFixtures do
           max_in_flight: 0,
           graph_sha256: @graph,
           host: %{"os" => "linux", "arch" => "x86_64", "logical_cpus" => 1},
-          payload: %{"schema_version" => 1},
-          payload_digest: :crypto.hash(:sha256, "{}"),
+          payload: payload,
           inserted_at: DateTime.utc_now()
         },
         attrs
       )
 
-    Repo.insert_all(Run, [row])
+    Repo.insert_all(Run, [Map.put(row, :payload_digest, JsonDocument.digest(row.payload))])
     id
   end
 end

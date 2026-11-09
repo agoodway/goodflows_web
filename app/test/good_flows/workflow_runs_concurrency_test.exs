@@ -84,6 +84,120 @@ defmodule GoodFlows.WorkflowRunsConcurrencyTest do
     end
   end
 
+  # The first insert stays uncommitted until `pg_stat_activity` shows the
+  # second statement waiting on it. The 1ms pause only yields the scheduler
+  # between those observations.
+  test "an uncommitted insert blocks the next ingest until it commits", ctx do
+    identical = Map.put(minimal(), "run_id", uuid(100))
+    assert_blocked(ctx, identical, identical, :duplicate)
+
+    original = Map.put(minimal(), "run_id", uuid(101))
+    assert_blocked(ctx, original, Map.put(original, "duration_ms", 1), :conflict)
+  end
+
+  defp assert_blocked(ctx, held, next, outcome) do
+    parent = self()
+    holder = hold_insert(parent, ctx, held)
+    assert_receive {:held, %{id: id}}, 5_000
+    assert rows(ctx, held["run_id"]) == 0
+
+    waiter = start_waiter(parent, ctx, next)
+    assert_receive {:backend, pid}, 5_000
+    send(waiter.pid, :go)
+
+    try do
+      await_lock(pid)
+      send(holder.pid, :release)
+      assert_outcome(Task.await(waiter, 5_000), outcome, id)
+    after
+      send(holder.pid, :release)
+      Task.await(holder, 5_000)
+    end
+
+    assert rows(ctx, held["run_id"]) == 1
+
+    if outcome == :conflict do
+      assert unboxed(fn -> Repo.get!(Run, id).duration_ms end) == 0
+    end
+  end
+
+  defp hold_insert(parent, ctx, body) do
+    Task.async(fn -> unboxed(fn -> insert_and_hold(parent, ctx, body) end) end)
+  end
+
+  defp insert_and_hold(parent, ctx, body) do
+    Repo.transaction(fn -> hold_until_release(parent, ctx, body) end)
+  end
+
+  defp hold_until_release(parent, ctx, body) do
+    {:ok, ack} = WorkflowRuns.ingest(ctx.account, ctx.project, nil, body)
+    send(parent, {:held, ack})
+
+    receive do
+      :release -> ack
+    after
+      5_000 -> Repo.rollback(:timed_out)
+    end
+  end
+
+  defp start_waiter(parent, ctx, body) do
+    Task.async(fn ->
+      unboxed(fn ->
+        %{rows: [[pid]]} = Repo.query!("SELECT pg_backend_pid()")
+        send(parent, {:backend, pid})
+
+        receive do
+          :go -> WorkflowRuns.ingest(ctx.account, ctx.project, nil, body)
+        after
+          5_000 -> raise "ingest was not started"
+        end
+      end)
+    end)
+  end
+
+  defp assert_outcome({:ok, %{id: id, duplicate: true}}, :duplicate, id), do: :ok
+
+  defp assert_outcome({:error, :workflow_run_conflict}, :conflict, _id), do: :ok
+
+  defp assert_outcome(other, outcome, id) do
+    flunk("expected #{outcome} for #{id}, got: #{inspect(other)}")
+  end
+
+  defp await_lock(pid) do
+    deadline = System.monotonic_time(:millisecond) + 5_000
+    spin_until_locked(pid, deadline)
+  end
+
+  defp spin_until_locked(pid, deadline) do
+    case lock_wait(pid) do
+      {"Lock", _event, _state} -> :ok
+      other -> retry_lock(pid, deadline, other)
+    end
+  end
+
+  defp retry_lock(pid, deadline, last) do
+    if System.monotonic_time(:millisecond) >= deadline do
+      flunk("ingest did not block on the uncommitted insert: #{inspect(last)}")
+    else
+      receive do
+      after
+        1 -> spin_until_locked(pid, deadline)
+      end
+    end
+  end
+
+  defp lock_wait(pid) do
+    unboxed(fn ->
+      case Repo.query!(
+             "SELECT wait_event_type, wait_event, state FROM pg_stat_activity WHERE pid = $1",
+             [pid]
+           ) do
+        %{rows: [[type, event, state]]} -> {type, event, state}
+        %{rows: []} -> :missing
+      end
+    end)
+  end
+
   test "concurrent uploads that differ in duration_ms store one row and conflict", ctx do
     for round <- 1..@rounds do
       id = run_id(round, "diff")
