@@ -497,7 +497,7 @@ defmodule GoodFlows.Spry do
       greater_than_or_equal_to: 1,
       less_than_or_equal_to: @max_page_size
     )
-    |> GoodFlows.ChangesetErrors.put_cursor(&decode_cursor/1)
+    |> GoodFlows.KeysetCursor.put_cursor(&decode_cursor/1)
     |> Ecto.Changeset.apply_action(:list)
   end
 

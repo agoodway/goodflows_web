@@ -13,17 +13,6 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
   alias GoodFlows.TestReports.Report
   alias GoodFlows.WorkflowRuns.Run
 
-  @report_fields [
-    :id,
-    :job,
-    :job_status,
-    :suite_id,
-    :report_id,
-    :partition,
-    :partition_count,
-    :status
-  ]
-
   @doc """
   Renders an upload acknowledgement, or one stored run.
 
@@ -87,5 +76,5 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
 
   defp redact_result(result), do: result
 
-  defp report_summary(%Report{} = report), do: Map.take(report, @report_fields)
+  defp report_summary(%Report{} = report), do: Map.take(report, Report.summary_fields())
 end

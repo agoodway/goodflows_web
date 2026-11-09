@@ -50,7 +50,6 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @sha256 ~r/\A[0-9a-f]{64}\z/
   @commit ~r/\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/
   @started_at ~r/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z/
-  @control ~r/[\x{0000}-\x{001F}\x{007F}-\x{009F}]/u
 
   @typedoc "Validation errors keyed by rendered JSON path."
   @type errors :: %{String.t() => [String.t()]}
@@ -102,11 +101,14 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @doc """
   Whether `value` follows the name rule: 1 to 64 UTF-8 bytes, no control
   characters, and not only whitespace.
+
+  The rule is the `GoodFlows.TestReports.Shape` string check used for names
+  in the document (`name/0`). Invalid UTF-8 is rejected here, because that
+  check trims the string.
   """
   @spec valid_name?(term()) :: boolean()
   def valid_name?(value) when is_binary(value) do
-    String.valid?(value) and byte_size(value) in 1..@max_name_bytes and String.trim(value) != "" and
-      not Regex.match?(@control, value)
+    String.valid?(value) and Shape.check(value, name(), []) == []
   end
 
   def valid_name?(_value), do: false

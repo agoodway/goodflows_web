@@ -68,17 +68,6 @@ defmodule GoodFlows.WorkflowRuns do
     :inserted_at
   ]
 
-  @report_fields [
-    :id,
-    :job,
-    :job_status,
-    :suite_id,
-    :report_id,
-    :partition,
-    :partition_count,
-    :status
-  ]
-
   @cursor_time ~r/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z/
 
   @project_fkey "workflow_runs_project_id_fkey"
@@ -212,7 +201,7 @@ defmodule GoodFlows.WorkflowRuns do
     Report
     |> where(account_id: ^account_id, project_id: ^project_id, workflow_run_id: ^run_id)
     |> order_by([r], asc: r.job, asc: r.report_id)
-    |> select([r], struct(r, ^@report_fields))
+    |> select([r], struct(r, ^Report.summary_fields()))
     |> Repo.all()
   end
 
@@ -246,7 +235,7 @@ defmodule GoodFlows.WorkflowRuns do
       greater_than_or_equal_to: 1,
       less_than_or_equal_to: @max_page_size
     )
-    |> GoodFlows.ChangesetErrors.put_cursor(&decode_cursor/1)
+    |> GoodFlows.KeysetCursor.put_cursor(&decode_cursor/1)
     |> validate_filter(:workflow, &Validator.valid_name?/1)
     |> validate_filter(:environment, &Validator.valid_name?/1)
     |> validate_filter(:outcome, &Validator.valid_outcome?/1)

@@ -11,6 +11,7 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
   """
 
   alias GoodFlows.JsonDocument
+  alias GoodFlows.TestReports.Validator, as: TestReportValidator
   alias GoodFlows.WorkflowRuns.Validator
   alias OpenApiSpex.Schema
 
@@ -101,7 +102,7 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
       properties: %{
         "id" => %Schema{type: :string, format: :uuid},
         "job" => %Schema{type: :string},
-        "job_status" => %Schema{type: :string},
+        "job_status" => %Schema{type: :string, enum: TestReportValidator.job_statuses()},
         "suite_id" => %Schema{type: :string},
         "report_id" => %Schema{type: :string},
         "partition" => %Schema{type: :string, nullable: true},
