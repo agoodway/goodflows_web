@@ -1,8 +1,29 @@
 defmodule GoodFlows.ChangesetErrors do
   @moduledoc """
-  Bulk error helpers for schemas that validate request-shaped bodies
-  (`GoodFlows.Spry.Recipe`).
+  Changeset helpers shared by request validation: bulk errors for
+  `GoodFlows.Spry.Recipe`, and the keyset `cursor` step used by run lists.
   """
+
+  @doc """
+  Replaces a string `cursor` change with `decode.(cursor)`.
+
+  A missing cursor is left alone. `:error` from `decode` is `is invalid`
+  on `cursor`. Callers keep their own cursor grammar.
+  """
+  @spec put_cursor(Ecto.Changeset.t(), (String.t() -> {:ok, term()} | :error)) ::
+          Ecto.Changeset.t()
+  def put_cursor(changeset, decode) when is_function(decode, 1) do
+    case Ecto.Changeset.get_change(changeset, :cursor) do
+      nil -> changeset
+      cursor -> store_cursor(changeset, decode.(cursor))
+    end
+  end
+
+  defp store_cursor(changeset, {:ok, decoded}),
+    do: Ecto.Changeset.put_change(changeset, :cursor, decoded)
+
+  defp store_cursor(changeset, :error),
+    do: Ecto.Changeset.add_error(changeset, :cursor, "is invalid")
 
   @doc """
   Prepends `errors` (`{field, {message, opts}}`, in order) to the

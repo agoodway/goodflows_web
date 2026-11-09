@@ -50,6 +50,7 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @sha256 ~r/\A[0-9a-f]{64}\z/
   @commit ~r/\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/
   @started_at ~r/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z/
+  @control ~r/[\x{0000}-\x{001F}\x{007F}-\x{009F}]/u
 
   @typedoc "Validation errors keyed by rendered JSON path."
   @type errors :: %{String.t() => [String.t()]}
@@ -92,6 +93,51 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @doc "Maximum `partition.count`, matching goodci `MAX_PARTITIONS`."
   @spec max_partitions() :: pos_integer()
   def max_partitions, do: @max_partitions
+
+  @doc "Whether `value` is a lowercase canonical UUID, the rule for `run_id`."
+  @spec canonical_uuid?(term()) :: boolean()
+  def canonical_uuid?(value) when is_binary(value), do: Regex.match?(@uuid, value)
+  def canonical_uuid?(_value), do: false
+
+  @doc """
+  Whether `value` follows the name rule: 1 to 64 UTF-8 bytes, no control
+  characters, and not only whitespace.
+  """
+  @spec valid_name?(term()) :: boolean()
+  def valid_name?(value) when is_binary(value) do
+    String.valid?(value) and byte_size(value) in 1..@max_name_bytes and String.trim(value) != "" and
+      not Regex.match?(@control, value)
+  end
+
+  def valid_name?(_value), do: false
+
+  @doc "Whether `value` is `passed`, `failed` or `cancelled`."
+  @spec valid_outcome?(term()) :: boolean()
+  def valid_outcome?(value), do: value in @outcomes
+
+  @doc "Whether `value` is 40 or 64 lowercase hex characters."
+  @spec valid_commit?(term()) :: boolean()
+  def valid_commit?(value) when is_binary(value), do: Regex.match?(@commit, value)
+  def valid_commit?(_value), do: false
+
+  @doc "Whether `value` is 64 lowercase hex characters."
+  @spec valid_graph_sha256?(term()) :: boolean()
+  def valid_graph_sha256?(value) when is_binary(value), do: Regex.match?(@sha256, value)
+  def valid_graph_sha256?(_value), do: false
+
+  @doc """
+  Renders `{path, message}` errors (as from `GoodFlows.JsonDocument.normalize/1`)
+  against the document spec.
+
+  A path that names a key outside the spec is cut back to the enclosing
+  object, so a submitted key is never echoed. At most the first 50 errors
+  are returned.
+  """
+  @spec render_errors([JsonDocument.error()]) :: errors()
+  def render_errors(errors) when is_list(errors) do
+    spec = document_spec()
+    errors |> Enum.map(&contract_error(&1, spec)) |> render()
+  end
 
   @doc """
   The `GoodFlows.TestReports.Shape` spec of a run-history document.

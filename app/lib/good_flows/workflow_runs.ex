@@ -5,7 +5,9 @@ defmodule GoodFlows.WorkflowRuns do
   `ingest/4` validates one `schema_version` 1 document
   (`GoodFlows.WorkflowRuns.Validator`) and stores it immutably under the
   authenticated account and the project from the request path. The project
-  slug never enters the stored document.
+  slug never enters the stored document. `list_runs/3` pages those rows
+  newest first. `get_run/3` returns one document plus the test-report
+  summaries that share its `run_id` in the same account and project.
 
   Idempotency: the identity `(account, project, run_id)` names one
   immutable document. The first insert is acknowledged as new. A retry
@@ -38,14 +40,54 @@ defmodule GoodFlows.WorkflowRuns do
   alias GoodFlows.Accounts.{Account, ApiKey}
   alias GoodFlows.JsonDocument
   alias GoodFlows.Projects.Project
+  alias GoodFlows.Repo
   alias GoodFlows.StorageErrors
+  alias GoodFlows.TestReports.Report
   alias GoodFlows.WorkflowRuns.{Run, StorageError, Store, Validator}
 
   @identity [:account_id, :project_id, :run_id]
 
   @default_db_timeout_ms 15_000
+  @default_page_size 50
+  @max_page_size 200
+
+  @summary_fields [
+    :id,
+    :run_id,
+    :workflow,
+    :environment,
+    :outcome,
+    :started_at,
+    :duration_ms,
+    :parallelism,
+    :max_in_flight,
+    :graph_sha256,
+    :source_commit,
+    :source_dirty,
+    :host,
+    :inserted_at
+  ]
+
+  @report_fields [
+    :id,
+    :job,
+    :job_status,
+    :suite_id,
+    :report_id,
+    :partition,
+    :partition_count,
+    :status
+  ]
+
+  @cursor_time ~r/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z/
 
   @project_fkey "workflow_runs_project_id_fkey"
+
+  @typedoc "One page of run summaries. `next_cursor` is nil on the last page."
+  @type run_page :: %{runs: [Run.t()], next_cursor: String.t() | nil}
+
+  @typedoc "A stored run plus the test-report summaries linked by `run_id`."
+  @type shown_run :: %{run: Run.t(), test_reports: [Report.t()]}
 
   @typedoc "Storage acknowledgement returned to the publisher."
   @type ack :: %{id: Ecto.UUID.t(), run_id: Ecto.UUID.t(), duplicate: boolean()}
@@ -89,6 +131,198 @@ defmodule GoodFlows.WorkflowRuns do
   @spec db_timeout_ms() :: pos_integer()
   def db_timeout_ms,
     do: Application.get_env(:good_flows, :workflow_run_db_timeout_ms, @default_db_timeout_ms)
+
+  @doc """
+  One page of `project`'s runs, newest `started_at` first, ties broken by
+  `run_id` descending.
+
+  Params (string keys, as from a query string): `"limit"` (1 to
+  #{@max_page_size}, default #{@default_page_size}), `"cursor"` (the
+  previous page's `next_cursor`) and the exact-match filters `"workflow"`,
+  `"environment"`, `"outcome"`, `"commit"` (`source.commit`) and
+  `"graph_sha256"`. Unknown keys are ignored. A filter, limit or cursor
+  that breaks its rule returns a changeset (`422`).
+
+  Only the copied columns are selected, never `payload`. `source` is
+  rebuilt by the JSON view from `source_commit` and `source_dirty`.
+  """
+  @spec list_runs(Account.t(), Project.t(), map()) ::
+          {:ok, run_page()} | {:error, :not_found | Ecto.Changeset.t()}
+  def list_runs(
+        %Account{id: account_id},
+        %Project{account_id: account_id, id: project_id},
+        params
+      )
+      when is_map(params) do
+    with {:ok, filters} <- list_params(params) do
+      runs =
+        Run
+        |> where(account_id: ^account_id, project_id: ^project_id)
+        |> apply_filters(filters)
+        |> after_cursor(filters.cursor)
+        |> order_by([r], desc: r.started_at, desc: r.run_id)
+        |> limit(^(filters.limit + 1))
+        |> select([r], struct(r, ^@summary_fields))
+        |> Repo.all()
+
+      {page, rest} = Enum.split(runs, filters.limit)
+      next_cursor = if rest != [], do: encode_cursor(List.last(page))
+      {:ok, %{runs: page, next_cursor: next_cursor}}
+    end
+  end
+
+  def list_runs(%Account{}, %Project{}, _params), do: {:error, :not_found}
+
+  @doc """
+  Loads one run and its test-report summaries.
+
+  `run_id` must already be a lowercase canonical UUID. Any other spelling,
+  including uppercase, is `:not_found` and is not looked up. Summaries are
+  the reports in the same account and project whose `workflow_run_id`
+  equals `run_id`, ordered by `job` then `report_id`, without report
+  contents.
+  """
+  @spec get_run(Account.t(), Project.t(), term()) ::
+          {:ok, shown_run()} | {:error, :not_found}
+  def get_run(%Account{id: account_id}, %Project{account_id: account_id, id: project_id}, run_id) do
+    if Validator.canonical_uuid?(run_id) do
+      fetch_run(account_id, project_id, run_id)
+    else
+      {:error, :not_found}
+    end
+  end
+
+  def get_run(%Account{}, %Project{}, _run_id), do: {:error, :not_found}
+
+  defp fetch_run(account_id, project_id, run_id) do
+    query =
+      from r in Run,
+        where: r.account_id == ^account_id and r.project_id == ^project_id and r.run_id == ^run_id
+
+    case Repo.one(query, log: false) do
+      nil ->
+        {:error, :not_found}
+
+      run ->
+        {:ok, %{run: run, test_reports: report_summaries(account_id, project_id, run_id)}}
+    end
+  end
+
+  defp report_summaries(account_id, project_id, run_id) do
+    Report
+    |> where(account_id: ^account_id, project_id: ^project_id, workflow_run_id: ^run_id)
+    |> order_by([r], asc: r.job, asc: r.report_id)
+    |> select([r], struct(r, ^@report_fields))
+    |> Repo.all()
+  end
+
+  defp list_params(params) do
+    types = %{
+      limit: :integer,
+      cursor: :string,
+      workflow: :string,
+      environment: :string,
+      outcome: :string,
+      commit: :string,
+      graph_sha256: :string
+    }
+
+    defaults = %{
+      limit: @default_page_size,
+      cursor: nil,
+      workflow: nil,
+      environment: nil,
+      outcome: nil,
+      commit: nil,
+      graph_sha256: nil
+    }
+
+    # `empty_values: []` keeps a whitespace-only filter. Ecto's default
+    # treats it as missing, and a blank environment or workflow must be
+    # `422`, not an unfiltered list.
+    {defaults, types}
+    |> Ecto.Changeset.cast(params, Map.keys(types), empty_values: [])
+    |> Ecto.Changeset.validate_number(:limit,
+      greater_than_or_equal_to: 1,
+      less_than_or_equal_to: @max_page_size
+    )
+    |> GoodFlows.ChangesetErrors.put_cursor(&decode_cursor/1)
+    |> validate_filter(:workflow, &Validator.valid_name?/1)
+    |> validate_filter(:environment, &Validator.valid_name?/1)
+    |> validate_filter(:outcome, &Validator.valid_outcome?/1)
+    |> validate_filter(:commit, &Validator.valid_commit?/1)
+    |> validate_filter(:graph_sha256, &Validator.valid_graph_sha256?/1)
+    |> Ecto.Changeset.apply_action(:list)
+  end
+
+  defp validate_filter(changeset, field, valid?) do
+    case Ecto.Changeset.get_change(changeset, field) do
+      nil -> changeset
+      value -> filter_error(changeset, field, value, valid?)
+    end
+  end
+
+  defp filter_error(changeset, field, value, valid?) do
+    if valid?.(value),
+      do: changeset,
+      else: Ecto.Changeset.add_error(changeset, field, "is invalid")
+  end
+
+  defp decode_cursor(cursor) do
+    with {:ok, decoded} <- Base.url_decode64(cursor, padding: false),
+         [timestamp, run_id] <- split_cursor(decoded),
+         true <- Validator.canonical_uuid?(run_id),
+         {:ok, started_at} <- cursor_time(timestamp) do
+      {:ok, {started_at, run_id}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp split_cursor(decoded) do
+    case String.split(decoded, "|", parts: 2) do
+      [timestamp, run_id] -> [timestamp, run_id]
+      _other -> :error
+    end
+  end
+
+  defp cursor_time(timestamp) do
+    if Regex.match?(@cursor_time, timestamp) do
+      case DateTime.from_iso8601(timestamp) do
+        {:ok, started_at, 0} -> {:ok, started_at}
+        _other -> :error
+      end
+    else
+      :error
+    end
+  end
+
+  defp encode_cursor(%Run{started_at: started_at, run_id: run_id}) do
+    Base.url_encode64("#{DateTime.to_iso8601(started_at)}|#{run_id}", padding: false)
+  end
+
+  defp apply_filters(query, filters) do
+    query
+    |> filter(:workflow, filters.workflow)
+    |> filter(:environment, filters.environment)
+    |> filter(:outcome, filters.outcome)
+    |> filter(:graph_sha256, filters.graph_sha256)
+    |> filter(:commit, filters.commit)
+  end
+
+  defp filter(query, _field, nil), do: query
+  defp filter(query, :commit, commit), do: where(query, [r], r.source_commit == ^commit)
+  defp filter(query, field, value), do: where(query, [r], field(r, ^field) == ^value)
+
+  defp after_cursor(query, nil), do: query
+
+  defp after_cursor(query, {started_at, run_id}) do
+    where(
+      query,
+      [r],
+      r.started_at < ^started_at or (r.started_at == ^started_at and r.run_id < ^run_id)
+    )
+  end
 
   defp store(project, api_key, payload, columns) do
     row = row(project, api_key, payload, columns)

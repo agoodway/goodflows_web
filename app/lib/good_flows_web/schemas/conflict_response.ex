@@ -2,8 +2,8 @@ defmodule GoodFlowsWeb.Schemas.ConflictResponse do
   @moduledoc """
   OpenAPI schema for a `409 Conflict` whose body is only a `detail` message:
   deleting a recipe that has an active run, deleting a project that still
-  has recipes or test reports, or uploading a different test report under a
-  stored identity.
+  has recipes, test reports or workflow runs, or uploading a different test
+  report or workflow run under a stored identity.
   """
   require OpenApiSpex
 

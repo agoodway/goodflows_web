@@ -47,8 +47,9 @@ defmodule GoodFlowsWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  # Plug.Parsers for every route except test report uploads, which read
-  # their own raw body after authentication.
+  # Plug.Parsers for every route except raw-body uploads (test reports, and
+  # POST workflow runs), which read their own body after authentication.
+  # GET workflow runs stay parsed so query filters survive.
   plug GoodFlowsWeb.Plugs.BodyParsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],

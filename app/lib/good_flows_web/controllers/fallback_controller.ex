@@ -63,6 +63,31 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "The test report could not be stored; retry the same request"}})
   end
 
+  def call(conn, {:error, {:invalid_workflow_run, errors}}) when is_map(errors) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{errors: errors})
+  end
+
+  def call(conn, {:error, :workflow_run_conflict}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: %{
+        detail: "A different workflow run is already stored under this run identity"
+      }
+    })
+  end
+
+  def call(conn, {:error, :workflow_run_storage_unavailable}) do
+    conn
+    |> put_status(:service_unavailable)
+    |> put_resp_header("retry-after", "1")
+    |> json(%{
+      errors: %{detail: "The workflow run could not be stored; retry the same request"}
+    })
+  end
+
   def call(conn, {:error, {:conflict, active_run_id}}) when is_binary(active_run_id) do
     conn
     |> put_status(:conflict)

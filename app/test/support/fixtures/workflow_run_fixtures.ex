@@ -8,12 +8,21 @@ defmodule GoodFlows.WorkflowRunFixtures do
   alias GoodFlows.WorkflowRuns.Run
 
   @dir Path.expand("workflow_runs", __DIR__)
+  @golden Path.expand("../../../../openspec/changes/add-workflow-run-storage/fixtures", __DIR__)
   @graph String.duplicate("ab", 32)
+
+  @doc "The raw JSON of synthetic fixture `name` (without `.json`)."
+  @spec json(String.t()) :: String.t()
+  def json(name) when is_binary(name), do: File.read!(Path.join(@dir, name <> ".json"))
+
+  @doc "The raw golden file `name` (`parent-default` or `child-suite`)."
+  @spec golden_json(String.t()) :: String.t()
+  def golden_json(name) when is_binary(name), do: File.read!(Path.join(@golden, name <> ".json"))
 
   @doc "The decoded synthetic fixture `name` (without `.json`)."
   @spec document(String.t()) :: map()
   def document(name) when is_binary(name) do
-    {:ok, decoded} = JsonDocument.decode(File.read!(Path.join(@dir, name <> ".json")))
+    {:ok, decoded} = JsonDocument.decode(json(name))
     {:ok, normalized} = JsonDocument.normalize(decoded)
     normalized
   end

@@ -85,6 +85,9 @@ defmodule GoodFlowsWeb.Router do
     get "/recipes", RecipeController, :index
     get "/recipes/:id", RecipeController, :show
     get "/recipes/:id/runs", RunController, :index
+    # Any valid key. The project is resolved before the action runs.
+    get "/workflow-runs", WorkflowRunController, :index
+    get "/workflow-runs/:run_id", WorkflowRunController, :show
   end
 
   # Write endpoints: private (sk_) API keys only.
@@ -106,6 +109,8 @@ defmodule GoodFlowsWeb.Router do
     delete "/recipes/:id", RecipeController, :delete
     post "/recipes/:id/runs", RunController, :create
     post "/test-reports", TestReportController, :create
+    # Private keys only. Auth and LoadProject run before WorkflowRunBody.
+    post "/workflow-runs", WorkflowRunController, :create
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development

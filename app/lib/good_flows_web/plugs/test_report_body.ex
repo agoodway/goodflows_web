@@ -51,7 +51,6 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
 
   alias GoodFlows.TestReports.Document
   alias GoodFlowsWeb.{RawBody, RawBodyHeaders, TestReportAdmission}
-  alias Plug.Conn.Utils
 
   @default_max_body_bytes 33_554_432
   @default_read_timeout_ms 60_000
@@ -79,7 +78,7 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
   def call(conn, _opts) do
     limit = max_body_bytes()
 
-    with :ok <- check_content_type(conn),
+    with :ok <- RawBodyHeaders.check_json_content_type(conn),
          :ok <- RawBodyHeaders.check_content_encoding(conn),
          :ok <- RawBodyHeaders.check_declared_length(conn, limit),
          {:ok, conn} <- admit(conn) do
@@ -107,23 +106,6 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
 
   defp respond({:ok, conn, document}), do: assign(conn, :test_report_document, document)
   defp respond({:error, conn, reason}), do: conn |> finish() |> halt_with(reason)
-
-  defp check_content_type(conn) do
-    with [header] <- get_req_header(conn, "content-type"),
-         {:ok, "application", "json", params} <- Utils.content_type(header),
-         true <- utf8_params?(params) do
-      :ok
-    else
-      _other -> {:error, :unsupported_media_type}
-    end
-  end
-
-  defp utf8_params?(params) when map_size(params) == 0, do: true
-
-  defp utf8_params?(%{"charset" => charset} = params) when map_size(params) == 1,
-    do: String.downcase(charset) == "utf-8"
-
-  defp utf8_params?(_params), do: false
 
   defp admit(conn) do
     account_id = with %{id: id} <- conn.assigns[:current_account], do: id
