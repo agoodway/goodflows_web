@@ -37,25 +37,14 @@ defmodule GoodFlows.TestReports do
   """
   import Ecto.Query
 
-  require Logger
-
   alias GoodFlows.Accounts.{Account, ApiKey}
   alias GoodFlows.Projects.Project
+  alias GoodFlows.StorageErrors
   alias GoodFlows.TestReports.{Document, Report, StorageError, Store, Validator}
 
   @identity [:account_id, :project_id, :workflow_run_id, :job, :report_id]
 
   @default_db_timeout_ms 15_000
-
-  # SQLSTATE classes meaning the server could not finish the statement now,
-  # rather than that the request was wrong: 08 connection exception,
-  # 40 transaction rollback (serialization failure, deadlock), 53
-  # insufficient resources, 57 operator intervention (query canceled,
-  # shutdown, cannot connect now).
-  @transient_classes ["08", "40", "53", "57"]
-  # 55P03 lock_not_available; 25006 read_only_sql_transaction (a failover
-  # left the connection on a standby).
-  @transient_codes ["55P03", "25006"]
 
   @project_fkey "test_reports_project_id_fkey"
 
@@ -167,51 +156,11 @@ defmodule GoodFlows.TestReports do
     do: %{id: id, report_id: report_id, status: status, duplicate: duplicate?}
 
   defp persist(fun) do
-    fun.()
-  rescue
-    DBConnection.ConnectionError ->
-      {:error, :test_report_storage_unavailable}
-
-    error in Postgrex.Error ->
-      sqlstate = sqlstate(error)
-
-      cond do
-        sqlstate == "23503" -> foreign_key_error(error)
-        transient?(sqlstate) -> {:error, :test_report_storage_unavailable}
-        true -> unexpected(error, sqlstate, __STACKTRACE__)
-      end
-  end
-
-  # Only the project foreign key means the path's project is gone (404).
-  # Any other reference vanishing between authentication and insert (the
-  # submitting API key or the account) is transient for this request: a
-  # retry re-runs authentication, which then fails cleanly.
-  defp foreign_key_error(%Postgrex.Error{postgres: %{constraint: @project_fkey}}),
-    do: {:error, :not_found}
-
-  defp foreign_key_error(%Postgrex.Error{}), do: {:error, :test_report_storage_unavailable}
-
-  defp transient?(sqlstate) when is_binary(sqlstate),
-    do: String.starts_with?(sqlstate, @transient_classes) or sqlstate in @transient_codes
-
-  defp transient?(nil), do: false
-
-  # The Postgrex message and detail can quote submitted values: keep only
-  # the SQLSTATE and constraint name.
-  defp unexpected(error, sqlstate, stacktrace) do
-    constraint = constraint(error)
-
-    Logger.error(
-      "Test report storage failed: SQLSTATE #{sqlstate || "unknown"}, " <>
-        "constraint #{constraint || "none"}"
+    StorageErrors.persist(fun,
+      unavailable: :test_report_storage_unavailable,
+      project_fkey: @project_fkey,
+      storage_error: StorageError,
+      label: "Test report storage failed"
     )
-
-    reraise StorageError, [sqlstate: sqlstate, constraint: constraint], stacktrace
   end
-
-  defp sqlstate(%Postgrex.Error{postgres: %{pg_code: code}}) when is_binary(code), do: code
-  defp sqlstate(%Postgrex.Error{}), do: nil
-
-  defp constraint(%Postgrex.Error{postgres: %{constraint: name}}) when is_binary(name), do: name
-  defp constraint(%Postgrex.Error{}), do: nil
 end
