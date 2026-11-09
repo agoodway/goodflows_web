@@ -226,14 +226,25 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   # Pair and outcome errors are not produced by the field walk. Insert each
   # one at its path so the 50-error cap keeps document order: `outcome`
   # before `results`, and `results[0].child_run_id` before later statuses.
+  #
+  # Only the first 50 structural errors can appear in that cap, so the
+  # merge starts from that prefix. Each insert is capped again: a later
+  # orphan must not make the walk grow with the result count. The kept
+  # set matches merging the full lists and then taking 50.
   defp cross_field_errors(document) do
     pair_errors(document) ++ outcome_errors(document)
   end
 
-  defp merge_errors(structural, [], _spec), do: structural
-
   defp merge_errors(structural, extra, spec) do
-    Enum.reduce(extra, structural, &insert_error(&1, &2, spec))
+    structural
+    |> Enum.take(@max_rendered_errors)
+    |> merge_capped(extra, spec)
+  end
+
+  defp merge_capped(errors, extra, spec) do
+    Enum.reduce(extra, errors, fn error, kept ->
+      error |> insert_error(kept, spec) |> Enum.take(@max_rendered_errors)
+    end)
   end
 
   defp insert_error({path, _message} = error, errors, spec) do

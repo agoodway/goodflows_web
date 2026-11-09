@@ -531,6 +531,19 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
                MapSet.new(["parent_run_id" | Enum.map(0..48, &"results[#{&1}].status")])
     end
 
+    test "a few thousand orphan results stay within the first 50 errors" do
+      broken = result(%{"status" => "nope", "child_run_id" => @child})
+      errors = errors(Map.put(minimal(), "results", List.duplicate(broken, 4_000)))
+
+      expected =
+        Enum.flat_map(0..24, fn index ->
+          ["results[#{index}].child_run_id", "results[#{index}].status"]
+        end)
+
+      assert map_size(errors) == 50
+      assert MapSet.new(Map.keys(errors)) == MapSet.new(expected)
+    end
+
     test "an outcome error keeps its place ahead of later result errors" do
       broken = result(%{"status" => "failed", "command" => String.duplicate("x", 1_025)})
 
