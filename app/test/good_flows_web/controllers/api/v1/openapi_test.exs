@@ -57,7 +57,10 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/recipes/{id}", "delete"},
     {"/api/v1/projects/{project}/recipes/{id}/runs", "get"},
     {"/api/v1/projects/{project}/recipes/{id}/runs", "post"},
-    {"/api/v1/projects/{project}/test-reports", "post"}
+    {"/api/v1/projects/{project}/test-reports", "post"},
+    {"/api/v1/projects/{project}/workflow-runs", "get"},
+    {"/api/v1/projects/{project}/workflow-runs", "post"},
+    {"/api/v1/projects/{project}/workflow-runs/{run_id}", "get"}
   ]
 
   test "documents the project slug rule on every project path parameter", %{conn: conn} do
@@ -159,8 +162,13 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       assert description =~ "`meta`"
       assert description =~ "`suite_id` (= `report.suite_id`)"
       refute description =~ "exunit-timings"
-      refute description =~ "`run_id`"
       refute description =~ "module_started"
+
+      # Workflow runs document `run_id`. The retired test-report field must
+      # stay out of the test-report section only.
+      [_, test_reports | _] = String.split(description, "## Test reports")
+      test_reports = test_reports |> String.split("## Workflow runs") |> hd()
+      refute test_reports =~ "`run_id`"
     end
 
     test "suite filter tags are bounded identifiers in capped lists", %{doc: doc} do
@@ -309,6 +317,117 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
       over_cap = put_at(report("complete"), path, List.duplicate(entry, 257))
       assert {:error, _} = OpenApiSpex.cast_value(over_cap, schema, spec)
+    end
+  end
+
+  describe "workflow runs" do
+    import GoodFlows.WorkflowRunFixtures
+    import OpenApiSpex.TestAssertions
+
+    alias GoodFlows.JsonDocument
+    alias GoodFlowsWeb.ApiSpec
+    alias GoodFlowsWeb.Schemas.WorkflowRunParts
+
+    setup %{conn: conn} do
+      %{doc: conn |> get(~p"/api/v1/openapi") |> json_response(200)}
+    end
+
+    test "documents upload, list and show responses", %{doc: doc} do
+      upload = doc["paths"]["/api/v1/projects/{project}/workflow-runs"]["post"]
+      list = doc["paths"]["/api/v1/projects/{project}/workflow-runs"]["get"]
+      show = doc["paths"]["/api/v1/projects/{project}/workflow-runs/{run_id}"]["get"]
+
+      assert Enum.sort(Map.keys(upload["responses"])) ==
+               ~w(200 201 400 401 403 404 406 408 409 413 415 422 503)
+
+      assert Enum.sort(Map.keys(list["responses"])) == ~w(200 401 404 406 422)
+      assert Enum.sort(Map.keys(show["responses"])) == ~w(200 401 404 406 422)
+
+      assert upload["requestBody"]["content"]["application/json"]["schema"]["$ref"] =~
+               "WorkflowRunRequest"
+
+      for name <-
+            ~w(WorkflowRunRequest WorkflowRunAcknowledgement WorkflowRunSummary WorkflowRunListResponse WorkflowRunResponse) do
+        assert doc["components"]["schemas"][name], "missing schema #{name}"
+      end
+
+      query = Map.new(list["parameters"], &{&1["name"], &1})
+      assert query["limit"]["schema"]["minimum"] == 1
+      assert query["limit"]["schema"]["maximum"] == 200
+      assert query["outcome"]["schema"]["enum"] == ["passed", "failed", "cancelled"]
+      assert query["graph_sha256"]["schema"]["pattern"] =~ "64"
+      assert query["run_id"] == nil
+      assert show["parameters"] |> Enum.find(&(&1["name"] == "run_id")) |> Map.fetch!("required")
+    end
+
+    test "the request schema lists only required keys and nulls only the result trio", %{doc: doc} do
+      request = doc["components"]["schemas"]["WorkflowRunRequest"]
+
+      assert Enum.sort(request["required"]) ==
+               ~w(duration_ms graph_sha256 host max_in_flight outcome parallelism results run_id schema_version started_at workflow)
+
+      refute "environment" in request["required"]
+      refute request["properties"]["environment"]["nullable"]
+      refute "source" in request["required"]
+      refute Map.has_key?(request["properties"], "project")
+      refute Map.has_key?(request["properties"], "graph")
+      refute Map.has_key?(request["properties"], "ci")
+      refute Map.has_key?(request["properties"]["source"]["properties"], "branch")
+
+      result = request["properties"]["results"]["items"]
+
+      for key <- ~w(command error exit_code) do
+        assert key in result["required"]
+        assert result["properties"][key]["nullable"]
+      end
+
+      refute "workflow" in result["required"]
+      refute result["properties"]["workflow"]["nullable"]
+      refute result["properties"]["child_run_id"]["nullable"]
+
+      assert request["properties"]["started_at"]["pattern"] ==
+               WorkflowRunParts.started_at_pattern()
+    end
+
+    test "minimal, full and both golden fixtures match the request schema" do
+      spec = ApiSpec.spec()
+
+      assert_schema(minimal(), "WorkflowRunRequest", spec)
+      assert_schema(full(), "WorkflowRunRequest", spec)
+
+      for name <- ~w(parent-default child-suite) do
+        {:ok, decoded} = golden_json(name) |> JsonDocument.decode()
+        {:ok, document} = JsonDocument.normalize(decoded)
+        assert_schema(document, "WorkflowRunRequest", spec)
+      end
+    end
+
+    test "the request schema rejects null optional keys and the upload envelope" do
+      spec = ApiSpec.spec()
+      schema = spec.components.schemas["WorkflowRunRequest"]
+
+      assert {:error, _} =
+               OpenApiSpex.cast_value(Map.put(minimal(), "environment", nil), schema, spec)
+
+      assert {:error, _} = OpenApiSpex.cast_value(Map.put(minimal(), "graph", %{}), schema, spec)
+      assert {:error, _} = OpenApiSpex.cast_value(Map.put(minimal(), "ci", %{}), schema, spec)
+    end
+
+    test "the API description documents upload, idempotency, redaction and the soft link", %{
+      doc: doc
+    } do
+      description = doc["info"]["description"]
+
+      assert description =~ "## Workflow runs"
+      assert description =~ "POST /api/v1/projects/{project}/workflow-runs"
+      assert description =~ "exact retry"
+      assert description =~ "duplicate: true"
+      assert description =~ "each result's `command`"
+      assert description =~ "`error` as null"
+      assert description =~ "no foreign key"
+      assert description =~ "4,194,304 bytes"
+      assert description =~ "graph_sha256"
+      assert description =~ "`source.branch`"
     end
   end
 

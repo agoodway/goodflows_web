@@ -42,8 +42,8 @@ defmodule GoodFlowsWeb.ApiSpec do
            starting with a letter or digit; unique in the account). Recipes
            live under `/api/v1/projects/{project}`; a slug with no project
            is `404` and is never created implicitly. A project that still
-           has recipes or stored test reports cannot be deleted
-           (`409`).
+           has recipes, stored test reports or stored workflow runs cannot
+           be deleted (`409`).
         2. **Set the Sprites credential** with `PUT /api/v1/sprites-credential`
            (a private key of an account owner or admin). The token is stored
            encrypted and is never returned; every VM operation for the account
@@ -200,6 +200,54 @@ defmodule GoodFlowsWeb.ApiSpec do
           otherwise `incomplete`. Failed or errored tests do not make a report
           incomplete, and one partition never says the whole workflow
           invocation completed.
+
+        ## Workflow runs
+
+        `POST /api/v1/projects/{project}/workflow-runs` stores one goodflows
+        run-history document (`schema_version` 1) for a project that already
+        exists. It needs a private (`sk_…`) key. A public key is `403`.
+        Authentication and the project are resolved before the body is read:
+        a missing, expired or revoked key is `401`, an invalid slug is `422`
+        on `project`, and an unknown slug is `404`.
+
+        The body is the document itself (`Content-Type: application/json`,
+        no `Content-Encoding` other than `identity`). It has no `project` or
+        `account_id`. Optional keys are omitted, not null, except a result's
+        `command`, `exit_code` and `error`, which are required and may be
+        null. Top-level `graph` and `ci`, and `source.branch`, are unknown
+        fields (`422`); accepting the CLI upload envelope is a follow-up.
+        Objects and arrays nested more than 8 levels deep, duplicate keys,
+        U+0000, non-integer numbers and integers beyond 2^53 - 1 are `422`.
+        The body limit is 4 MiB (4,194,304 bytes) and the read deadline is
+        30 seconds (`413` and `408`).
+
+        The account, project and run id identify one immutable run. The
+        first upload is `201`. An exact retry (equal JSON, object key order
+        ignored) is `200` with the same server id and `duplicate: true`.
+        Any other document under that identity is `409` and does not reveal
+        the stored id or document. Acknowledgements return only `id`,
+        `run_id` and `duplicate`. On `503` the run may or may not be stored:
+        retry the same body. A lost commit that left a row resolves as `200`
+        on that retry.
+
+        `GET /api/v1/projects/{project}/workflow-runs` lists summaries for
+        any valid key, newest `started_at` first, breaking ties by run id
+        descending. Pages use keyset pagination (`limit` 1 to 200, default
+        50, and `cursor`). Filters `workflow`, `environment`, `outcome`,
+        `commit` and `graph_sha256` are exact and combined with AND.
+        Unknown query parameters are ignored. A filter, `limit` or `cursor`
+        that breaks its rule is `422`. Summaries do not include `results`.
+
+        `GET /api/v1/projects/{project}/workflow-runs/{run_id}` returns the
+        stored document. The run id must be a lowercase canonical UUID; any
+        other spelling, including uppercase, is `404` and is not looked up
+        after downcasing. A public (`pk_…`) key sees each result's `command`
+        and `error` as null; the stored row is not changed. Private keys see
+        them as stored. `test_reports` lists test reports in the same account
+        and project whose `workflow_run_id` equals this run, ordered by `job`
+        then `report_id`, without report contents. There is no foreign key
+        either way: reports often arrive before the run, and either side may
+        be absent.
         """
       },
       paths: Paths.from_router(Router),

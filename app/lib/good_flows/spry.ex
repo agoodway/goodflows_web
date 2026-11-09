@@ -497,21 +497,8 @@ defmodule GoodFlows.Spry do
       greater_than_or_equal_to: 1,
       less_than_or_equal_to: @max_page_size
     )
-    |> validate_cursor()
+    |> GoodFlows.ChangesetErrors.put_cursor(&decode_cursor/1)
     |> Ecto.Changeset.apply_action(:list)
-  end
-
-  defp validate_cursor(changeset) do
-    case Ecto.Changeset.get_change(changeset, :cursor) do
-      nil ->
-        changeset
-
-      cursor ->
-        case decode_cursor(cursor) do
-          {:ok, decoded} -> Ecto.Changeset.put_change(changeset, :cursor, decoded)
-          :error -> Ecto.Changeset.add_error(changeset, :cursor, "is invalid")
-        end
-    end
   end
 
   defp encode_cursor(%Run{inserted_at: inserted_at, id: id}) do

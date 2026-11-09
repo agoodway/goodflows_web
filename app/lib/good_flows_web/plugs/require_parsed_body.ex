@@ -9,9 +9,10 @@ defmodule GoodFlowsWeb.Plugs.RequireParsedBody do
   Requests without a `Content-Type` are parsed to `%{}` and pass through.
 
   Runs after `GoodFlowsWeb.Plugs.ApiAuth` on write scopes, so `401` and
-  `403` come first. Raw-body test report uploads
+  `403` come first. Raw-body uploads
   (`GoodFlowsWeb.Plugs.BodyParsers.raw_body_route?/1`) are skipped: their
-  body is deliberately unparsed and read after authentication.
+  body is deliberately unparsed and read after authentication. That is
+  test report uploads, and `POST` workflow-run uploads only.
   """
   @behaviour Plug
 

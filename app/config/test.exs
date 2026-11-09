@@ -45,6 +45,9 @@ config :good_flows,
   test_report_read_timeout_ms: 60_000,
   test_report_max_heap_bytes: 2_147_483_648,
   test_report_db_timeout_ms: 15_000,
+  # Small enough that size tests stay fast; fixtures are well under it.
+  workflow_run_max_body_bytes: 8_192,
+  workflow_run_read_timeout_ms: 30_000,
   workflow_run_db_timeout_ms: 15_000
 
 # Lets tests collect Sentry events (none are sent: there is no DSN).
