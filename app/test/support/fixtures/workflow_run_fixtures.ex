@@ -8,7 +8,10 @@ defmodule GoodFlows.WorkflowRunFixtures do
   alias GoodFlows.WorkflowRuns.Run
 
   @dir Path.expand("workflow_runs", __DIR__)
-  @golden Path.expand("../../../../openspec/changes/add-workflow-run-storage/fixtures", __DIR__)
+  @golden Path.expand(
+            "../../../../openspec/changes/archive/2026-11-09-add-workflow-run-storage/fixtures",
+            __DIR__
+          )
   @graph String.duplicate("ab", 32)
 
   @doc "The raw JSON of synthetic fixture `name` (without `.json`)."

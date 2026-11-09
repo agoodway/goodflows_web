@@ -5,7 +5,10 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
   alias GoodFlows.WorkflowRuns.Validator
 
   @fixtures Path.expand("../../support/fixtures/workflow_runs", __DIR__)
-  @golden Path.expand("../../../../openspec/changes/add-workflow-run-storage/fixtures", __DIR__)
+  @golden Path.expand(
+            "../../../../openspec/changes/archive/2026-11-09-add-workflow-run-storage/fixtures",
+            __DIR__
+          )
 
   @parent_sha "885e038c0f9b987034b408e021199f81da87b707b7f19d97781cc9a1ff79b6dc"
   @child_sha "72e944d953fea14064d52c743e85c247f1bbdcaacbf5a054def8053bab0020b1"
