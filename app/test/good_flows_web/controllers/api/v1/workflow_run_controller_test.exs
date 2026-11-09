@@ -251,12 +251,6 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
         |> upload(ctx.project.slug, body)
       end
 
-      assert_error_sent 406, fn ->
-        ctx.sk_conn
-        |> put_req_header("accept", "text/plain")
-        |> list(ctx.project.slug)
-      end
-
       assert run_count() == 0
     end
 
@@ -396,6 +390,16 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
   end
 
   describe "list and show" do
+    test "an unacceptable Accept header on GET list is 406", ctx do
+      # `:api` rejects the Accept header before the action. The test adapter
+      # surfaces that as NotAcceptableError, which a server renders as 406.
+      assert_error_sent 406, fn ->
+        ctx.sk_conn
+        |> put_req_header("accept", "text/plain")
+        |> list(ctx.project.slug)
+      end
+    end
+
     test "lists newest started_at first, pages, and lets a public key list", ctx do
       older = minimal() |> Map.put("started_at", "2026-11-05T12:00:00Z") |> Jason.encode!()
 
@@ -559,6 +563,15 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
       assert ctx.sk_conn |> show(ctx.project.slug, String.upcase(run_id)) |> json_response(404)
     end
 
+    test "show of a run that belongs to another account is 404", ctx do
+      run_id = minimal()["run_id"]
+      ctx.sk_conn |> upload(ctx.project.slug, json("minimal")) |> json_response(201)
+
+      other_project = project_fixture(ctx.other_account, %{slug: ctx.project.slug})
+
+      assert ctx.other_conn |> show(other_project.slug, run_id) |> json_response(404)
+    end
+
     test "a public key sees null command and error, and the stored row is unchanged", ctx do
       sentinel = "SENTINEL-command-7c21"
 
@@ -573,18 +586,19 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
       redacted = ctx.pk_conn |> show(ctx.project.slug, run_id) |> json_response(200)
       refute redacted |> inspect() =~ sentinel
 
-      for result <- redacted["data"]["document"]["results"] do
-        assert result["command"] == nil
-        assert result["error"] == nil
-      end
+      stored = Repo.get_by!(Run, run_id: run_id)
 
-      assert hd(redacted["data"]["document"]["results"])["name"] == "build"
+      expected =
+        update_in(stored.payload, ["results", Access.all()], fn result ->
+          result |> Map.put("command", nil) |> Map.put("error", nil)
+        end)
+
+      assert redacted["data"]["document"] == expected
 
       revealed = ctx.sk_conn |> show(ctx.project.slug, run_id) |> json_response(200)
       assert hd(revealed["data"]["document"]["results"])["command"] == sentinel
       assert hd(revealed["data"]["document"]["results"])["error"] == sentinel
 
-      stored = Repo.get_by!(Run, run_id: run_id)
       assert hd(stored.payload["results"])["command"] == sentinel
       assert hd(stored.payload["results"])["error"] == sentinel
     end

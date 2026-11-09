@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Stores account-owned projects, each addressed by a slug unique within its account, and manages them over the JSON API at `/api/v1/projects`. A project groups an account's Spry recipes and stored test reports, and a project cannot be deleted while it still has recipes or test reports.
+Stores account-owned projects, each addressed by a slug unique within its account, and manages them over the JSON API at `/api/v1/projects`. A project groups an account's Spry recipes, stored test reports, and stored workflow runs, and a project cannot be deleted while it still has recipes, test reports, or stored workflow runs.
 
 ## Requirements
 
@@ -56,11 +56,11 @@ The API SHALL provide `POST /api/v1/projects`, `GET /api/v1/projects`, `GET /api
 - **WHEN** a client shows or deletes a project whose path slug is `GoodCases` or `-app`
 - **THEN** the API responds `422` and does not write
 
-### Requirement: Recipes and test reports protect a project from deletion
-Deleting a project that has any recipe or test report MUST respond `409` and MUST keep the project and its recipes and test reports. Deleting a project that has no recipes or test reports MUST respond `204`, and a later show MUST respond `404`.
+### Requirement: Recipes, test reports, and workflow runs protect a project from deletion
+Deleting a project that has any recipe, test report, or workflow run MUST respond `409` and MUST keep the project and its recipes, test reports, and workflow runs. Deleting a project that has no recipes, test reports, or workflow runs MUST respond `204`, and a later show MUST respond `404`.
 
 #### Scenario: Delete an empty project
-- **WHEN** a client deletes a project that has no recipes or test reports
+- **WHEN** a client deletes a project that has no recipes, test reports, or workflow runs
 - **THEN** the API responds `204` and a later show of that slug responds `404`
 
 #### Scenario: Delete a project that has a recipe
@@ -70,3 +70,7 @@ Deleting a project that has any recipe or test report MUST respond `409` and MUS
 #### Scenario: Delete a project with reports and no recipes
 - **WHEN** a client deletes a project that has a stored test report and no recipes
 - **THEN** the API responds `409` and the project and the report remain
+
+#### Scenario: Delete a project with only a workflow run
+- **WHEN** a client deletes a project whose only content is a stored workflow run
+- **THEN** the API responds `409` and the project and the workflow run remain

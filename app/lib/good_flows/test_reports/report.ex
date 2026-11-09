@@ -46,4 +46,21 @@ defmodule GoodFlows.TestReports.Report do
 
     timestamps(type: :utc_datetime_usec, updated_at: false)
   end
+
+  @summary_fields [
+    :id,
+    :job,
+    :job_status,
+    :suite_id,
+    :report_id,
+    :partition,
+    :partition_count,
+    :status
+  ]
+
+  @doc """
+  Columns returned with a workflow run. Report contents (`payload`) are omitted.
+  """
+  @spec summary_fields() :: [atom()]
+  def summary_fields, do: @summary_fields
 end

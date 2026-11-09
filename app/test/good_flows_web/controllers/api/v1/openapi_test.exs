@@ -325,6 +325,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     import OpenApiSpex.TestAssertions
 
     alias GoodFlows.JsonDocument
+    alias GoodFlows.TestReports.Validator, as: TestReportValidator
     alias GoodFlowsWeb.ApiSpec
     alias GoodFlowsWeb.Schemas.WorkflowRunParts
 
@@ -358,6 +359,13 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       assert query["graph_sha256"]["schema"]["pattern"] =~ "64"
       assert query["run_id"] == nil
       assert show["parameters"] |> Enum.find(&(&1["name"] == "run_id")) |> Map.fetch!("required")
+
+      job_status =
+        doc["components"]["schemas"]["WorkflowRunResponse"]["properties"]["data"]["properties"][
+          "test_reports"
+        ]["items"]["properties"]["job_status"]
+
+      assert job_status["enum"] == TestReportValidator.job_statuses()
     end
 
     test "the request schema lists only required keys and nulls only the result trio", %{doc: doc} do

@@ -91,6 +91,31 @@ defmodule GoodFlowsWeb.WorkflowRunRedactionTest do
     refute_leaks(events, ctx)
   end
 
+  test "an sk_ show keeps command text out of debug logs and Sentry", ctx do
+    body = Jason.encode!(sentinel_document())
+    run_id = full()["run_id"]
+
+    log =
+      capture_log([level: :debug], fn ->
+        ctx.sk_conn |> upload(ctx.project.slug, body) |> json_response(201)
+
+        shown =
+          ctx.sk_conn
+          |> get("/api/v1/projects/#{ctx.project.slug}/workflow-runs/#{run_id}")
+          |> json_response(200)
+
+        assert hd(shown["data"]["document"]["results"])["command"] == @sentinel
+        assert hd(shown["data"]["document"]["results"])["error"] == @sentinel
+      end)
+
+    assert log =~ "GET /api/v1/projects/#{ctx.project.slug}/workflow-runs/#{run_id}"
+    refute_leaks(log, ctx)
+
+    {context, events} = sentry_probe()
+    refute_leaks(context, ctx)
+    refute_leaks(events, ctx)
+  end
+
   test "validation, parser and storage errors do not reveal command text", ctx do
     invalid =
       sentinel_document()

@@ -39,4 +39,4 @@
 
 - [x] 7.1 Run `mix precommit` and verify it passes, including the unchanged test-report suites.
 - [x] 7.2 Run an end-to-end smoke test against a local server: create a project, upload the full fixture with an `sk_` key, retry it (200), list it filtered by `graph_sha256`, show it with an `sk_` and then a `pk_` key, and confirm the project delete returns 409. Also upload both golden fixtures from task 2.1 and confirm each returns 201. Record the curl commands in the change's PR description for the goodci companion to reuse.
-- [ ] 7.3 After this change is archived, edit the canonical `openspec/specs/projects/spec.md` purpose so the grouping sentence and the deletion sentence both include stored workflow runs. A MODIFIED delta cannot change Purpose. Do not add a Purpose section to this change's projects delta.
+- [x] 7.3 After this change is archived, edit the canonical `openspec/specs/projects/spec.md` purpose so the grouping sentence and the deletion sentence both include stored workflow runs. A MODIFIED delta cannot change Purpose. Do not add a Purpose section to this change's projects delta.
