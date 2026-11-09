@@ -50,13 +50,12 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
   import Plug.Conn
 
   alias GoodFlows.TestReports.Document
-  alias GoodFlowsWeb.{RawBodyHeaders, TestReportAdmission}
+  alias GoodFlowsWeb.{RawBody, RawBodyHeaders, TestReportAdmission}
   alias Plug.Conn.Utils
 
   @default_max_body_bytes 33_554_432
   @default_read_timeout_ms 60_000
   @default_max_heap_bytes 2_147_483_648
-  @chunk_bytes 1_048_576
 
   @doc "The configured body limit in bytes."
   @spec max_body_bytes() :: pos_integer()
@@ -141,11 +140,12 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
   end
 
   # Any exception (such as an adapter raising on a socket timeout or a
-  # client disconnect) releases the slot before propagating.
+  # client disconnect) releases the slot before propagating. The chunked
+  # read itself lives in `RawBody` and does not know about the slot.
   defp read_and_decode(conn, limit) do
     deadline = System.monotonic_time(:millisecond) + read_timeout_ms()
 
-    with {:ok, conn, body} <- read_all(conn, limit, deadline, [], 0),
+    with {:ok, conn, body} <- RawBody.read(conn, limit, deadline),
          :ok <- check_depth(conn, body) do
       decode(conn, body)
     end
@@ -154,33 +154,6 @@ defmodule GoodFlowsWeb.Plugs.TestReportBody do
       finish(conn)
       :erlang.raise(kind, reason, __STACKTRACE__)
   end
-
-  defp read_all(conn, limit, deadline, acc, size) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining <= 0 do
-      {:error, conn, :timeout}
-    else
-      opts = [length: @chunk_bytes, read_length: @chunk_bytes, read_timeout: remaining]
-      conn |> read_body(opts) |> next_chunk(conn, limit, deadline, acc, size)
-    end
-  end
-
-  defp next_chunk({tag, data, conn}, _conn, limit, _deadline, _acc, size)
-       when tag in [:ok, :more] and size + byte_size(data) > limit,
-       do: {:error, conn, :too_large}
-
-  defp next_chunk({:ok, data, conn}, _conn, _limit, _deadline, acc, _size),
-    do: {:ok, conn, IO.iodata_to_binary([acc, data])}
-
-  defp next_chunk({:more, data, conn}, _conn, limit, deadline, acc, size),
-    do: read_all(conn, limit, deadline, [acc, data], size + byte_size(data))
-
-  defp next_chunk({:error, :timeout}, conn, _limit, _deadline, _acc, _size),
-    do: {:error, conn, :timeout}
-
-  defp next_chunk({:error, _reason}, conn, _limit, _deadline, _acc, _size),
-    do: {:error, conn, :unreadable}
 
   defp check_depth(conn, body) do
     case Document.check_depth(body) do
