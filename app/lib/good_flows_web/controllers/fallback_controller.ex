@@ -34,6 +34,12 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "The project has stored test reports and cannot be deleted"}})
   end
 
+  def call(conn, {:error, :has_workflow_runs}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "The project has stored workflow runs and cannot be deleted"}})
+  end
+
   def call(conn, {:error, {:invalid_test_report, errors}}) when is_map(errors) do
     conn
     |> put_status(:unprocessable_entity)

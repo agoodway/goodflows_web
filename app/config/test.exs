@@ -44,7 +44,8 @@ config :good_flows,
   test_report_max_concurrent_uploads_per_account: 1_000,
   test_report_read_timeout_ms: 60_000,
   test_report_max_heap_bytes: 2_147_483_648,
-  test_report_db_timeout_ms: 15_000
+  test_report_db_timeout_ms: 15_000,
+  workflow_run_db_timeout_ms: 15_000
 
 # Lets tests collect Sentry events (none are sent: there is no DSN).
 config :sentry, test_mode: true

@@ -13,16 +13,22 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
   @version 20_261_101_190_000
   @migration GoodFlows.Repo.Migrations.CreateProjects
 
-  # `test_reports` references `projects`, so it is rolled back first.
+  # `test_reports` and `workflow_runs` reference `projects`, so both are
+  # rolled back before `projects`. A composite foreign key makes `projects`
+  # down fail while either table still exists.
   @reports_version 20_261_101_200_000
   @reports_migration GoodFlows.Repo.Migrations.CreateTestReports
+
+  @runs_version 20_261_109_162_737
+  @runs_migration GoodFlows.Repo.Migrations.CreateWorkflowRuns
 
   setup_all do
     # `mix test` usually loaded them already through `ecto.migrate`;
     # compiling them again would only warn about redefining the modules.
     for {module, file} <- [
           {@migration, "#{@version}_create_projects.exs"},
-          {@reports_migration, "#{@reports_version}_create_test_reports.exs"}
+          {@reports_migration, "#{@reports_version}_create_test_reports.exs"},
+          {@runs_migration, "#{@runs_version}_create_workflow_runs.exs"}
         ],
         not Code.ensure_loaded?(module) do
       Code.require_file(file, Migrator.migrations_path(Repo))
@@ -61,6 +67,8 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
   test "down and up round-trip; up refuses existing recipes" do
     assert migrated?()
+    assert migrate(@runs_version, @runs_migration, :down) == [@runs_version]
+    refute table?("workflow_runs")
     assert migrate(@reports_version, @reports_migration, :down) == [@reports_version]
     refute table?("test_reports")
     assert migrate(:down) == [@version]
@@ -94,6 +102,8 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
     assert migrate(@reports_version, @reports_migration, :up) == [@reports_version]
     assert table?("test_reports")
+    assert migrate(@runs_version, @runs_migration, :up) == [@runs_version]
+    assert table?("workflow_runs")
   end
 
   test "down refuses while two projects of an account share a recipe name" do

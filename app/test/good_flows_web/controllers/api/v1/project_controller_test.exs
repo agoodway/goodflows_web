@@ -2,9 +2,12 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
   use GoodFlowsWeb.ConnCase, async: true
 
   import GoodFlows.SpryFixtures
+  import GoodFlows.WorkflowRunFixtures
   import OpenApiSpex.TestAssertions
 
   alias GoodFlows.Projects
+  alias GoodFlows.Repo
+  alias GoodFlows.WorkflowRuns.Run
   alias GoodFlowsWeb.ApiSpec
 
   setup :api_setup
@@ -125,6 +128,21 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
       assert body["errors"]["detail"] =~ "recipes"
       assert {:ok, _} = Projects.get_project(ctx.account, project.slug)
       assert {:ok, _} = GoodFlows.Spry.get_recipe(ctx.account, project, recipe.id)
+    end
+
+    test "a project whose only content is a workflow run is 409 and both remain", ctx do
+      project = project_fixture(ctx.account)
+      id = stored_run(ctx.account, project)
+
+      body = ctx.sk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> json_response(409)
+      assert_schema(body, "ConflictResponse", ApiSpec.spec())
+
+      assert body["errors"]["detail"] ==
+               "The project has stored workflow runs and cannot be deleted"
+
+      refute inspect(body) =~ id
+      assert ctx.sk_conn |> get(~p"/api/v1/projects/#{project.slug}") |> json_response(200)
+      assert Repo.get(Run, id)
     end
 
     test "public keys cannot delete", ctx do
