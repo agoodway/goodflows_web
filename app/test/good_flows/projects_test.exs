@@ -3,12 +3,14 @@ defmodule GoodFlows.ProjectsTest do
 
   import GoodFlows.AccountsFixtures
   import GoodFlows.SpryFixtures
+  import GoodFlows.WorkflowRunFixtures
 
   alias GoodFlows.Accounts.Account
   alias GoodFlows.Projects
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
   alias GoodFlows.Spry.{Recipe, Run}
+  alias GoodFlows.WorkflowRuns.Run, as: WorkflowRun
 
   setup do
     %{account: account_fixture(), other: account_fixture()}
@@ -101,6 +103,15 @@ defmodule GoodFlows.ProjectsTest do
     assert Projects.delete_project(other, project) == {:error, :not_found}
     assert Projects.delete_project(account, project) == :ok
     assert Projects.get_project(account, "goodcases") == {:error, :not_found}
+  end
+
+  test "delete_project/2 refuses a project whose only content is a workflow run", ctx do
+    project = project_fixture(ctx.account)
+    id = stored_run(ctx.account, project)
+
+    assert Projects.delete_project(ctx.account, project) == {:error, :has_workflow_runs}
+    assert {:ok, _} = Projects.get_project(ctx.account, project.slug)
+    assert Repo.get(WorkflowRun, id)
   end
 
   test "delete_project/2 of an already-deleted project is :not_found", %{account: account} do

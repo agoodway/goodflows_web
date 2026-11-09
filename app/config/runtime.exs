@@ -117,7 +117,8 @@ if config_env() != :test do
       env_int.("TEST_REPORT_MAX_CONCURRENT_UPLOADS_PER_ACCOUNT", "1"),
     test_report_read_timeout_ms: env_int.("TEST_REPORT_READ_TIMEOUT_MS", "60000"),
     test_report_max_heap_bytes: env_int.("TEST_REPORT_MAX_HEAP_BYTES", "2147483648"),
-    test_report_db_timeout_ms: env_int.("TEST_REPORT_DB_TIMEOUT_MS", "15000")
+    test_report_db_timeout_ms: env_int.("TEST_REPORT_DB_TIMEOUT_MS", "15000"),
+    workflow_run_db_timeout_ms: env_int.("WORKFLOW_RUN_DB_TIMEOUT_MS", "15000")
 end
 
 # Spry run owner ids embed the node name; production nodes must be

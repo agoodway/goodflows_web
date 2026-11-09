@@ -5,6 +5,7 @@ Mimic.copy(GoodFlows.Spry)
 Mimic.copy(GoodFlows.Spry.Executions)
 Mimic.copy(GoodFlows.Spry.Run)
 Mimic.copy(GoodFlows.TestReports.Store)
+Mimic.copy(GoodFlows.WorkflowRuns.Store)
 Mimic.copy(PgFlow.Runs)
 
 # :slow tests run in `mix precommit` (`mix test --include slow`).
