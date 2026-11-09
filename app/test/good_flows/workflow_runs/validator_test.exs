@@ -444,6 +444,11 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
       assert_error(outcome("passed", "cancelled"), "outcome", "is invalid")
     end
 
+    test "cancelled with a failure and passed with a timeout are rejected" do
+      assert_error(outcome("cancelled", "failed"), "outcome", "is invalid")
+      assert_error(outcome("passed", "timed_out"), "outcome", "is invalid")
+    end
+
     test "cancelled with every result passed is the signal snapshot and is accepted" do
       assert_accepted(outcome("cancelled", "passed"))
     end
@@ -468,6 +473,13 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
       assert errors["body"] == ["must not contain NUL characters"]
       refute sentinel?(errors, "secret_token_xyz")
       refute sentinel?(errors, "SENTINEL_UNKNOWN_9f3a")
+    end
+
+    test "an unknown key is not echoed" do
+      errors = errors(Map.put(minimal(), "secret_token_xyz", "top-secret"))
+      assert errors["body"] == ["has an unknown field"]
+      refute sentinel?(errors, "secret_token_xyz")
+      refute sentinel?(errors, "top-secret")
     end
 
     test "a sentinel in command is not echoed" do
@@ -495,6 +507,41 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
       assert errors["results[0].status"] == ["is invalid"]
       assert errors["results[49].status"] == ["is invalid"]
       refute Map.has_key?(errors, "results[50].status")
+    end
+
+    test "a child pairing error keeps its place ahead of later result errors" do
+      orphan = result(%{"child_run_id" => @child})
+      broken = result(%{"status" => "nope"})
+      errors = errors(Map.put(minimal(), "results", [orphan | List.duplicate(broken, 50)]))
+
+      assert MapSet.new(Map.keys(errors)) ==
+               MapSet.new(["results[0].child_run_id" | Enum.map(1..49, &"results[#{&1}].status")])
+    end
+
+    test "a caller pairing error keeps its place ahead of later result errors" do
+      broken = List.duplicate(result(%{"status" => "nope"}), 50)
+
+      errors =
+        minimal()
+        |> Map.put("parent_run_id", @uuid)
+        |> Map.put("results", broken)
+        |> errors()
+
+      assert MapSet.new(Map.keys(errors)) ==
+               MapSet.new(["parent_run_id" | Enum.map(0..48, &"results[#{&1}].status")])
+    end
+
+    test "an outcome error keeps its place ahead of later result errors" do
+      broken = result(%{"status" => "failed", "command" => String.duplicate("x", 1_025)})
+
+      errors =
+        minimal()
+        |> Map.put("outcome", "passed")
+        |> Map.put("results", List.duplicate(broken, 50))
+        |> errors()
+
+      assert MapSet.new(Map.keys(errors)) ==
+               MapSet.new(["outcome" | Enum.map(0..48, &"results[#{&1}].command")])
     end
   end
 

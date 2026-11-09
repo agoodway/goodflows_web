@@ -148,11 +148,12 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   end
 
   defp check(document) do
+    spec = document_spec()
+
     errors =
       document
-      |> Shape.check(document_spec(), [])
-      |> Kernel.++(pair_errors(document))
-      |> Kernel.++(outcome_errors(document))
+      |> Shape.check(spec, [])
+      |> merge_errors(cross_field_errors(document), spec)
 
     case errors do
       [] -> {:ok, document, columns(document)}
@@ -208,7 +209,7 @@ defmodule GoodFlows.WorkflowRuns.Validator do
       workflow: document["workflow"],
       environment: Map.get(document, "environment"),
       outcome: document["outcome"],
-      started_at: DateTime.truncate(started_at, :second),
+      started_at: started_at,
       duration_ms: document["duration_ms"],
       parallelism: document["parallelism"],
       max_in_flight: document["max_in_flight"],
@@ -221,6 +222,75 @@ defmodule GoodFlows.WorkflowRuns.Validator do
 
   defp source_value(source, key) when is_map(source), do: Map.get(source, key)
   defp source_value(_source, _key), do: nil
+
+  # Pair and outcome errors are not produced by the field walk. Insert each
+  # one at its path so the 50-error cap keeps document order: `outcome`
+  # before `results`, and `results[0].child_run_id` before later statuses.
+  defp cross_field_errors(document) do
+    pair_errors(document) ++ outcome_errors(document)
+  end
+
+  defp merge_errors(structural, [], _spec), do: structural
+
+  defp merge_errors(structural, extra, spec) do
+    Enum.reduce(extra, structural, &insert_error(&1, &2, spec))
+  end
+
+  defp insert_error({path, _message} = error, errors, spec) do
+    {earlier, later} =
+      Enum.split_while(errors, fn {other, _} -> compare_paths(other, path, spec) != :gt end)
+
+    earlier ++ [error | later]
+  end
+
+  defp compare_paths(left, right, spec), do: compare_segments(left, right, spec)
+
+  defp compare_segments([], [], _spec), do: :eq
+  defp compare_segments([], _right, _spec), do: :gt
+  defp compare_segments(_left, [], _spec), do: :lt
+
+  defp compare_segments([same | left], [same | right], spec) do
+    compare_segments(left, right, nested_spec(spec, same))
+  end
+
+  defp compare_segments([left | _], [right | _], _spec)
+       when is_integer(left) and is_integer(right) do
+    if left < right, do: :lt, else: :gt
+  end
+
+  defp compare_segments([left | _], [right | _], {:object, fields})
+       when is_binary(left) and is_binary(right) do
+    compare_keys(left, right, Map.keys(fields))
+  end
+
+  defp compare_segments([left | _], [right | _], _spec) do
+    if left < right, do: :lt, else: :gt
+  end
+
+  defp compare_keys(left, right, keys) do
+    left_at = Enum.find_index(keys, &(&1 == left))
+    right_at = Enum.find_index(keys, &(&1 == right))
+
+    cond do
+      left_at == right_at -> :eq
+      is_nil(left_at) -> :gt
+      is_nil(right_at) -> :lt
+      left_at < right_at -> :lt
+      true -> :gt
+    end
+  end
+
+  defp nested_spec({:object, fields}, key) when is_binary(key) do
+    case Map.fetch(fields, key) do
+      {:ok, spec} -> unwrap(spec)
+      :error -> nil
+    end
+  end
+
+  defp nested_spec({:list, spec}, index) when is_integer(index), do: unwrap(spec)
+  defp nested_spec({:list, spec, _opts}, index) when is_integer(index), do: unwrap(spec)
+  defp nested_spec({:fun, _fun, :partition}, key) when key in ~w(index count), do: positive()
+  defp nested_spec(_spec, _segment), do: nil
 
   defp pair_errors(document) do
     caller_pair(document) ++ child_pairs(Map.get(document, "results"))
