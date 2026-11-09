@@ -41,7 +41,7 @@ A request to any workflow-run route whose `Accept` header does not allow `applic
 - **THEN** the API responds `406` and, on a post, does not read the body
 
 ### Requirement: The body is a run-history document
-The body SHALL be one goodflows run-history JSON object with `schema_version` `1`. Its required keys are `schema_version`, `workflow`, `run_id`, `started_at`, `outcome`, `duration_ms`, `parallelism`, `graph_sha256`, `max_in_flight`, `host`, and `results`. Its optional keys are `environment`, `requested_jobs`, and `source`. The body MUST NOT carry a project or account: `project`, `account_id`, and any other key are unknown fields (`422`).
+The body SHALL be one goodflows run-history JSON object with `schema_version` `1`. Its required keys are `schema_version`, `workflow`, `run_id`, `started_at`, `outcome`, `duration_ms`, `parallelism`, `graph_sha256`, `max_in_flight`, `host`, and `results`. Its optional keys are `environment`, `requested_jobs`, `source`, `parent_run_id`, and `caller_job`. The body MUST NOT carry a project or account: `project`, `account_id`, and any other key are unknown fields (`422`).
 
 #### Scenario: Minimal document
 - **WHEN** a client posts a document with only the required keys and an empty `results` array
@@ -53,6 +53,35 @@ The body SHALL be one goodflows run-history JSON object with `schema_version` `1
 
 #### Scenario: Body names the project
 - **WHEN** a client posts a document containing a `project` key
+- **THEN** the API responds `422` with `has an unknown field` on `body` and stores nothing
+
+### Requirement: A child run names its caller
+`parent_run_id` and `caller_job` are optional and omit-only. `parent_run_id`, when present, MUST be a lowercase canonical UUID under the same rule as `run_id`. `caller_job`, when present, MUST follow the name rule. The two keys MUST both be present or both be absent. A null does not count as presence. The server MUST NOT require `parent_run_id` to identify a stored run, or `caller_job` to name a result on another document. A child document may be stored before its parent.
+
+#### Scenario: Child run
+- **WHEN** a client posts a document with `parent_run_id` `fb7d2711-6b67-4f5a-9104-492032a9e1e5` and `caller_job` `call-suite`
+- **THEN** the API responds `201` and both values are stored as given
+
+#### Scenario: Parent run id without caller job
+- **WHEN** a document has `parent_run_id` set to a lowercase canonical UUID and omits `caller_job`
+- **THEN** the API responds `422` with an error on `parent_run_id` and stores nothing
+
+#### Scenario: Caller job without parent run id
+- **WHEN** a document has `caller_job` `call-suite` and omits `parent_run_id`
+- **THEN** the API responds `422` with an error on `caller_job` and stores nothing
+
+### Requirement: Optional keys are omit-only
+An optional key MUST be absent or a value. Null is invalid on every optional key, including `parent_run_id`, `caller_job`, a result's `workflow`, and a result's `child_run_id`. In the uploaded document, the only keys that may be null are the required result keys `command`, `exit_code`, and `error`. Omitting any of those three is a missing required key (`422`). A null does not count as presence. A list summary may still be null for an absent `environment` or `source`.
+
+#### Scenario: Null on a workflow-call optional
+- **WHEN** a document sets `parent_run_id`, `caller_job`, a result's `workflow`, or a result's `child_run_id` to null
+- **THEN** the API responds `422` with an error on that key and stores nothing
+
+### Requirement: The upload envelope is out of scope
+Top-level `graph` and `ci`, and a `branch` key on `source`, MUST be rejected as unknown fields (`422`). Accepting the CLI upload envelope that adds those keys is a follow-up and MUST NOT be treated as part of this change.
+
+#### Scenario: Graph or ci on the document
+- **WHEN** a client posts a document containing a top-level `graph` or `ci` key
 - **THEN** the API responds `422` with `has an unknown field` on `body` and stores nothing
 
 ### Requirement: Run-level fields are validated
@@ -79,7 +108,7 @@ The body SHALL be one goodflows run-history JSON object with `schema_version` `1
 - **THEN** the API responds `422` with an error on `requested_jobs`
 
 ### Requirement: Names follow one rule
-Every workflow, environment, requested job, instance name, and step id in a document MUST be a string of 1 to 64 UTF-8 bytes that contains no control characters and is not only whitespace. Names are case-sensitive and MUST be stored without normalization.
+Every workflow name (the document's `workflow` and a result's `workflow`), environment, requested job, `caller_job`, instance name, and step id in a document MUST be a string of 1 to 64 UTF-8 bytes that contains no control characters and is not only whitespace. Names are case-sensitive and MUST be stored without normalization.
 
 #### Scenario: Long instance name
 - **WHEN** a result's `name` is 65 bytes long
@@ -101,7 +130,7 @@ Every workflow, environment, requested job, instance name, and step id in a docu
 - **THEN** the API responds `422` with `has an unknown field` on `source`
 
 ### Requirement: Each result describes one instance
-Each `results` entry MUST contain `name`, `status` (`passed`, `failed`, `skipped`, `timed_out`, or `cancelled`), `started` (a boolean), `exit_code` (null or an integer from -2147483648 through 2147483647), `command` and `error` (null or a string of at most 1,024 UTF-8 bytes), and nonnegative integer `duration_ms`, `blocked_ms`, and `queued_ms`. It MAY contain `partition` and `commands`, and no other key.
+Each `results` entry MUST contain `name`, `status` (`passed`, `failed`, `skipped`, `timed_out`, or `cancelled`), `started` (a boolean), `exit_code` (null or an integer from -2147483648 through 2147483647), `command` and `error` (null or a string of at most 1,024 UTF-8 bytes), and nonnegative integer `duration_ms`, `blocked_ms`, and `queued_ms`. It MAY contain `partition`, `commands`, `workflow`, and `child_run_id`, and no other key.
 
 #### Scenario: Result with command output
 - **WHEN** a result contains a `stdout` key
@@ -115,8 +144,23 @@ Each `results` entry MUST contain `name`, `status` (`passed`, `failed`, `skipped
 - **WHEN** a result's `exit_code` is 2147483648
 - **THEN** the API responds `422` with an error on `results[<index>].exit_code`
 
+### Requirement: A result may record a workflow call
+A result MAY contain `workflow` (the call target; the name rule; omit-only) and `child_run_id` (a lowercase canonical UUID under the same rule as `run_id`; omit-only). `child_run_id` is allowed only when that result's `workflow` is present. `workflow` MAY be present without `child_run_id`. The server MUST NOT require `child_run_id` to identify a stored run. A result's `workflow` does not further constrain `command`, `exit_code`, or `error`.
+
+#### Scenario: Workflow call result
+- **WHEN** a result has `workflow` `suite`, `child_run_id` `0e54fb55-a115-4ac7-80fe-8fde26e76afb`, and `command`, `exit_code`, and `error` all null
+- **THEN** the API responds `201` and stores that result as given
+
+#### Scenario: Call without a child run
+- **WHEN** a result has `workflow` `suite`, omits `child_run_id`, and has `command`, `exit_code`, and `error` all null
+- **THEN** the API responds `201`
+
+#### Scenario: Child run id without workflow
+- **WHEN** a result has `child_run_id` set to a lowercase canonical UUID and omits `workflow`
+- **THEN** the API responds `422` with an error on `results[<index>].child_run_id` and stores nothing
+
 ### Requirement: Partitions and command costs are validated
-`partition`, when present, MUST be `{"index": i, "count": n}` with `1 <= n <= 64` and `1 <= i <= n`. `commands`, when present, MUST be a nonempty array of at most 1,024 entries. Each entry MUST contain `kind` (`condition` or `command`) and a nonnegative integer `wall_ms`. It MAY contain `step` (the name rule), nonnegative integers `cpu_user_ms` and `cpu_system_ms`, and a positive integer `peak_rss_bytes`. Null is invalid for any of these keys.
+`partition`, when present, MUST be `{"index": i, "count": n}` with `1 <= n <= 64` and `1 <= i <= n`. `commands`, when present, MUST be a nonempty array of at most 1,024 entries. Each entry MUST contain `kind` (`condition` or `command`) and a nonnegative integer `wall_ms`. It MAY contain `step` (the name rule), nonnegative integers `cpu_user_ms` and `cpu_system_ms`, and a positive integer `peak_rss_bytes`. Those keys are omit-only: null is invalid for any of them.
 
 #### Scenario: Partition index beyond count
 - **WHEN** a result has `partition` `{"index": 4, "count": 3}`
