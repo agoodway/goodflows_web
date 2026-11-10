@@ -1,9 +1,10 @@
 # GoodFlows in Amp orbs
 
-`.agents/setup` prepares Debian 12 x86-64 orbs for the Phoenix app in `app/`.
-It installs Elixir 1.19.4, Erlang/OTP 28.1.1, PostgreSQL 15,
-and native build tools. Elixir 1.19 is required by locked dependencies and the
-runtime configuration even though `mix.exs` permits earlier releases.
+`.agents/setup` prepares Debian 13 x86-64 orbs for the Phoenix app in `app/`.
+It installs Elixir 1.19.4, Erlang/OTP 28.1.1, the release's PostgreSQL
+(17 on Debian 13, 15 on Debian 12), and native build tools. Elixir 1.19 is
+required by locked dependencies and the runtime configuration even though
+`mix.exs` permits earlier releases.
 
 Setup fetches the locked Mix dependencies, compiles dev and test builds,
 installs the pinned Tailwind/esbuild binaries, builds assets,

@@ -1,7 +1,8 @@
 services:
   postgres:
     platforms: [linux]
-    command: sudo -u postgres /usr/lib/postgresql/15/bin/postgres -D /var/lib/postgresql/15/main -c config_file=/etc/postgresql/15/main/postgresql.conf
+    # .agents/setup picks the major (15 on Debian 12, 17 on 13) and exports it in the login profile.
+    command: sudo pg_ctlcluster --foreground "${GOODFLOWS_PG_MAJOR:?run .agents/setup}" main start
     port: 5432
   web:
     platforms: [linux]

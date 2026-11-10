@@ -9,7 +9,13 @@ export HEX_CACERTS_PATH=/etc/ssl/certs/ca-certificates.crt
 TIMEFORMAT='  completed in %3R seconds'
 
 echo 'Installing missing system packages'
-packages=(build-essential ca-certificates curl unzip libssl3 libncurses6 postgresql-15 postgresql-contrib)
+# Debian 13 renamed OpenSSL's runtime (64-bit time_t) and ships PostgreSQL 17.
+if [[ $(. /etc/os-release && echo "$VERSION_CODENAME") == bookworm ]]; then
+  libssl=libssl3 pg_major=15
+else
+  libssl=libssl3t64 pg_major=17
+fi
+packages=(build-essential ca-certificates curl unzip "$libssl" libncurses6 "postgresql-$pg_major" "postgresql-client-$pg_major")
 missing=()
 for package in "${packages[@]}"; do
   if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
@@ -22,7 +28,7 @@ if ((${#missing[@]})); then
 fi
 
 echo 'Preparing Elixir 1.19.4 and OTP 28.1.1'
-# Hex's Ubuntu 22.04 builds use the same OpenSSL 3 / ncurses 6 ABI as Debian 12.
+# Hex's Ubuntu 22.04 builds use the same OpenSSL 3 / ncurses 6 ABI as Debian 12 and 13.
 otp_home="$toolchains/otp-28.1.1"
 if [[ ! -x "$otp_home/bin/erl" ]]; then
   archive=$(mktemp)
@@ -48,6 +54,8 @@ cat > "$toolchains/env" <<'ENV'
 export PATH="$HOME/.local/share/goodflows/elixir-1.19.4/bin:$HOME/.local/share/goodflows/otp-28.1.1/bin:$PATH"
 export HEX_CACERTS_PATH=/etc/ssl/certs/ca-certificates.crt
 ENV
+# The supervised postgres service starts this cluster version.
+echo "export GOODFLOWS_PG_MAJOR=$pg_major" >> "$toolchains/env"
 profile_marker='# GoodFlows orb toolchains'
 touch "$HOME/.bash_profile"
 if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile"; then
@@ -76,19 +84,23 @@ time env MIX_ENV=test mix compile
 
 echo 'Preparing local PostgreSQL development and test databases'
 # Only this disposable orb's cluster is tuned for speed over crash durability.
-sudo tee /etc/postgresql/15/main/conf.d/goodflows-orb.conf >/dev/null <<'POSTGRES'
+# Another major's cluster may exist (e.g. after a release upgrade); the app's
+# port 5432 always belongs to this one.
+sudo tee "/etc/postgresql/$pg_major/main/conf.d/goodflows-orb.conf" >/dev/null <<'POSTGRES'
+port = 5432
 fsync = off
 synchronous_commit = off
 full_page_writes = off
 POSTGRES
 started_postgres=false
-if ! pg_isready -q -h localhost -p 5432; then
-  sudo pg_ctlcluster 15 main start
+if ! sudo pg_ctlcluster "$pg_major" main status >/dev/null; then
+  sudo pg_ctlcluster "$pg_major" main start
   started_postgres=true
 fi
 # Setup daemons do not survive snapshotting; resume restores the supervised DB.
-trap 'if $started_postgres; then sudo pg_ctlcluster 15 main stop; fi' EXIT
-sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER USER postgres PASSWORD 'postgres'" >/dev/null
+trap 'if $started_postgres; then sudo pg_ctlcluster "$pg_major" main stop; fi' EXIT
+sudo -u postgres psql --cluster "$pg_major/main" -v ON_ERROR_STOP=1 \
+  -c "ALTER USER postgres PASSWORD 'postgres'" >/dev/null
 time mix ecto.create
 time mix ecto.migrate
 time mix run priv/repo/seeds.exs
