@@ -3,11 +3,13 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
   Renders workflow-run acknowledgements, list summaries and show responses.
 
   Summaries rebuild `source` from the copied columns: null when no commit
-  was stored, otherwise `commit` plus `dirty` only when `dirty` was stored.
-  `host` is the stored object, so omitted memory fields stay omitted.
+  was stored, otherwise `commit` plus `dirty` and `branch` only when each
+  was stored. `host` and `ci` are the stored objects (`ci` null when the
+  document had none), so omitted keys stay omitted.
 
   Public keys (`redact?: true`) see each `results` entry's `command` and
-  `error` as null. The stored row is never written here.
+  `error` as null, and in `graph` each job's and step's `command` and each
+  condition's `text` as null. The stored row is never written here.
   """
 
   alias GoodFlows.TestReports.Report
@@ -17,7 +19,7 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
   Renders an upload acknowledgement, or one stored run.
 
   The acknowledgement does not include the document. A show render redacts
-  each result's `command` and `error` when `redact?` is true.
+  command text, errors and graph condition text when `redact?` is true.
   """
   def show(%{ack: ack}), do: %{data: Map.take(ack, [:id, :run_id, :duplicate])}
 
@@ -51,30 +53,59 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
       max_in_flight: run.max_in_flight,
       graph_sha256: run.graph_sha256,
       source: source(run),
+      ci: run.ci,
       host: run.host,
       inserted_at: DateTime.to_iso8601(run.inserted_at)
     }
   end
 
   defp source(%Run{source_commit: nil}), do: nil
-  defp source(%Run{source_commit: commit, source_dirty: nil}), do: %{commit: commit}
 
-  defp source(%Run{source_commit: commit, source_dirty: dirty}),
-    do: %{commit: commit, dirty: dirty}
+  defp source(%Run{} = run) do
+    %{commit: run.source_commit}
+    |> put_present(:dirty, run.source_dirty)
+    |> put_present(:branch, run.source_branch)
+  end
+
+  defp put_present(map, _key, nil), do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
 
   defp document(payload, false), do: payload
 
-  defp document(%{"results" => results} = payload, true) when is_list(results) do
-    %{payload | "results" => Enum.map(results, &redact_result/1)}
+  defp document(payload, true) do
+    payload
+    |> update_list("results", &redact_result/1)
+    |> redact_graph()
   end
 
-  defp document(payload, true), do: payload
-
-  defp redact_result(result) when is_map(result) do
+  defp redact_result(result) do
     result |> Map.put("command", nil) |> Map.put("error", nil)
   end
 
-  defp redact_result(result), do: result
+  defp redact_graph(%{"graph" => graph} = payload),
+    do: %{payload | "graph" => update_list(graph, "jobs", &redact_job/1)}
+
+  defp redact_graph(payload), do: payload
+
+  # A call job's `call` names a workflow and a hash, not command text.
+  defp redact_job(job) do
+    job
+    |> Map.put("command", nil)
+    |> redact_condition()
+    |> update_list("steps", &(&1 |> Map.put("command", nil) |> redact_condition()))
+  end
+
+  defp redact_condition(%{"condition" => %{} = condition} = item),
+    do: %{item | "condition" => %{condition | "text" => nil}}
+
+  defp redact_condition(item), do: item
+
+  defp update_list(map, key, fun) do
+    case map do
+      %{^key => list} when is_list(list) -> %{map | key => Enum.map(list, fun)}
+      _other -> map
+    end
+  end
 
   defp report_summary(%Report{} = report), do: Map.take(report, Report.summary_fields())
 end

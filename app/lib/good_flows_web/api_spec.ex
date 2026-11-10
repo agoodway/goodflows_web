@@ -212,10 +212,14 @@ defmodule GoodFlowsWeb.ApiSpec do
 
         The body is the document itself (`Content-Type: application/json`,
         no `Content-Encoding` other than `identity`). It has no `project` or
-        `account_id`. Optional keys are omitted, not null, except a result's
-        `command`, `exit_code` and `error`, which are required and may be
-        null. Top-level `graph` and `ci`, and `source.branch`, are unknown
-        fields (`422`); accepting the CLI upload envelope is a follow-up.
+        `account_id`. Optional keys are omitted, not null. Nullable keys,
+        such as a result's `command`, `exit_code` and `error`, are always
+        present and may be null. The CLI upload envelope adds optional
+        `source.branch`, `ci` (GitHub Actions context) and `graph` (the job
+        graph that `graph_sha256` hashes, at most 1,024 jobs). Graph job
+        names are unique, dependencies are known and acyclic, every result
+        `name` is a graph job, and a called workflow is referenced by
+        `call.graph_sha256`, never inlined.
         Objects and arrays nested more than 8 levels deep, duplicate keys,
         U+0000, non-integer numbers and integers beyond 2^53 - 1 are `422`.
         The body limit is 4 MiB (4,194,304 bytes) and the read deadline is
@@ -234,7 +238,8 @@ defmodule GoodFlowsWeb.ApiSpec do
         any valid key, newest `started_at` first, breaking ties by run id
         descending. Pages use keyset pagination (`limit` 1 to 200, default
         50, and `cursor`). Filters `workflow`, `environment`, `outcome`,
-        `commit` and `graph_sha256` are exact and combined with AND.
+        `commit`, `branch` (`source.branch`), `event` (`ci.event`) and
+        `graph_sha256` are exact and combined with AND.
         Unknown query parameters are ignored. A filter, `limit` or `cursor`
         that breaks its rule is `422`. Summaries do not include `results`.
 
@@ -242,7 +247,8 @@ defmodule GoodFlowsWeb.ApiSpec do
         stored document. The run id must be a lowercase canonical UUID; any
         other spelling, including uppercase, is `404` and is not looked up
         after downcasing. A public (`pk_…`) key sees each result's `command`
-        and `error` as null; the stored row is not changed. Private keys see
+        and `error`, and each graph job's and step's `command` and condition
+        `text`, as null; the stored row is not changed. Private keys see
         them as stored. `test_reports` lists test reports in the same account
         and project whose `workflow_run_id` equals this run, ordered by `job`
         then `report_id`, without report contents. There is no foreign key

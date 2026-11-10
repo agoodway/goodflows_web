@@ -5,7 +5,7 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunResponse do
   """
   require OpenApiSpex
 
-  alias GoodFlowsWeb.Schemas.{WorkflowRunParts, WorkflowRunRequest}
+  alias GoodFlowsWeb.Schemas.WorkflowRunParts
   alias OpenApiSpex.Schema
 
   OpenApiSpex.schema(%{
@@ -21,7 +21,12 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunResponse do
           id: %Schema{type: :string, format: :uuid, description: "Stable server id"},
           run_id: %Schema{type: :string, format: :uuid, description: "The document's `run_id`"},
           inserted_at: %Schema{type: :string, format: :"date-time"},
-          document: WorkflowRunRequest,
+          document: %{
+            WorkflowRunParts.shown_document()
+            | description:
+                "The stored upload. A public key receives every `command` and condition " <>
+                  "`text` as null."
+          },
           test_reports: %Schema{
             type: :array,
             items: WorkflowRunParts.report_summary(),
@@ -35,7 +40,8 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunResponse do
     description: """
     `document` equals the upload as a JSON value (key order is not preserved).
     A public (`pk_`) key receives each `results` entry with `command` and
-    `error` set to null. The stored row is unchanged.
+    `error` set to null, and each `graph` job's and step's `command` and
+    condition `text` set to null. The stored row is unchanged.
     """
   })
 end
