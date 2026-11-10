@@ -5,10 +5,19 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   The allowlist mirrors goodci `Record` (`src/history.rs`), including the
   workflow-call fields added without a version bump: `parent_run_id` and
   `caller_job` together or not at all, and a result's `workflow` with an
-  optional `child_run_id`. Optional keys are omit-only. The required result
-  keys `command`, `exit_code` and `error` are the only keys that may be
-  null. Unknown fields stay unknown, including the upload envelope
-  (`graph`, `ci`, `source.branch`).
+  optional `child_run_id`. It also accepts the CLI upload envelope
+  (goodflows `src/reporting/run_contract.rs`): an optional `source.branch`,
+  an optional top-level `ci`, and an optional top-level `graph`. Optional
+  keys are omit-only. Nullable keys are always present and may be null:
+  a result's `command`, `exit_code` and `error`, a graph job's `command`,
+  `partitions`, `timeout_secs` and `condition`, and a graph step's `shell`
+  and `condition`. Any other key is unknown.
+
+  When `graph` is present, its job names are unique, every `depends_on`
+  entry names a graph job, dependencies have no cycle, and every result
+  `name` is a graph job. A called workflow is referenced by
+  `call.graph_sha256` and never inlined: `call` has exactly `workflow` and
+  `graph_sha256`.
 
   `validate/1` takes a decoded document (`JsonDocument.decode/1`, or a
   plain map). It normalizes first, so duplicate keys, NUL characters and
@@ -16,9 +25,11 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   to contract keys. The structural pass then checks presence, types and
   bounds. Outcome consistency runs only when every result status is valid.
 
-  Instance caps live here: names are at most 64 bytes, `command` and
-  `error` at most 1,024 bytes, `requested_jobs` and `commands` at most
-  1,024 entries, and a partition count at most 64. Nesting deeper than
+  Instance caps live here: names are at most 64 bytes, `source.branch` and
+  `ci.run_id` at most 256, `ci.url` at most 2,048, `command`, `error` and
+  graph command and condition text at most 1,024 bytes, `requested_jobs`,
+  `commands` and `graph.jobs` 1 to 1,024 entries, `depends_on` and `steps`
+  at most 1,024 entries, and a partition count at most 64. Nesting deeper than
   `max_depth/0` (8) is rejected by the body plug's `JsonDocument.check_depth/2`
   before decode, not by this module. The same is true of the byte-size cap.
 
@@ -37,6 +48,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @max_list_entries 1_024
   @max_text_bytes 1_024
   @max_name_bytes 64
+  @max_branch_bytes 256
+  @max_ci_run_id_bytes 256
+  @max_url_bytes 2_048
   @max_partitions 64
   @max_rendered_errors 50
   @min_exit_code -2_147_483_648
@@ -45,6 +59,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @outcomes ~w(passed failed cancelled)
   @statuses ~w(passed failed skipped timed_out cancelled)
   @kinds ~w(condition command)
+  @ci_providers ~w(github_actions)
+  @condition_kinds ~w(expression shell)
+  @partition_strategies ~w(index)
 
   @uuid ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/
   @sha256 ~r/\A[0-9a-f]{64}\z/
@@ -56,7 +73,8 @@ defmodule GoodFlows.WorkflowRuns.Validator do
 
   @typedoc """
   Values copied into `workflow_runs` columns. Absent omit-only fields are
-  `nil`. `source_dirty` is `false` when the document sent `false`.
+  `nil`. `source_dirty` is `false` when the document sent `false`. `ci` is
+  the document's `ci` object.
   """
   @type columns :: %{
           run_id: String.t(),
@@ -70,6 +88,8 @@ defmodule GoodFlows.WorkflowRuns.Validator do
           graph_sha256: String.t(),
           source_commit: String.t() | nil,
           source_dirty: boolean() | nil,
+          source_branch: String.t() | nil,
+          ci: map() | nil,
           host: map()
         }
 
@@ -122,6 +142,17 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   def valid_commit?(value) when is_binary(value), do: Regex.match?(@commit, value)
   def valid_commit?(_value), do: false
 
+  @doc """
+  Whether `value` follows the `source.branch` rule: 1 to 256 UTF-8 bytes
+  and no control characters.
+  """
+  @spec valid_branch?(term()) :: boolean()
+  def valid_branch?(value) when is_binary(value) do
+    String.valid?(value) and Shape.check(value, branch(), []) == []
+  end
+
+  def valid_branch?(_value), do: false
+
   @doc "Whether `value` is 64 lowercase hex characters."
   @spec valid_graph_sha256?(term()) :: boolean()
   def valid_graph_sha256?(value) when is_binary(value), do: Regex.match?(@sha256, value)
@@ -144,7 +175,7 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @doc """
   The `GoodFlows.TestReports.Shape` spec of a run-history document.
   Optional keys use `{:omit, spec}` (absent or a value, never null).
-  `command`, `exit_code` and `error` are nullable and required.
+  Nullable keys use `{:nullable, spec}` and are required.
   """
   @spec document_spec() :: Shape.spec()
   def document_spec do
@@ -165,7 +196,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
        "max_in_flight" => nonneg(),
        "host" => host_spec(),
        "source" => {:omit, source_spec()},
-       "results" => {:list, result_spec()}
+       "ci" => {:omit, ci_spec()},
+       "results" => {:list, result_spec()},
+       "graph" => {:omit, graph_spec()}
      }}
   end
 
@@ -264,6 +297,8 @@ defmodule GoodFlows.WorkflowRuns.Validator do
       graph_sha256: document["graph_sha256"],
       source_commit: source_value(source, "commit"),
       source_dirty: source_value(source, "dirty"),
+      source_branch: source_value(source, "branch"),
+      ci: Map.get(document, "ci"),
       host: document["host"]
     }
   end
@@ -280,7 +315,7 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   # orphan must not make the walk grow with the result count. The kept
   # set matches merging the full lists and then taking 50.
   defp cross_field_errors(document) do
-    pair_errors(document) ++ outcome_errors(document)
+    pair_errors(document) ++ outcome_errors(document) ++ graph_errors(document)
   end
 
   defp merge_errors(structural, extra, spec) do
@@ -411,6 +446,102 @@ defmodule GoodFlows.WorkflowRuns.Validator do
 
   defp failed_status?(%{"status" => status}), do: status in ["failed", "timed_out"]
 
+  # Graph consistency runs once `graph.jobs` is a list within bounds whose
+  # jobs all have a string `name` and a list of string `depends_on`. A
+  # cycle is looked for only when names are unique and every dependency
+  # is known, so each dependency resolves to one job.
+  defp graph_errors(%{"graph" => %{"jobs" => jobs}} = document)
+       when is_list(jobs) and jobs != [] and length(jobs) <= @max_list_entries do
+    if Enum.all?(jobs, &graph_job_shape?/1),
+      do: graph_consistency(jobs, Map.get(document, "results")),
+      else: []
+  end
+
+  defp graph_errors(_document), do: []
+
+  defp graph_job_shape?(%{"name" => name, "depends_on" => deps})
+       when is_binary(name) and is_list(deps),
+       do: Enum.all?(deps, &is_binary/1)
+
+  defp graph_job_shape?(_job), do: false
+
+  defp graph_consistency(jobs, results) do
+    jobs = Enum.with_index(jobs)
+    {index, duplicates} = Enum.reduce(jobs, {%{}, []}, &index_job/2)
+    unknown = unknown_dependencies(jobs, index)
+
+    cycle =
+      if duplicates == [] and unknown == [], do: cycle_errors(jobs, index), else: []
+
+    Enum.reverse(duplicates) ++ unknown ++ cycle ++ unknown_results(results, index)
+  end
+
+  defp index_job({%{"name" => name}, i}, {index, duplicates}) do
+    if Map.has_key?(index, name),
+      do: {index, [{["graph", "jobs", i, "name"], "must be unique"} | duplicates]},
+      else: {Map.put(index, name, i), duplicates}
+  end
+
+  defp unknown_dependencies(jobs, index) do
+    for {%{"depends_on" => deps}, i} <- jobs,
+        {dep, j} <- Enum.with_index(deps),
+        not Map.has_key?(index, dep),
+        do: {["graph", "jobs", i, "depends_on", j], "must name a graph job"}
+  end
+
+  defp unknown_results(results, index) when is_list(results) do
+    for {%{"name" => name}, i} <- Enum.with_index(results),
+        is_binary(name),
+        not Map.has_key?(index, name),
+        do: {["results", i, "name"], "must name a graph job"}
+  end
+
+  defp unknown_results(_results, _index), do: []
+
+  # Depth-first search. The error is on the `depends_on` of the job whose
+  # dependency closes the cycle, as goodflows reports it.
+  defp cycle_errors(jobs, index) do
+    edges =
+      Map.new(jobs, fn {%{"depends_on" => deps}, i} -> {i, Enum.map(deps, &index[&1])} end)
+
+    result =
+      Enum.reduce_while(0..(map_size(edges) - 1), %{}, fn node, colors ->
+        case visit(node, edges, colors) do
+          {:ok, colors} -> {:cont, colors}
+          {:cycle, _node} = cycle -> {:halt, cycle}
+        end
+      end)
+
+    case result do
+      {:cycle, node} -> [{["graph", "jobs", node, "depends_on"], "must not form a cycle"}]
+      _colors -> []
+    end
+  end
+
+  defp visit(node, edges, colors) do
+    case colors do
+      %{^node => :done} -> {:ok, colors}
+      _unseen -> visit_deps(node, edges, Map.put(colors, node, :active))
+    end
+  end
+
+  defp visit_deps(node, edges, colors) do
+    edges
+    |> Map.fetch!(node)
+    |> Enum.reduce_while({:ok, colors}, fn dep, {:ok, colors} ->
+      if colors[dep] == :active,
+        do: {:halt, {:cycle, node}},
+        else: dep |> visit(edges, colors) |> continue_visit()
+    end)
+    |> case do
+      {:ok, colors} -> {:ok, Map.put(colors, node, :done)}
+      cycle -> cycle
+    end
+  end
+
+  defp continue_visit({:ok, _colors} = ok), do: {:cont, ok}
+  defp continue_visit(cycle), do: {:halt, cycle}
+
   defp name, do: {:string, min: 1, max: @max_name_bytes, no_control: true, non_blank: true}
   defp uuid, do: {:string, format: @uuid}
   defp nonneg, do: {:int, 0}
@@ -428,12 +559,72 @@ defmodule GoodFlows.WorkflowRuns.Validator do
      }}
   end
 
+  defp branch, do: {:string, min: 1, max: @max_branch_bytes, no_control: true}
+
   defp source_spec do
     {:object,
      %{
        "commit" => {:string, format: @commit},
-       "dirty" => {:omit, :boolean}
+       "dirty" => {:omit, :boolean},
+       "branch" => {:omit, branch()}
      }}
+  end
+
+  defp ci_spec do
+    {:object,
+     %{
+       "provider" => {:enum, @ci_providers},
+       "event" => {:omit, name()},
+       "run_id" => {:omit, {:string, min: 1, max: @max_ci_run_id_bytes, no_control: true}},
+       "attempt" => {:omit, positive()},
+       "pull_request" => {:omit, positive()},
+       "runner" => {:omit, name()},
+       "url" => {:omit, {:fun, &ci_url_errors/2, :ci_url}}
+     }}
+  end
+
+  defp graph_spec do
+    {:object, %{"jobs" => {:list, graph_job_spec(), min: 1, max: @max_list_entries}}}
+  end
+
+  defp graph_job_spec do
+    {:object,
+     %{
+       "name" => name(),
+       "command" => {:nullable, text()},
+       "depends_on" => {:list, name(), max: @max_list_entries},
+       "partitions" => {:nullable, graph_partitions_spec()},
+       "timeout_secs" => {:nullable, positive()},
+       "shell" => :boolean,
+       "condition" => {:nullable, condition_spec()},
+       "steps" => {:list, graph_step_spec(), max: @max_list_entries},
+       "call" => {:omit, call_spec()}
+     }}
+  end
+
+  defp graph_partitions_spec do
+    {:object,
+     %{
+       "count" => {:fun, &partition_count_errors/2, :partition_count},
+       "strategy" => {:enum, @partition_strategies}
+     }}
+  end
+
+  defp condition_spec, do: {:object, %{"kind" => {:enum, @condition_kinds}, "text" => text()}}
+
+  defp graph_step_spec do
+    {:object,
+     %{
+       "id" => name(),
+       "command" => text(),
+       "shell" => {:nullable, :boolean},
+       "condition" => {:nullable, condition_spec()}
+     }}
+  end
+
+  # A called workflow is referenced by its graph hash, never inlined.
+  defp call_spec do
+    {:object, %{"workflow" => name(), "graph_sha256" => {:string, format: @sha256}}}
   end
 
   defp result_spec do
@@ -487,6 +678,35 @@ defmodule GoodFlows.WorkflowRuns.Validator do
 
   defp exit_code_errors(value, path) when is_integer(value), do: [{path, "is invalid"}]
   defp exit_code_errors(_value, path), do: [{path, "must be an integer"}]
+
+  defp partition_count_errors(value, _path)
+       when is_integer(value) and value in 1..@max_partitions,
+       do: []
+
+  defp partition_count_errors(value, path) when is_integer(value) and value < 1,
+    do: [{path, "must be a positive integer"}]
+
+  defp partition_count_errors(value, path) when is_integer(value), do: [{path, "is invalid"}]
+  defp partition_count_errors(_value, path), do: [{path, "must be an integer"}]
+
+  # An absolute `https` URL with a host. goodflows builds it from GitHub
+  # Actions variables that allow no spaces or control characters.
+  defp ci_url_errors(value, path) when is_binary(value) do
+    cond do
+      byte_size(value) > @max_url_bytes -> [{path, "is too long"}]
+      https_url?(value) -> []
+      true -> [{path, "is invalid"}]
+    end
+  end
+
+  defp ci_url_errors(_value, path), do: [{path, "must be a string"}]
+
+  defp https_url?(value) do
+    case URI.new(value) do
+      {:ok, %URI{scheme: "https", host: host}} when is_binary(host) and host != "" -> true
+      _other -> false
+    end
+  end
 
   defp partition_errors(value, path) when is_map(value) do
     value

@@ -532,6 +532,67 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
       assert length(ignored["data"]) == 2
     end
 
+    test "branch and event filter on source.branch and ci.event", ctx do
+      run = fn run_id, started_at, source, ci ->
+        minimal()
+        |> Map.merge(%{"run_id" => run_id, "started_at" => started_at})
+        |> then(&if(source, do: Map.put(&1, "source", source), else: &1))
+        |> then(&if(ci, do: Map.put(&1, "ci", ci), else: &1))
+        |> Jason.encode!()
+      end
+
+      commit = String.duplicate("a", 40)
+      push = %{"provider" => "github_actions", "event" => "push"}
+      pr = %{"provider" => "github_actions", "event" => "pull_request", "pull_request" => 7}
+
+      runs = [
+        {"11111111-0000-4000-8000-000000000001", %{"commit" => commit, "branch" => "main"}, push},
+        {"11111111-0000-4000-8000-000000000002", %{"commit" => commit, "branch" => "feat/x"},
+         push},
+        {"11111111-0000-4000-8000-000000000003", %{"commit" => commit}, pr},
+        {"11111111-0000-4000-8000-000000000004", %{"commit" => commit, "branch" => "main"},
+         %{"provider" => "github_actions"}},
+        {"11111111-0000-4000-8000-000000000005", nil, nil}
+      ]
+
+      for {{run_id, source, ci}, day} <- Enum.with_index(runs, 1) do
+        body = run.(run_id, "2026-11-0#{day}T12:00:00Z", source, ci)
+        ctx.sk_conn |> upload(ctx.project.slug, body) |> json_response(201)
+      end
+
+      ids = fn query ->
+        ctx.sk_conn
+        |> list(ctx.project.slug, query)
+        |> json_response(200)
+        |> Map.fetch!("data")
+        |> Enum.map(&String.last(&1["run_id"]))
+      end
+
+      assert ids.("?branch=main") == ~w(4 1)
+      assert ids.("?branch=feat%2Fx") == ~w(2)
+      assert ids.("?event=push") == ~w(2 1)
+      assert ids.("?event=pull_request") == ~w(3)
+      assert ids.("?branch=main&event=push") == ~w(1)
+      assert ids.("?branch=Main") == []
+      assert ids.("?branch=main&event=push&limit=1&workflow=ci") == ~w(1)
+
+      page = ctx.sk_conn |> list(ctx.project.slug, "?branch=main") |> json_response(200)
+      assert_schema(page, "WorkflowRunListResponse", spec())
+      [latest, first] = page["data"]
+      assert latest["source"] == %{"commit" => commit, "branch" => "main"}
+      assert latest["ci"] == %{"provider" => "github_actions"}
+      assert first["ci"] == push
+
+      [none] =
+        ctx.sk_conn
+        |> list(ctx.project.slug, "?limit=1")
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert none["source"] == nil
+      assert none["ci"] == nil
+    end
+
     test "invalid filters and cursors are 422 on that parameter", ctx do
       for {query, field} <- [
             {"?outcome=green", "outcome"},
@@ -539,6 +600,11 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
             {"?environment=%20%20%20", "environment"},
             {"?commit=ABC", "commit"},
             {"?graph_sha256=abc", "graph_sha256"},
+            {"?branch=#{String.duplicate("b", 257)}", "branch"},
+            {"?branch=a%0Ab", "branch"},
+            {"?branch=", "branch"},
+            {"?event=%20%20", "event"},
+            {"?event=#{String.duplicate("e", 65)}", "event"},
             {"?limit=0", "limit"},
             {"?cursor=nope", "cursor"}
           ] do
@@ -601,6 +667,36 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
 
       assert hd(stored.payload["results"])["command"] == sentinel
       assert hd(stored.payload["results"])["error"] == sentinel
+    end
+
+    test "a public key sees null graph command and condition text", ctx do
+      sentinel = "SENTINEL-graph-5d02"
+      jobs = ["graph", "jobs"]
+
+      document =
+        goodflows("full")
+        |> put_in(jobs ++ [Access.at(0), "command"], sentinel)
+        |> put_in(jobs ++ [Access.at(0), "condition", "text"], sentinel)
+        |> put_in(jobs ++ [Access.at(1), "steps", Access.at(0), "command"], sentinel)
+        |> put_in(jobs ++ [Access.at(1), "steps", Access.at(0), "condition", "text"], sentinel)
+
+      ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(201)
+
+      redacted = ctx.pk_conn |> show(ctx.project.slug, document["run_id"]) |> json_response(200)
+      assert_schema(redacted, "WorkflowRunResponse", spec())
+      refute inspect(redacted) =~ sentinel
+
+      [build, test, call] = redacted["data"]["document"]["graph"]["jobs"]
+      assert build["command"] == nil
+      assert build["condition"] == %{"kind" => "expression", "text" => nil}
+      assert Enum.map(test["steps"], & &1["command"]) == [nil, nil]
+      assert hd(test["steps"])["condition"] == %{"kind" => "shell", "text" => nil}
+      assert call["call"] == document["graph"]["jobs"] |> Enum.at(2) |> Map.fetch!("call")
+      assert build["depends_on"] == [] and test["depends_on"] == ["build"]
+      assert redacted["data"]["document"]["ci"] == document["ci"]
+
+      revealed = ctx.sk_conn |> show(ctx.project.slug, document["run_id"]) |> json_response(200)
+      assert revealed["data"]["document"] == document
     end
 
     test "show lists test reports stored before the run, in job then report_id order", ctx do

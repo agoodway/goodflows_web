@@ -86,6 +86,22 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
                              "Any other value is `422`.",
                          required: false
                        ],
+                       branch: [
+                         in: :query,
+                         schema: @document_props["source"].properties["branch"],
+                         description:
+                           "Exact `source.branch` (1 to 256 bytes, no control characters). " <>
+                             "Runs without a branch never match. Any other value is `422`.",
+                         required: false
+                       ],
+                       event: [
+                         in: :query,
+                         schema: @document_props["ci"].properties["event"],
+                         description:
+                           "Exact `ci.event`, such as `push`. Runs without `ci.event` never " <>
+                             "match. A value that breaks the name rule is `422`.",
+                         required: false
+                       ],
                        graph_sha256: [
                          in: :query,
                          schema: @document_props["graph_sha256"],
@@ -99,7 +115,8 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
     summary: "Store a workflow run",
     description: """
     Stores one `schema_version` 1 run-history document for the project in the
-    URL. The body has no `project` or `account_id`. The first upload is
+    URL, including the CLI upload envelope (`source.branch`, `ci` and
+    `graph`) when sent. The body has no `project` or `account_id`. The first upload is
     `201`. An exact retry (equal JSON ignoring object key order) is `200`
     with the same `id` and `duplicate: true`. Any other body under that
     `run_id` is `409` and does not reveal the stored id or document.
@@ -178,7 +195,10 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
   @doc "Lists one page of the project's workflow runs."
   def index(conn, params) do
     filters =
-      Map.take(params, ~w(limit cursor workflow environment outcome commit graph_sha256))
+      Map.take(
+        params,
+        ~w(limit cursor workflow environment outcome commit branch event graph_sha256)
+      )
 
     %{current_account: account, project: project} = conn.assigns
 
@@ -196,8 +216,9 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
     canonical UUID. Any other spelling, including uppercase, is `404` and
     is not looked up.
 
-    A public (`pk_`) key receives each result's `command` and `error` as
-    null. A private key sees them as stored. The stored row does not change.
+    A public (`pk_`) key receives each result's `command` and `error`, and
+    each `graph` job's and step's `command` and condition `text`, as null.
+    A private key sees them as stored. The stored row does not change.
     """,
     parameters:
       ApiParams.project() ++

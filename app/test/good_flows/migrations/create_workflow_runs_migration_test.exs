@@ -9,6 +9,7 @@ defmodule GoodFlows.Migrations.CreateWorkflowRunsMigrationTest do
   @workflow_index "workflow_runs_workflow_list_index"
   @graph_index "workflow_runs_workflow_graph_index"
   @commit_index "workflow_runs_commit_list_index"
+  @branch_index "workflow_runs_branch_list_index"
   @api_key_index "workflow_runs_api_key_id_index"
 
   test "workflow_runs has the copied columns and no updated_at" do
@@ -48,10 +49,14 @@ defmodule GoodFlows.Migrations.CreateWorkflowRunsMigrationTest do
     refute Map.has_key?(columns, "updated_at")
     refute Map.has_key?(columns, "parent_run_id")
     refute Map.has_key?(columns, "caller_job")
-    refute Map.has_key?(columns, "source_branch")
+
+    # Added by AddEnvelopeColumnsToWorkflowRuns. `graph` stays in `payload`.
+    assert columns["source_branch"] == %{type: "text", precision: nil, nullable: "YES"}
+    assert columns["ci"] == %{type: "jsonb", precision: nil, nullable: "YES"}
+    refute Map.has_key?(columns, "graph")
   end
 
-  test "indexes serve identity, keyset order, workflow, graph, commit, and api key nilify" do
+  test "indexes serve identity, keyset order, workflow, graph, commit, branch, and api key nilify" do
     indexes = indexes()
 
     assert indexes[@identity_index] =~
@@ -69,11 +74,15 @@ defmodule GoodFlows.Migrations.CreateWorkflowRunsMigrationTest do
     assert indexes[@commit_index] =~
              "(account_id, project_id, source_commit, started_at DESC, run_id DESC)"
 
+    assert indexes[@branch_index] =~
+             "(account_id, project_id, source_branch, started_at DESC, run_id DESC)"
+
     assert indexes[@api_key_index] =~ "(api_key_id)"
 
     for definition <- Map.values(indexes) do
       refute definition =~ "environment"
       refute definition =~ "outcome"
+      refute definition =~ ~r/\bci\b/
     end
   end
 

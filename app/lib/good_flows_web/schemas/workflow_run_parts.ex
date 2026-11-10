@@ -6,8 +6,8 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
 
   String lengths in the contract are UTF-8 bytes. OpenAPI `minLength` and
   `maxLength` count characters, so they are exact only for ASCII. Optional
-  keys use `{:omit, spec}` and stay out of `required`. Only `command`,
-  `exit_code` and `error` are `nullable`.
+  keys use `{:omit, spec}` and stay out of `required`. Nullable keys are
+  required and `nullable`.
   """
 
   alias GoodFlows.JsonDocument
@@ -28,6 +28,13 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
   @doc "Schema of a run-history document, without a title."
   @spec document() :: Schema.t()
   def document, do: to_schema(Validator.document_spec())
+
+  @doc """
+  Schema of a stored document as shown. Every `command` and condition
+  `text` is nullable, because a public key receives them as null.
+  """
+  @spec shown_document() :: Schema.t()
+  def shown_document, do: Validator.document_spec() |> redactable() |> to_schema()
 
   @doc "A minimal document, used as the request example."
   @spec example() :: map()
@@ -56,11 +63,12 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
       type: :object,
       additionalProperties: false,
       description:
-        "Fields copied out of the document for comparison. `results` are not " <>
-          "included. `source.dirty` is present only when the document included it.",
+        "Fields copied out of the document for comparison. `results` and " <>
+          "`graph` are not included. `source.dirty` and `source.branch` are " <>
+          "present only when the document included them.",
       required: ~w(
         id run_id workflow environment outcome started_at duration_ms parallelism
-        max_in_flight graph_sha256 source host inserted_at
+        max_in_flight graph_sha256 source ci host inserted_at
       ),
       properties: %{
         "id" => %Schema{type: :string, format: :uuid, description: "Stable server id"},
@@ -76,8 +84,10 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
         "source" =>
           nullable(
             props["source"],
-            "Null when the document omitted `source`. `dirty` is present only when it was stored."
+            "Null when the document omitted `source`. `dirty` and `branch` are present " <>
+              "only when they were stored."
           ),
+        "ci" => nullable(props["ci"], "Null when the document omitted `ci`."),
         "host" => props["host"],
         "inserted_at" => %Schema{
           type: :string,
@@ -111,6 +121,19 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
       }
     }
   end
+
+  defp redactable({:object, fields}),
+    do: {:object, Map.new(fields, fn {key, spec} -> {key, redactable(key, spec)} end)}
+
+  defp redactable({wrapper, spec}) when wrapper in [:omit, :nullable, :list],
+    do: {wrapper, redactable(spec)}
+
+  defp redactable({:list, spec, opts}), do: {:list, redactable(spec), opts}
+  defp redactable(spec), do: spec
+
+  defp redactable(key, {:nullable, _spec} = spec) when key in ~w(command text), do: spec
+  defp redactable(key, spec) when key in ~w(command text), do: {:nullable, spec}
+  defp redactable(_key, spec), do: redactable(spec)
 
   defp nullable(schema, note) do
     %{schema | nullable: true, description: join_description(schema.description, note)}
@@ -184,6 +207,18 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
         "index" => %Schema{type: :integer, minimum: 1, maximum: JsonDocument.max_integer()},
         "count" => %Schema{type: :integer, minimum: 1, maximum: Validator.max_partitions()}
       }
+    }
+  end
+
+  defp to_schema({:fun, _fun, :partition_count}) do
+    %Schema{type: :integer, minimum: 1, maximum: Validator.max_partitions()}
+  end
+
+  defp to_schema({:fun, _fun, :ci_url}) do
+    %Schema{
+      type: :string,
+      maxLength: 2_048,
+      description: "An absolute `https` URL with a host, at most 2,048 bytes."
     }
   end
 

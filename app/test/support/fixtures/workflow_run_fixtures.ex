@@ -12,7 +12,29 @@ defmodule GoodFlows.WorkflowRunFixtures do
             "../../../../openspec/changes/archive/2026-11-09-add-workflow-run-storage/fixtures",
             __DIR__
           )
+  @goodflows Path.expand("goodflows_workflow_runs", __DIR__)
   @graph String.duplicate("ab", 32)
+
+  @doc """
+  Names of the fixtures vendored from goodflows (see
+  `goodflows_workflow_runs/README.md`).
+  """
+  @spec goodflows_names() :: [String.t()]
+  def goodflows_names,
+    do: ~w(full minimal child history-parent-default history-child-suite)
+
+  @doc "The raw bytes of vendored goodflows fixture `name` (without `.json`)."
+  @spec goodflows_json(String.t()) :: String.t()
+  def goodflows_json(name) when is_binary(name),
+    do: File.read!(Path.join(@goodflows, name <> ".json"))
+
+  @doc "The decoded vendored goodflows fixture `name` (without `.json`)."
+  @spec goodflows(String.t()) :: map()
+  def goodflows(name) when is_binary(name) do
+    {:ok, decoded} = JsonDocument.decode(goodflows_json(name))
+    {:ok, normalized} = JsonDocument.normalize(decoded)
+    normalized
+  end
 
   @doc "The raw JSON of synthetic fixture `name` (without `.json`)."
   @spec json(String.t()) :: String.t()

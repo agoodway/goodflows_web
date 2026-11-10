@@ -368,7 +368,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       assert job_status["enum"] == TestReportValidator.job_statuses()
     end
 
-    test "the request schema lists only required keys and nulls only the result trio", %{doc: doc} do
+    test "the request schema lists only required keys and nulls only nullable keys", %{doc: doc} do
       request = doc["components"]["schemas"]["WorkflowRunRequest"]
 
       assert Enum.sort(request["required"]) ==
@@ -378,9 +378,29 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       refute request["properties"]["environment"]["nullable"]
       refute "source" in request["required"]
       refute Map.has_key?(request["properties"], "project")
-      refute Map.has_key?(request["properties"], "graph")
-      refute Map.has_key?(request["properties"], "ci")
-      refute Map.has_key?(request["properties"]["source"]["properties"], "branch")
+
+      for key <- ~w(graph ci) do
+        refute key in request["required"]
+        refute request["properties"][key]["nullable"]
+      end
+
+      refute "branch" in request["properties"]["source"]["required"]
+      assert request["properties"]["source"]["properties"]["branch"]["maxLength"] == 256
+      assert request["properties"]["ci"]["required"] == ["provider"]
+
+      job = request["properties"]["graph"]["properties"]["jobs"]["items"]
+      assert request["properties"]["graph"]["properties"]["jobs"]["maxItems"] == 1024
+
+      assert Enum.sort(job["required"]) ==
+               ~w(command condition depends_on name partitions shell steps timeout_secs)
+
+      for key <- ~w(command partitions timeout_secs condition) do
+        assert job["properties"][key]["nullable"]
+      end
+
+      refute job["properties"]["call"]["nullable"]
+      assert Enum.sort(job["properties"]["call"]["required"]) == ~w(graph_sha256 workflow)
+      assert job["properties"]["call"]["additionalProperties"] == false
 
       result = request["properties"]["results"]["items"]
 
@@ -410,15 +430,17 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       end
     end
 
-    test "the request schema rejects null optional keys and the upload envelope" do
+    test "the request schema rejects null optional keys and an empty envelope" do
       spec = ApiSpec.spec()
       schema = spec.components.schemas["WorkflowRunRequest"]
 
       assert {:error, _} =
                OpenApiSpex.cast_value(Map.put(minimal(), "environment", nil), schema, spec)
 
-      assert {:error, _} = OpenApiSpex.cast_value(Map.put(minimal(), "graph", %{}), schema, spec)
-      assert {:error, _} = OpenApiSpex.cast_value(Map.put(minimal(), "ci", %{}), schema, spec)
+      for key <- ~w(graph ci) do
+        assert {:error, _} = OpenApiSpex.cast_value(Map.put(minimal(), key, nil), schema, spec)
+        assert {:error, _} = OpenApiSpex.cast_value(Map.put(minimal(), key, %{}), schema, spec)
+      end
     end
 
     test "the API description documents upload, idempotency, redaction and the soft link", %{
@@ -431,7 +453,10 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       assert description =~ "exact retry"
       assert description =~ "duplicate: true"
       assert description =~ "each result's `command`"
-      assert description =~ "`error` as null"
+
+      assert String.replace(description, ~r/\s+/, " ") =~
+               "each graph job's and step's `command` and condition `text`, as null"
+
       assert description =~ "no foreign key"
       assert description =~ "4,194,304 bytes"
       assert description =~ "graph_sha256"

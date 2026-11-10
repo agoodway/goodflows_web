@@ -64,6 +64,8 @@ defmodule GoodFlows.WorkflowRuns do
     :graph_sha256,
     :source_commit,
     :source_dirty,
+    :source_branch,
+    :ci,
     :host,
     :inserted_at
   ]
@@ -128,12 +130,14 @@ defmodule GoodFlows.WorkflowRuns do
   Params (string keys, as from a query string): `"limit"` (1 to
   #{@max_page_size}, default #{@default_page_size}), `"cursor"` (the
   previous page's `next_cursor`) and the exact-match filters `"workflow"`,
-  `"environment"`, `"outcome"`, `"commit"` (`source.commit`) and
-  `"graph_sha256"`. Unknown keys are ignored. A filter, limit or cursor
+  `"environment"`, `"outcome"`, `"commit"` (`source.commit`), `"branch"`
+  (`source.branch`), `"event"` (`ci.event`) and `"graph_sha256"`. Unknown
+  keys are ignored. A filter, limit or cursor
   that breaks its rule returns a changeset (`422`).
 
   Only the copied columns are selected, never `payload`. `source` is
-  rebuilt by the JSON view from `source_commit` and `source_dirty`.
+  rebuilt by the JSON view from `source_commit`, `source_dirty` and
+  `source_branch`.
   """
   @spec list_runs(Account.t(), Project.t(), map()) ::
           {:ok, run_page()} | {:error, :not_found | Ecto.Changeset.t()}
@@ -213,6 +217,8 @@ defmodule GoodFlows.WorkflowRuns do
       environment: :string,
       outcome: :string,
       commit: :string,
+      branch: :string,
+      event: :string,
       graph_sha256: :string
     }
 
@@ -223,6 +229,8 @@ defmodule GoodFlows.WorkflowRuns do
       environment: nil,
       outcome: nil,
       commit: nil,
+      branch: nil,
+      event: nil,
       graph_sha256: nil
     }
 
@@ -240,6 +248,8 @@ defmodule GoodFlows.WorkflowRuns do
     |> validate_filter(:environment, &Validator.valid_name?/1)
     |> validate_filter(:outcome, &Validator.valid_outcome?/1)
     |> validate_filter(:commit, &Validator.valid_commit?/1)
+    |> validate_filter(:branch, &Validator.valid_branch?/1)
+    |> validate_filter(:event, &Validator.valid_name?/1)
     |> validate_filter(:graph_sha256, &Validator.valid_graph_sha256?/1)
     |> Ecto.Changeset.apply_action(:list)
   end
@@ -297,10 +307,17 @@ defmodule GoodFlows.WorkflowRuns do
     |> filter(:outcome, filters.outcome)
     |> filter(:graph_sha256, filters.graph_sha256)
     |> filter(:commit, filters.commit)
+    |> filter(:branch, filters.branch)
+    |> filter(:event, filters.event)
   end
 
   defp filter(query, _field, nil), do: query
   defp filter(query, :commit, commit), do: where(query, [r], r.source_commit == ^commit)
+  defp filter(query, :branch, branch), do: where(query, [r], r.source_branch == ^branch)
+
+  defp filter(query, :event, event),
+    do: where(query, [r], fragment("?->>'event'", r.ci) == ^event)
+
   defp filter(query, field, value), do: where(query, [r], field(r, ^field) == ^value)
 
   defp after_cursor(query, nil), do: query
@@ -363,6 +380,8 @@ defmodule GoodFlows.WorkflowRuns do
       graph_sha256: columns.graph_sha256,
       source_commit: columns.source_commit,
       source_dirty: columns.source_dirty,
+      source_branch: columns.source_branch,
+      ci: columns.ci,
       host: columns.host,
       payload: payload,
       payload_digest: JsonDocument.digest(payload),

@@ -4,6 +4,8 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
   alias GoodFlows.JsonDocument
   alias GoodFlows.WorkflowRuns.Validator
 
+  import GoodFlows.WorkflowRunFixtures, only: [goodflows: 1, goodflows_names: 0]
+
   @fixtures Path.expand("../../support/fixtures/workflow_runs", __DIR__)
   @golden Path.expand(
             "../../../../openspec/changes/archive/2026-11-09-add-workflow-run-storage/fixtures",
@@ -33,7 +35,10 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
     "must not contain NUL characters",
     "is out of range",
     "must be a JSON object",
-    "must not have more than 1024 entries"
+    "must not have more than 1024 entries",
+    "must be unique",
+    "must name a graph job",
+    "must not form a cycle"
   ]
 
   @path ~r/\A(?:body|[A-Za-z_][A-Za-z0-9_]*(?:\[[0-9]+\])?(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[[0-9]+\])?)*)\z/
@@ -194,8 +199,8 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
   end
 
   describe "the body is a run-history document" do
-    test "unknown keys, including project, account_id, graph and ci, are rejected on body" do
-      for key <- ~w(project account_id graph ci) do
+    test "unknown keys, including project and account_id, are rejected on body" do
+      for key <- ~w(project account_id) do
         assert_error(Map.put(minimal(), key, "secret_token_xyz"), "body", "has an unknown field")
       end
     end
@@ -328,7 +333,7 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
       )
     end
 
-    test "source.commit rejects the wrong length and uppercase hex, and branch is unknown" do
+    test "source.commit rejects the wrong length and uppercase hex" do
       assert_error(
         put_source(String.duplicate("ab", 20) <> "c"),
         "source.commit",
@@ -337,10 +342,6 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
 
       assert_error(put_source(String.duplicate("a", 39)), "source.commit", "has invalid format")
       assert_error(put_source(String.duplicate("A", 40)), "source.commit", "has invalid format")
-
-      document = put_source(String.duplicate("a", 40))
-      document = put_in(document, ["source", "branch"], "main")
-      assert_error(document, "source", "has an unknown field")
     end
 
     test "empty requested_jobs and a 1025-entry list are rejected" do
@@ -561,6 +562,274 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
     end
   end
 
+  describe "the upload envelope" do
+    test "every vendored goodflows fixture validates and copies branch and ci" do
+      for name <- goodflows_names() do
+        assert {:ok, _document, _columns} = Validator.validate(goodflows(name)), name
+      end
+
+      columns = assert_accepted(goodflows("full"))
+      assert columns.source_branch == "feature/login"
+      assert columns.ci["event"] == "pull_request"
+
+      columns = assert_accepted(goodflows("history-parent-default"))
+      assert columns.source_branch == nil
+      assert columns.ci == nil
+    end
+
+    test "optional envelope keys may be absent but never null" do
+      for path <- [["ci"], ["graph"], ["source", "branch"], ["ci", "event"], ["ci", "url"]] do
+        assert_error(put_in(full(), path, nil), Enum.join(path, "."), "is invalid")
+      end
+
+      assert_error(put_job(full(), 2, ["call"], nil), "graph.jobs[2].call", "is invalid")
+
+      for key <- ~w(event run_id attempt pull_request runner url) do
+        assert_accepted(update_in(full(), ["ci"], &Map.delete(&1, key)))
+      end
+
+      assert_accepted(Map.put(full(), "ci", %{"provider" => "github_actions"}))
+      assert_accepted(update_in(full(), ["source"], &Map.delete(&1, "branch")))
+    end
+
+    test "nullable graph keys must be present and may be null" do
+      for key <- ~w(command partitions timeout_secs condition) do
+        assert_error(drop_job_key(full(), 0, key), "graph.jobs[0].#{key}", "is required")
+        assert_accepted(put_job(full(), 0, [key], nil))
+      end
+
+      for key <- ~w(shell condition) do
+        document =
+          update_in(full(), ["graph", "jobs", at(1), "steps", at(0)], &Map.delete(&1, key))
+
+        assert_error(document, "graph.jobs[1].steps[0].#{key}", "is required")
+      end
+
+      for key <- ~w(name depends_on shell steps) do
+        assert_error(drop_job_key(full(), 0, key), "graph.jobs[0].#{key}", "is required")
+        assert_error(put_job(full(), 0, [key], nil), "graph.jobs[0].#{key}", nil)
+      end
+    end
+
+    test "source.branch is 1 to 256 bytes without control characters" do
+      assert_accepted(put_in(full(), ["source", "branch"], String.duplicate("b", 256)))
+      assert_accepted(put_in(full(), ["source", "branch"], "   "))
+
+      for {branch, message} <- [
+            {String.duplicate("b", 257), "is too long"},
+            {"a\nb", "must not contain control characters"},
+            {"", "can't be blank"},
+            {7, "must be a string"}
+          ] do
+        assert_error(put_in(full(), ["source", "branch"], branch), "source.branch", message)
+      end
+    end
+
+    test "ci follows the D3 rules" do
+      assert_error(
+        update_in(full(), ["ci"], &Map.delete(&1, "provider")),
+        "ci.provider",
+        "is required"
+      )
+
+      for {key, value, message} <- [
+            {"provider", "gitlab", "is invalid"},
+            {"event", String.duplicate("e", 65), "is too long"},
+            {"event", "  ", "can't be blank"},
+            {"runner", "a\tb", "must not contain control characters"},
+            {"run_id", String.duplicate("1", 257), "is too long"},
+            {"attempt", 0, "must be a positive integer"},
+            {"pull_request", "42", "must be an integer"},
+            {"url", "http://ghe.local/a/b/actions/runs/1", "is invalid"},
+            {"url", "https:///a/b", "is invalid"},
+            {"url", "github.com/a/b", "is invalid"},
+            {"url", "https://github.com/" <> String.duplicate("a", 2030), "is too long"}
+          ] do
+        assert_error(put_in(full(), ["ci", key], value), "ci.#{key}", message)
+      end
+
+      assert_accepted(put_in(full(), ["ci", "run_id"], String.duplicate("1", 256)))
+
+      assert_accepted(
+        put_in(full(), ["ci", "url"], "https://ghe.example:8443/a/b/actions/runs/1")
+      )
+
+      assert_error(put_in(full(), ["ci", "token"], "x"), "ci", "has an unknown field")
+    end
+
+    test "graph jobs number 1 to 1,024, and depends_on and steps at most 1,024" do
+      job = full()["graph"]["jobs"] |> hd() |> Map.put("condition", nil)
+      jobs = fn n -> for i <- 1..n//1, do: Map.put(job, "name", "j#{i}") end
+
+      assert_error(
+        Map.put(full(), "graph", %{"jobs" => []}),
+        "graph.jobs",
+        "must not be empty"
+      )
+
+      assert_error(
+        Map.put(minimal(), "graph", %{"jobs" => jobs.(1025)}),
+        "graph.jobs",
+        "must not have more than 1024 entries"
+      )
+
+      assert_accepted(Map.put(minimal(), "graph", %{"jobs" => jobs.(1024)}))
+
+      assert_error(
+        put_job(full(), 1, ["depends_on"], List.duplicate("build", 1025)),
+        "graph.jobs[1].depends_on",
+        "must not have more than 1024 entries"
+      )
+
+      step = full()["graph"]["jobs"] |> Enum.at(1) |> Map.fetch!("steps") |> Enum.at(1)
+
+      assert_error(
+        put_job(full(), 1, ["steps"], List.duplicate(step, 1025)),
+        "graph.jobs[1].steps",
+        "must not have more than 1024 entries"
+      )
+
+      assert_error(
+        Map.put(full(), "graph", %{"jobs" => [], "x" => 1}),
+        "graph",
+        "has an unknown field"
+      )
+    end
+
+    test "graph text is at most 1,024 bytes and partition counts at most 64" do
+      for {path, rendered} <- [
+            {["graph", "jobs", at(0), "command"], "graph.jobs[0].command"},
+            {["graph", "jobs", at(0), "condition", "text"], "graph.jobs[0].condition.text"},
+            {["graph", "jobs", at(1), "steps", at(0), "command"],
+             "graph.jobs[1].steps[0].command"},
+            {["graph", "jobs", at(1), "steps", at(0), "condition", "text"],
+             "graph.jobs[1].steps[0].condition.text"}
+          ] do
+        assert_error(put_in(full(), path, String.duplicate("x", 1025)), rendered, "is too long")
+        assert_accepted(put_in(full(), path, String.duplicate("é", 512)))
+      end
+
+      assert_error(
+        put_job(full(), 1, ["partitions", "count"], 65),
+        "graph.jobs[1].partitions.count",
+        "is invalid"
+      )
+
+      assert_error(
+        put_job(full(), 1, ["partitions", "count"], 0),
+        "graph.jobs[1].partitions.count",
+        "must be a positive integer"
+      )
+
+      assert_accepted(put_job(full(), 1, ["partitions", "count"], 64))
+
+      assert_error(
+        put_job(full(), 1, ["partitions", "strategy"], "hash"),
+        "graph.jobs[1].partitions.strategy",
+        "is invalid"
+      )
+
+      assert_error(
+        put_job(full(), 0, ["condition", "kind"], "regex"),
+        "graph.jobs[0].condition.kind",
+        "is invalid"
+      )
+
+      assert_error(
+        put_job(full(), 0, ["timeout_secs"], 0),
+        "graph.jobs[0].timeout_secs",
+        "must be a positive integer"
+      )
+
+      assert_error(put_job(full(), 0, ["env"], %{}), "graph.jobs[0]", "has an unknown field")
+    end
+
+    test "job names are unique and dependencies are known and acyclic" do
+      assert_error(put_job(full(), 2, ["name"], "build"), "graph.jobs[2].name", "must be unique")
+
+      assert_error(
+        put_job(full(), 1, ["depends_on"], ["deploy"]),
+        "graph.jobs[1].depends_on[0]",
+        "must name a graph job"
+      )
+
+      # build -> test -> build: reported on the job that closes the cycle.
+      assert_error(
+        put_job(full(), 0, ["depends_on"], ["test"]),
+        "graph.jobs[1].depends_on",
+        "must not form a cycle"
+      )
+
+      assert_error(
+        put_job(full(), 0, ["depends_on"], ["build"]),
+        "graph.jobs[0].depends_on",
+        "must not form a cycle"
+      )
+
+      # build -> integration -> test -> build: the search from build closes it at test.
+      errors =
+        assert_error(
+          put_job(full(), 0, ["depends_on"], ["integration"]),
+          "graph.jobs[1].depends_on",
+          "must not form a cycle"
+        )
+
+      assert map_size(errors) == 1
+    end
+
+    test "every result names a graph job, and without a graph results are not cross-checked" do
+      document = put_in(full(), ["results", at(0), "name"], "deploy")
+      assert_error(document, "results[0].name", "must name a graph job")
+      assert_accepted(Map.delete(document, "graph"))
+    end
+
+    test "a called workflow is referenced by graph_sha256 and never inlined" do
+      call = ["call"]
+
+      assert_error(
+        put_job(full(), 2, call ++ ["graph_sha256"], String.duplicate("AB", 32)),
+        "graph.jobs[2].call.graph_sha256",
+        "has invalid format"
+      )
+
+      assert_error(
+        put_job(full(), 2, call ++ ["graph_sha256"], "ab"),
+        "graph.jobs[2].call.graph_sha256",
+        "has invalid format"
+      )
+
+      assert_error(
+        update_in(full(), ["graph", "jobs", at(2), "call"], &Map.delete(&1, "workflow")),
+        "graph.jobs[2].call.workflow",
+        "is required"
+      )
+
+      inlined = put_job(full(), 2, call ++ ["jobs"], full()["graph"]["jobs"])
+      assert_error(inlined, "graph.jobs[2].call", "has an unknown field")
+    end
+
+    test "envelope errors never echo a submitted value" do
+      document =
+        full()
+        |> put_in(["ci", "url"], "http://SENTINEL_URL_7a1")
+        |> put_job(0, ["SENTINEL_KEY_7a1"], "x")
+        |> put_job(1, ["depends_on"], ["SENTINEL_DEP_7a1"])
+
+      errors = errors(document)
+      refute sentinel?(errors, "SENTINEL")
+    end
+  end
+
+  defp full, do: goodflows("full")
+
+  defp at(index), do: Access.at(index)
+
+  defp put_job(document, index, path, value),
+    do: put_in(document, ["graph", "jobs", at(index) | path], value)
+
+  defp drop_job_key(document, index, key),
+    do: update_in(document, ["graph", "jobs", at(index)], &Map.delete(&1, key))
+
   defp minimal(overrides \\ %{}) do
     Map.merge(
       %{
@@ -647,7 +916,7 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
   defp assert_error(document, path, message) do
     errors = errors(document)
     assert Map.has_key?(errors, path), "expected an error on #{path}, got #{inspect(errors)}"
-    assert message in errors[path], inspect(errors)
+    if message, do: assert(message in errors[path], inspect(errors))
     errors
   end
 

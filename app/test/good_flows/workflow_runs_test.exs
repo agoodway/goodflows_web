@@ -128,8 +128,8 @@ defmodule GoodFlows.WorkflowRunsTest do
       assert Repo.get!(Run, id).api_key_id == nil
     end
 
-    test "invalid documents, including the upload envelope, store nothing", ctx do
-      assert {:error, {:invalid_workflow_run, %{"body" => ["has an unknown field"]}}} =
+    test "invalid documents, including an invalid upload envelope, store nothing", ctx do
+      assert {:error, {:invalid_workflow_run, %{"graph" => ["has an unknown field"]}}} =
                WorkflowRuns.ingest(
                  ctx.account,
                  ctx.project,
