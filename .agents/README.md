@@ -33,6 +33,31 @@ Checks:
 - `cd app && mix precommit` — the repository's full checks and Elixir suite.
 - `goodflows run ci` — the same checks as separate workflow jobs.
 
+## CLI end-to-end smoke
+
+`scripts/e2e-cli-smoke.sh` checks that the goodflows CLI's run-history
+upload works against this app (GOO-247). After setup, run it from any
+directory; it takes about two minutes on a fresh orb and exits nonzero on
+any failed check.
+
+It runs `mix setup`, starts its own dev `mix phx.server` on port 4123
+(`SMOKE_PORT`) so it can stop and restart it, and builds the CLI from
+agoodway/goodflows `main` (`GOODFLOWS_CLI_REF`) with `cargo install`,
+installing rustup if needed. `GOODFLOWS_BIN=/path/to/goodflows` skips the
+build. It creates a private API key for the seeded `user@example.com` in
+Acme Corp and a new `e2e-smoke-<timestamp>` project, then runs workflows in
+a temporary git checkout: a parent that calls a child workflow, a
+GitHub Actions-style `pull_request` run on a detached checkout and a `push`
+run on a branch, and a run made while the server is down whose spooled
+record `goodflows reports upload` replays. It prints `PASS` or `FAIL` for
+each server-side check: upload statuses in the server log (no 422), stored
+`graph`, `ci` and `source.branch`, an exact retry returning 200, and the
+`branch` and `event` filters of `GET /api/v1/projects/:project/workflow-runs`
+and `goodflows history list`. The run's workspace and server log stay under
+`/tmp/goodflows-e2e.*`.
+
+## Lifecycle
+
 Lifecycle files must reach the project's default branch before future orbs
 use them. Amp then snapshots setup's installed packages and build caches;
 an exact snapshot skips setup, while a stale snapshot reruns it incrementally.
