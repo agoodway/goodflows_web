@@ -1,7 +1,8 @@
 services:
   postgres:
     platforms: [linux]
-    command: sudo -u postgres /usr/lib/postgresql/15/bin/postgres -D /var/lib/postgresql/15/main -c config_file=/etc/postgresql/15/main/postgresql.conf
+    # The cluster's major version follows the Debian release (15 on 12, 17 on 13).
+    command: sudo pg_ctlcluster --foreground "$(ls /etc/postgresql)" main start
     port: 5432
   web:
     platforms: [linux]
