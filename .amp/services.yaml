@@ -1,8 +1,8 @@
 services:
   postgres:
     platforms: [linux]
-    # The cluster's major version follows the Debian release (15 on 12, 17 on 13).
-    command: sudo pg_ctlcluster --foreground "$(ls /etc/postgresql)" main start
+    # .agents/setup picks the major (15 on Debian 12, 17 on 13) and exports it in the login profile.
+    command: sudo pg_ctlcluster --foreground "${GOODFLOWS_PG_MAJOR:?run .agents/setup}" main start
     port: 5432
   web:
     platforms: [linux]
