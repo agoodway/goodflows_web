@@ -9,6 +9,7 @@ A visitor creates an account by entering only an email address. The app stores a
 - `registration-validate` rejects a malformed or already-registered email on the form.
 - `registration-confirm` confirms the account from the emailed link and logs the user in.
 - `registration-closed` redirects `/users/register` to log in with an error while registration is closed.
+- `registration-logged-in` sends a logged-in user from `/users/register` to `/` in both states, and the re-auth login page shows no signup link.
 
 ## How to get to it (user POV)
 
@@ -25,14 +26,16 @@ Preconditions:
 - Closed state: launch a separate run with `GOOD_FLOWS_USER_REGISTRATION_ENABLED=false $S/launch.sh`. The setting is read at boot, so it cannot change during a run.
 - `doctor.sh` prints the `GOOD_FLOWS_USER_REGISTRATION_ENABLED` value the server got.
 
-- **Run the script.** `node $S/journeys/registration.mjs <run-id>` reads the launched setting from `.instance/build` and checks the matching state. It covers Links, Create, Second view, and Closed.
+- **Run the script.** `node $S/journeys/registration.mjs <run-id>` reads the launched setting from `.instance/build` and checks the matching state. It covers Links, Create, Second view, Confirm, Closed, and Logged in. Validate is not scripted.
 - **Links.** Logged out, open `/` and `/users/log-in`. When open, `#home-register-link`, the header link named **Register** (exact), and the login page's **Sign up** link exist. When closed, none of the three exist.
 - **Create.** When open, click **Sign up**. The URL is `/users/register`. Fill `#registration_form` **Email** with a unique address and click **Create an account**. The URL becomes `/users/log-in` and `#flash-info` reads "An email was sent to <email>, please access it to confirm your account."
 - **Second view.** `psql(branchDb, "select count(*) from users")` grows by one, the new row's `confirmed_at` is null, and `mailbox(baseUrl)[0]` is addressed to the new email with subject "Confirmation instructions".
 - **Validate.** Not in the script, and unproven by a drive. Type `with spaces` into **Email** without submitting. The form shows "must have the @ sign and no spaces". Submitting `user@example.com` shows "has already been taken". Neither adds a row.
-- **Confirm.** Not in the script, and unproven by a drive. Open the link from the confirmation email (`/users/log-in/<token>`). The page reads "Welcome <email>". Click **Confirm and log in only this time**. The URL is `/`, `#flash-info` reads "User confirmed successfully.", and the row's `confirmed_at` is set.
+- **Confirm.** Open the link from the confirmation email (`/users/log-in/<token>`). The page reads "Welcome <email>". Click **Confirm and log in only this time**. The URL is `/`, `#flash-info` reads "User confirmed successfully.", and the row's `confirmed_at` is set.
 - **Closed.** With registration closed, open `/users/register`. The URL becomes `/users/log-in` and `#flash-error` reads "New account registration is temporarily unavailable." The users count does not change.
-- **Proof.** For open, `registration/04-after-register.png` plus the psql and mailbox checks in `steps.log`. For closed, `registration/03-register-redirected.png` plus "no user row added".
+- **Logged in.** Log in as the seeded user and open `/users/register`. The URL becomes `/` with no `#flash-error`, in both states. `/users/log-in` then reads "You need to reauthenticate to perform sensitive actions on your account." and has no **Sign up** link, and the header has no **Register** link.
+- **Values.** Only `true`, `1` and `yes` open registration, in any case. Launch with `YES` to see open, and with `on` to see closed.
+- **Proof.** For open, `registration/04-after-register.png`, `registration/06-confirmed-home.png`, and `registration/07-logged-in-register-redirect.png`, plus the psql and mailbox checks in `steps.log`. For closed, `registration/03-register-redirected.png` and `registration/04-logged-in-register-redirect.png`, plus "no user row added".
 
 ## Gotchas
 
