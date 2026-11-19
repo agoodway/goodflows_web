@@ -10,6 +10,6 @@ defmodule GoodFlowsWeb.Api.V1.ProjectJSON do
   def show(%{project: project}), do: %{data: data(project)}
 
   defp data(%Project{} = project) do
-    Map.take(project, [:id, :slug, :inserted_at, :updated_at])
+    Map.take(project, [:id, :slug, :default_branch, :inserted_at, :updated_at])
   end
 end

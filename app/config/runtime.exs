@@ -87,7 +87,8 @@ if config_env() != :test do
     repo: GoodFlows.Repo,
     jobs: [
       GoodFlows.Spry.RunJob,
-      GoodFlows.Spry.ReapRunsJob
+      GoodFlows.Spry.ReapRunsJob,
+      GoodFlows.Caches.SweepJob
     ],
     flows: [],
     max_concurrency: 10,
@@ -98,7 +99,8 @@ if config_env() != :test do
       GoodFlows.Spry.RunJob => [
         max_concurrency: String.to_integer(System.get_env("SPRY_RUN_MAX_CONCURRENCY", "10"))
       ],
-      GoodFlows.Spry.ReapRunsJob => [max_concurrency: 1]
+      GoodFlows.Spry.ReapRunsJob => [max_concurrency: 1],
+      GoodFlows.Caches.SweepJob => [max_concurrency: 1]
     },
     signal_strategy: :notify
 end
@@ -121,6 +123,73 @@ if config_env() != :test do
     workflow_run_max_body_bytes: env_int.("WORKFLOW_RUN_MAX_BODY_BYTES", "4194304"),
     workflow_run_read_timeout_ms: env_int.("WORKFLOW_RUN_READ_TIMEOUT_MS", "30000"),
     workflow_run_db_timeout_ms: env_int.("WORKFLOW_RUN_DB_TIMEOUT_MS", "15000")
+end
+
+# Remote cache storage (GoodFlows.Caches). Caches are enabled only when
+# CACHE_S3_BUCKET is set; production uses Cloudflare R2. Test keeps the fake
+# store and the limits from config/test.exs and config/config.exs.
+if config_env() != :test do
+  env_int = fn name, default -> String.to_integer(System.get_env(name, default)) end
+
+  env_blank = fn name ->
+    if System.get_env(name) in [nil, ""], do: nil, else: System.get_env(name)
+  end
+
+  bucket = env_blank.("CACHE_S3_BUCKET")
+  access_key_id = env_blank.("CACHE_S3_ACCESS_KEY_ID")
+  secret_access_key = env_blank.("CACHE_S3_SECRET_ACCESS_KEY")
+
+  # Without credentials every reserve would fail when presigning.
+  if bucket && (access_key_id == nil or secret_access_key == nil) do
+    raise """
+    CACHE_S3_BUCKET is set, so CACHE_S3_ACCESS_KEY_ID and
+    CACHE_S3_SECRET_ACCESS_KEY must be set too.
+    """
+  end
+
+  config :good_flows, GoodFlows.Caches.ObjectStore,
+    adapter: GoodFlows.Caches.ObjectStore.S3,
+    bucket: bucket,
+    endpoint: env_blank.("CACHE_S3_ENDPOINT"),
+    region: env_blank.("CACHE_S3_REGION"),
+    access_key_id: access_key_id,
+    secret_access_key: secret_access_key
+
+  # R2's single-request upload limit (5 GiB less 5 MiB): above it, a PUT the
+  # server agreed to would always fail.
+  r2_max_put_bytes = 5_363_466_240
+  max_entry_bytes = env_int.("CACHE_MAX_ENTRY_BYTES", "5000000000")
+  quota_bytes = env_int.("CACHE_PROJECT_QUOTA_BYTES", "53687091200")
+
+  if max_entry_bytes > r2_max_put_bytes or max_entry_bytes > quota_bytes or max_entry_bytes < 1 do
+    raise """
+    CACHE_MAX_ENTRY_BYTES (#{max_entry_bytes}) must be from 1 through
+    #{r2_max_put_bytes} (R2's single-request upload limit) and at most
+    CACHE_PROJECT_QUOTA_BYTES (#{quota_bytes}).
+    """
+  end
+
+  reservation_ttl = env_int.("CACHE_RESERVATION_TTL_SECONDS", "7200")
+  upload_url_ttl = env_int.("CACHE_UPLOAD_URL_TTL_SECONDS", "900")
+
+  # An upload URL that outlived its reservation could create an object after
+  # the sweep deleted the reservation.
+  if upload_url_ttl > reservation_ttl do
+    raise """
+    CACHE_UPLOAD_URL_TTL_SECONDS (#{upload_url_ttl}) must be at most
+    CACHE_RESERVATION_TTL_SECONDS (#{reservation_ttl}).
+    """
+  end
+
+  config :good_flows,
+    cache_max_entry_bytes: max_entry_bytes,
+    cache_project_quota_bytes: quota_bytes,
+    cache_project_max_entries: env_int.("CACHE_PROJECT_MAX_ENTRIES", "10000"),
+    cache_max_keys_per_project: env_int.("CACHE_MAX_KEYS_PER_PROJECT", "1000"),
+    cache_retention_days: env_int.("CACHE_RETENTION_DAYS", "7"),
+    cache_reservation_ttl_seconds: reservation_ttl,
+    cache_upload_url_ttl_seconds: upload_url_ttl,
+    cache_download_url_ttl_seconds: env_int.("CACHE_DOWNLOAD_URL_TTL_SECONDS", "900")
 end
 
 # Spry run owner ids embed the node name; production nodes must be

@@ -37,7 +37,7 @@ A `ck_` key MUST be refused with `403` on every route outside `/api/v1/projects/
 - **THEN** the API responds `403` and creates no key
 
 ### Requirement: Private keys mint cache keys
-`POST /api/v1/projects/:project/cache-keys` SHALL require an `sk_` key and SHALL accept `access` (`read` or `read_write`, required), `scope` (optional, the scope rule), `ttl_seconds` (optional), and `name` (optional, at most 100 characters). It MUST respond `201` with the key's `id`, `token`, `access`, `scope` and `expires_at`. The token starts with `ck_` and MUST appear in no later response.
+`POST /api/v1/projects/:project/cache-keys` SHALL require an `sk_` key and SHALL accept `access` (`read` or `read_write`, required), `scope` (optional, the scope rule), `ttl_seconds` (optional), and `name` (optional, at most 100 characters). It MUST respond `201` with the key's `id`, `token`, `access`, `scope` and `expires_at`. The token starts with `ck_` and MUST appear in no later response. A mint for a project at its cap of active keys (default 1,000) MUST get `422` and create no key.
 
 #### Scenario: Mint a bound read-write key
 - **WHEN** a client with an `sk_` key mints `{"access": "read_write", "scope": "feature/login", "ttl_seconds": 3600}`
@@ -51,6 +51,10 @@ A `ck_` key MUST be refused with `403` on every route outside `/api/v1/projects/
 #### Scenario: Read key with a scope
 - **WHEN** a client mints `{"access": "read", "scope": "feature/login"}`
 - **THEN** the API responds `201` and the key may read only `feature/login` and the default-branch scope
+
+#### Scenario: Project at the key cap
+- **WHEN** a project has 1,000 cache keys that are neither revoked nor expired and a client with an `sk_` key mints another
+- **THEN** the API responds `422` and creates no key
 
 ### Requirement: Cache key lifetimes depend on access
 Minting MUST be the only way to create a cache key. Without `ttl_seconds`, a key MUST expire after 21,600 seconds. A `read_write` key MUST take `ttl_seconds` from 60 through 86,400 and MUST NOT be created without an expiry. A `read` key MUST take `ttl_seconds` from 60 through 31,536,000, or `null` for no expiry, and a `null` MUST require a `name`. An out-of-range or disallowed `ttl_seconds` MUST respond `422` on `ttl_seconds` and create no key. An expired key MUST get `401`.
@@ -121,7 +125,7 @@ A non-expiring or long-TTL `read` key MUST have the same access as any `read` ca
 - **THEN** the API responds `404` and the key still works
 
 ### Requirement: Scope access depends on the key
-An `sk_` key and an unbound `ck_` key SHALL read any scope. An unbound `ck_` read-write key and an `sk_` key SHALL write any scope. A `ck_` key bound to scope `B` MUST be allowed to read only with `scope` `B`, with `scope` equal to the project's default branch, or with no `scope`. A `ck_` read-write key bound to `B` MUST be allowed to reserve and commit only in scope `B`, and MUST get `403` reserving in any other scope. Any other request MUST respond `403` before any lookup.
+An `sk_` key and an unbound `ck_` key SHALL read any scope. An unbound `ck_` read-write key and an `sk_` key SHALL write any scope. A `ck_` key bound to scope `B` MUST be allowed to read only with `scope` `B`, with `scope` equal to the project's default branch, or with no `scope`. A `ck_` read-write key bound to `B` MUST be allowed to reserve and commit only in scope `B`, and MUST get `403` reserving in any other scope. Any other request MUST respond `403` before any lookup or input validation.
 
 #### Scenario: Bound key writes its branch
 - **WHEN** a `ck_` read-write key bound to `feature/login` reserves a key with `scope` `feature/login`
@@ -143,12 +147,24 @@ An `sk_` key and an unbound `ck_` key SHALL read any scope. An unbound `ck_` rea
 - **WHEN** a `ck_` read key reserves an entry
 - **THEN** the API responds `403` and reserves nothing
 
+#### Scenario: Read key commits
+- **WHEN** a `ck_` read key commits any `upload_id`
+- **THEN** the API responds `403` and commits nothing
+
+#### Scenario: Refused key sends invalid input
+- **WHEN** a `ck_` read key reserves with a body that has an unknown key, a malformed `scope` or a non-JSON Content-Type, or a `ck_` key bound to `feature/login` looks up a malformed `partial` with `scope` `feature/other`
+- **THEN** the API responds `403`, not `415` or `422`, because the access check runs before the path, Content-Type, query or body is validated
+
 ### Requirement: Cache identifiers have fixed formats
 `key`, `partial` and `sha256` MUST be exactly 64 lowercase hexadecimal characters. `scope` MUST be an opaque label of 1 to 256 UTF-8 bytes with no control characters, compared as an exact byte string. The server MUST NOT require it to be a valid Git branch or ref name. `name` MUST be non-blank, at most 64 bytes, with no control characters. A path `key` or `upload_id` in the wrong format MUST respond `404`. A query or body value in the wrong format MUST respond `422` on that field.
 
 #### Scenario: Uppercase key in the path
 - **WHEN** a client looks up a key containing an uppercase hex digit
 - **THEN** the API responds `404`
+
+#### Scenario: Malformed path from a refused key
+- **WHEN** a `ck_` read key reserves a path key containing an uppercase hex digit, or commits an `upload_id` that is not a UUID
+- **THEN** the API responds `403`, not `404`: a key refused by its access check gets `403` before the path is validated
 
 #### Scenario: Short partial
 - **WHEN** a client looks up a partial of 63 hex characters
@@ -240,7 +256,7 @@ A successful lookup SHALL respond `200` with `key`, `partial`, `name`, `scope`, 
 
 
 ### Requirement: Reservation bodies are strict JSON
-A reservation body with a missing field, a field in the wrong format, or an unknown key MUST respond `422` and reserve nothing. A reservation whose content type is not `application/json` MUST respond `415`.
+A reservation body with a missing field, a field in the wrong format, or an unknown key MUST respond `422` and reserve nothing. A reservation whose content type is not `application/json`, compared case-insensitively and ignoring parameters such as `charset`, MUST respond `415`.
 
 #### Scenario: Unknown body key
 - **WHEN** a reservation body includes `project`
@@ -249,6 +265,10 @@ A reservation body with a missing field, a field in the wrong format, or an unkn
 #### Scenario: Form-encoded body
 - **WHEN** a client reserves with `Content-Type: application/x-www-form-urlencoded`
 - **THEN** the API responds `415` and reserves nothing
+
+#### Scenario: JSON with a charset
+- **WHEN** a client reserves with `Content-Type: application/json; charset=utf-8` and a valid body
+- **THEN** the API responds `201`
 
 ### Requirement: Upload headers are signed into the upload URL
 `upload_headers` in a reservation response MUST contain `content-length` equal to `size`, `content-type` `application/gzip`, and `x-amz-checksum-sha256` equal to the base64 of the `sha256` digest. Those headers MUST be signed into `upload_url`, and the client MUST send them with its PUT and MUST NOT send an `Authorization` header.
@@ -284,7 +304,7 @@ Each reservation MUST get its own object, named by the server and never by the c
 - **THEN** the committed entry's bytes are unchanged
 
 ### Requirement: Commit verifies the stored object
-`POST /api/v1/projects/:project/caches/uploads/:upload_id/commit` SHALL make a reservation visible. It MUST respond `404` when the upload does not exist in that project, has expired, or was reserved by a different API key. On success it MUST respond `200` with the same body as a lookup hit. Committing an upload that this key already committed MUST respond `200` again.
+`POST /api/v1/projects/:project/caches/uploads/:upload_id/commit` SHALL make a reservation visible. It MUST respond `404` when the upload does not exist in that project, has expired, or was reserved by a different API key. On success it MUST respond `200` with the same body as a lookup hit. Committing an upload that this key already committed MUST respond `200` again. When the object store cannot be reached, commit MUST respond `503` with `retry-after` and keep the reservation.
 
 #### Scenario: Commit after upload
 - **WHEN** a client reserves, PUTs the exact archive, and commits
@@ -305,6 +325,10 @@ Each reservation MUST get its own object, named by the server and never by the c
 #### Scenario: Commit after expiry
 - **WHEN** a client commits a reservation after its `expires_at`
 - **THEN** the API responds `404`
+
+#### Scenario: Object store unreachable at commit
+- **WHEN** a client commits an uploaded reservation while the object store cannot answer
+- **THEN** the API responds `503` with `retry-after: 1`, and the reservation stays and can be committed later
 
 ### Requirement: Commit checks the object's size and checksum
 Before committing, the server MUST confirm that the object exists, its length equals `size`, and the SHA-256 the object store recorded for it equals `sha256`. When any check fails, or the store reports no SHA-256, the server MUST respond `422` on `upload` and delete the reservation, which queues the object for deletion.
@@ -344,7 +368,7 @@ A project's committed entries and unexpired reservations MUST together stay with
 - **THEN** the least recently accessed entry is deleted and the API responds `201`
 
 ### Requirement: Unused entries and expired reservations are removed
-A periodic sweep MUST delete reservations past their `expires_at` and committed entries not accessed within the configured retention (default 7 days). Deleting an entry or reservation by any means, including project and account deletion, MUST queue its object for deletion from object storage, and the sweep MUST delete queued objects, retrying failures on later sweeps.
+A periodic sweep MUST delete reservations past their `expires_at` and committed entries not accessed within the configured retention (default 7 days). Deleting an entry or reservation by any means, including project and account deletion, MUST queue its object for deletion from object storage, and the sweep MUST delete queued objects, retrying failures on later sweeps. A queued object MUST NOT be deleted before its upload URL has expired.
 
 #### Scenario: Stale entry
 - **WHEN** an entry has not been accessed for 8 days and the sweep runs
@@ -353,6 +377,10 @@ A periodic sweep MUST delete reservations past their `expires_at` and committed 
 #### Scenario: Object store unavailable
 - **WHEN** the sweep cannot delete a queued object
 - **THEN** the object stays queued and a later sweep deletes it
+
+#### Scenario: Rejected upload while its URL is valid
+- **WHEN** a commit rejects an upload, or a reservation is purged, before its upload URL expires
+- **THEN** sweeps keep the object until the URL has expired, and the next sweep after that deletes it
 
 ### Requirement: Private keys list entries and usage
 `GET /api/v1/projects/:project/caches` SHALL require an `sk_` key and return committed entries newest first, filtered by optional exact `name` and `scope`, keyset-paged with `limit` (1 to 200, default 50) and `cursor`, without download URLs. The response MUST include `usage` with `bytes` and `entries` (committed entries and unexpired reservations), `quota_bytes`, and `max_entries`.
@@ -377,11 +405,19 @@ A periodic sweep MUST delete reservations past their `expires_at` and committed 
 - **THEN** the API responds `200` with `deleted` `0`
 
 ### Requirement: Caches need configured object storage
-When no cache bucket is configured, every route under `/api/v1/projects/:project/caches` MUST respond `503` after authentication and project resolution, and the cache-key routes MUST keep working.
+When no cache bucket is configured, every route under `/api/v1/projects/:project/caches` MUST respond `503` after authentication and project resolution, and the cache-key routes MUST keep working. The server MUST refuse to start when a bucket is set without both credentials, or when the upload URL TTL is above the reservation TTL.
 
 #### Scenario: Bucket not configured
 - **WHEN** the server has no cache bucket and a client with an `sk_` key looks up an entry
 - **THEN** the API responds `503`
+
+#### Scenario: Bucket without credentials
+- **WHEN** the server starts with `CACHE_S3_BUCKET` set and `CACHE_S3_SECRET_ACCESS_KEY` blank
+- **THEN** it refuses to boot
+
+#### Scenario: Upload URL outlives the reservation
+- **WHEN** the server starts with `CACHE_UPLOAD_URL_TTL_SECONDS` above `CACHE_RESERVATION_TTL_SECONDS`
+- **THEN** it refuses to boot
 
 ### Requirement: Presigned URLs are not logged
 No log line, error response or error report MUST contain a presigned URL or its signature.

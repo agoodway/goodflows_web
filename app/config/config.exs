@@ -48,6 +48,22 @@ config :good_flows, GoodFlows.Spry,
   output_limit_bytes: 65_536,
   sprites_base_url: nil
 
+# Remote cache storage (GoodFlows.Caches). Caches are disabled until a bucket
+# is configured; config/runtime.exs reads CACHE_S3_* and the CACHE_* limits.
+config :good_flows, GoodFlows.Caches.ObjectStore,
+  adapter: GoodFlows.Caches.ObjectStore.S3,
+  bucket: nil
+
+config :good_flows,
+  cache_max_entry_bytes: 5_000_000_000,
+  cache_project_quota_bytes: 53_687_091_200,
+  cache_project_max_entries: 10_000,
+  cache_max_keys_per_project: 1_000,
+  cache_retention_days: 7,
+  cache_reservation_ttl_seconds: 7_200,
+  cache_upload_url_ttl_seconds: 900,
+  cache_download_url_ttl_seconds: 900
+
 # Configure the mailer
 #
 # By default it uses the "Local" adapter which stores the emails

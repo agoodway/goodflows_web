@@ -47,13 +47,13 @@ The app gets object storage as one S3-compatible bucket configured at runtime:
 | `CACHE_S3_BUCKET` | required to enable caches |
 | `CACHE_S3_ENDPOINT` | for example `https://<account>.r2.cloudflarestorage.com`; omit for AWS S3 |
 | `CACHE_S3_REGION` | `auto` for R2 |
-| `CACHE_S3_ACCESS_KEY_ID`, `CACHE_S3_SECRET_ACCESS_KEY` | credentials scoped to that bucket |
+| `CACHE_S3_ACCESS_KEY_ID`, `CACHE_S3_SECRET_ACCESS_KEY` | credentials scoped to that bucket; required when `CACHE_S3_BUCKET` is set, or the server refuses to boot |
 
 Production uses Cloudflare R2. Cache traffic is mostly downloads, and R2 has no egress fees. MinIO is the local and smoke-test store, and AWS S3 works the same way. GCS is not supported: its S3 interoperability API is not known to honor `x-amz-checksum-sha256` (Risks).
 
 `GoodFlows.Caches.ObjectStore` is a behaviour with `presign_put/2`, `presign_get/2`, `head/1` and `delete/1`. `ObjectStore.S3` implements it with `req_s3` (a `Req` plugin): `ReqS3.presign_url/1` for both URLs and `Req` `HEAD`/`DELETE` for the rest. Tests use an in-memory `ObjectStore.Fake` selected through config, so the suite needs no bucket. A `just`/script target runs MinIO for the end-to-end smoke test.
 
-When `CACHE_S3_BUCKET` is unset, every cache route responds `503` with a fixed detail, and the sweep (D7) does nothing. Cache-key routes keep working, so keys can be minted before a bucket exists. The CLI treats `503` as a miss or a skipped save.
+When `CACHE_S3_BUCKET` is unset, every cache route responds `503` with a fixed detail, and the sweep (D7) skips only its object deletions (step 4). Cache-key routes keep working, so keys can be minted before a bucket exists, and old cache keys, expired reservations and stale entries are still deleted. Rows left from a bucket that was later unset queue their objects as usual, and those objects are deleted once a bucket is configured again. The CLI treats `503` as a miss or a skipped save.
 
 Object keys are `caches/<project_id>/<upload_id>`. They are chosen by the server and never contain the cache key, scope or name. Each reservation gets a fresh `upload_id`, so a late PUT for an expired reservation can never overwrite a committed entry's object.
 
@@ -78,6 +78,7 @@ Object keys are `caches/<project_id>/<upload_id>`. They are chosen by the server
 | `state` | text | `reserved` or `committed` |
 | `reserved_by_api_key_id` | uuid null | `references(:api_keys, on_delete: :nilify_all)` |
 | `expires_at` | utc_datetime_usec null | set while `reserved`, null once committed |
+| `upload_expires_at` | utc_datetime_usec | when the presigned upload URL expires; signed before the row is inserted and taken after signing, so the URL never outlives it |
 | `committed_at` | utc_datetime_usec null | |
 | `last_accessed_at` | utc_datetime_usec null | set at commit and on hits (D6) |
 | `inserted_at` | utc_datetime_usec | |
@@ -89,12 +90,13 @@ Indexes:
 - `(project_id, scope, partial, committed_at DESC, id DESC) WHERE state = 'committed'` for the partial lookup
 - `(project_id, last_accessed_at, id) WHERE state = 'committed'` for eviction
 - `(expires_at) WHERE state = 'reserved'` for the sweep
+- `(last_accessed_at) WHERE state = 'committed'` for the sweep's retention step
 - `(project_id, name)` for list and purge by name
 - `reserved_by_api_key_id`, for the nilify on key delete
 
 `ON DELETE CASCADE` on the project FK is a deliberate difference from recipes, test reports and workflow runs. A cache is a disposable copy of something a run can rebuild, so it should never stop a project from being deleted (projects delta).
 
-An `AFTER DELETE` row trigger on `cache_entries` inserts `OLD.object_key` into `cache_object_deletions (object_key text primary key, inserted_at)`. Every way a row disappears — purge, eviction, expiry, project delete or account delete cascading — then queues its object, and the sweep deletes objects outside any request. `ON CONFLICT DO NOTHING` keeps the queue idempotent.
+An `AFTER DELETE` row trigger on `cache_entries` inserts `OLD.object_key` into `cache_object_deletions (object_key text primary key, inserted_at, delete_after)`, with `delete_after` the later of now and `OLD.upload_expires_at`. Every way a row disappears — purge, eviction, expiry, a commit that rejects the upload, project delete or account delete cascading — then queues its object, and the sweep deletes it once `delete_after` is more than 60 seconds past (D7), outside any request. The object of a row deleted while its upload URL is still valid is kept until that URL has expired, so no new PUT can recreate it afterwards. `ON CONFLICT DO NOTHING` keeps the queue idempotent.
 
 ### D3. Wire contract
 
@@ -142,7 +144,7 @@ Reserve does not check other scopes: a key already committed in the default-bran
 **Commit.** `POST .../caches/uploads/:upload_id/commit` with no body. The server:
 1. Loads the reservation by `(project_id, id)`. It is `404` if it does not exist, has expired, or was reserved by a different API key. An `upload_id` that is not a UUID is `404`.
 2. Returns `200` with the entry if it is already committed and was reserved by this key, so a retried commit is safe.
-3. Calls `ObjectStore.head/1` with checksum mode enabled. The object must exist, its `Content-Length` must equal `size`, and its `x-amz-checksum-sha256` must equal the reserved digest. Otherwise the reservation is deleted (which queues the object, D2) and the response is `422` on `upload` with `is missing`, `has the wrong size`, or `has the wrong checksum`.
+3. Calls `ObjectStore.head/1` with checksum mode enabled. The object must exist, its `Content-Length` must equal `size`, and its `x-amz-checksum-sha256` must equal the reserved digest. Otherwise the reservation is deleted (which queues the object, D2) and the response is `422` on `upload` with `is missing`, `has the wrong size`, or `has the wrong checksum`. When the store cannot answer the `HEAD`, the response is `503` with `retry-after: 1` and the reservation is kept, so the client can commit again.
 4. Sets `state = committed`, `committed_at` and `last_accessed_at` to now, and `expires_at` to null, and returns `200` with the same body as a lookup (including a `download_url`).
 
 The `HEAD` repeats checks the signed PUT already enforced. It is the server's only proof that the bytes are there, and it is cheap.
@@ -183,7 +185,7 @@ A `ck_` key on a project other than its own gets `403`. `ApiAuth`'s default clau
 
 `pk_` keys get no cache access. A pk_ key is meant to be shareable for reading run data. A cache archive is executable input to a build, may hold build outputs, and is far larger than any document the API serves, so read access belongs to the `ck_` read type that someone mints for that purpose.
 
-**Minting.** `POST /api/v1/projects/:project/cache-keys` (sk_ only) with `{"access": "read" | "read_write", "scope"?: "…", "ttl_seconds"?: n, "name"?: "…"}` returns `201` with `{"data": {"id", "token", "access", "scope", "expires_at"}}`. The token appears only in this response, as for dashboard-created `sk_` and `pk_` keys. Minting is the only way to create a cache key. Lifetimes depend on `access`:
+**Minting.** `POST /api/v1/projects/:project/cache-keys` (sk_ only) with `{"access": "read" | "read_write", "scope"?: "…", "ttl_seconds"?: n, "name"?: "…"}` returns `201` with `{"data": {"id", "token", "access", "scope", "expires_at"}}`. A project holds at most `:cache_max_keys_per_project` (default 1,000) active cache keys, neither revoked nor expired; minting one more returns `422`, and mints of one project are serialized by a `FOR NO KEY UPDATE` lock on the project row so concurrent mints cannot pass the cap. Any other body key is `422`, as for the reserve body, so a typo such as `ttl` cannot silently give the default lifetime. The token appears only in this response, as for dashboard-created `sk_` and `pk_` keys. Minting is the only way to create a cache key. Lifetimes depend on `access`:
 
 | `access` | `ttl_seconds` omitted | `ttl_seconds` allowed | `ttl_seconds: null` |
 |---|---|---|---|
@@ -213,11 +215,12 @@ Runtime configuration, set in `config/runtime.exs` from env vars and documented 
 | `:cache_max_entry_bytes` (`CACHE_MAX_ENTRY_BYTES`) | 5,000,000,000; at most 5,363,466,240 |
 | `:cache_project_quota_bytes` (`CACHE_PROJECT_QUOTA_BYTES`) | 53,687,091,200 (50 GiB) |
 | `:cache_project_max_entries` (`CACHE_PROJECT_MAX_ENTRIES`) | 10,000 |
+| `:cache_max_keys_per_project` (`CACHE_MAX_KEYS_PER_PROJECT`) | 1,000 active cache keys (D5) |
 | `:cache_retention_days` (`CACHE_RETENTION_DAYS`) | 7 |
 | `:cache_reservation_ttl_seconds` | 7,200 |
 | `:cache_upload_url_ttl_seconds`, `:cache_download_url_ttl_seconds` | 900 |
 
-`config/runtime.exs` MUST refuse to boot when `:cache_max_entry_bytes` is above 5,363,466,240 (R2's single-request upload limit, 5 GiB less 5 MiB) or above `:cache_project_quota_bytes`. Above the R2 limit, a PUT the server agreed to would always fail. Above the quota, a full-size entry could never fit.
+`config/runtime.exs` MUST refuse to boot when `:cache_max_entry_bytes` is above 5,363,466,240 (R2's single-request upload limit, 5 GiB less 5 MiB) or above `:cache_project_quota_bytes`. Above the R2 limit, a PUT the server agreed to would always fail. Above the quota, a full-size entry could never fit. It MUST also refuse to boot when `:cache_upload_url_ttl_seconds` is above `:cache_reservation_ttl_seconds`, since an upload URL that outlived its reservation could create an object after the sweep deleted the reservation, and when `CACHE_S3_BUCKET` is set without both credentials, since every reserve would then fail after writing its row.
 
 **Why 50 GiB.** At 10 GiB, two entries at the new cap fill the quota, and every new save of a large cache evicts the project's other caches. 50 GiB holds about ten full-size entries, or a typical mix: a few multi-GB home-directory caches (`~/.cargo/registry`, `~/.npm`) on the default branch, the same caches on a handful of active branches, and the latest entries of rolling caches. At R2's storage price, a full 50 GiB project costs well under a dollar a month, and R2 has no egress charges. A smaller deployment can lower it.
 
@@ -225,7 +228,7 @@ Runtime configuration, set in `config/runtime.exs` from env vars and documented 
 
 Usage counts committed entries and unexpired reservations: `sum(size)` and `count(*)`. The entry cap stops a project from filling the table with tiny entries while staying under its byte quota.
 
-Reserve runs in one transaction that first takes `SELECT … FOR UPDATE` on the project row, which serializes reservations per project:
+Reserve presigns the upload first, then runs one transaction that takes `SELECT … FOR NO KEY UPDATE` on the project row, which serializes reservations per project without blocking the `FOR KEY SHARE` locks that inserts into the project's child tables take:
 1. Delete an expired reservation for the same `(project_id, scope, key)`, if any.
 2. Return `409` if the slot is still taken.
 3. If adding the reservation would exceed either limit, delete committed entries in `last_accessed_at, id` order until it fits. Entries in every scope are candidates.
@@ -242,9 +245,9 @@ A hit sets `last_accessed_at` only when the stored value is more than an hour ol
 1. Deletes reservations whose `expires_at` is past.
 2. Deletes committed entries not accessed within the retention window.
 3. Deletes API keys of a cache type revoked or expired more than 7 days ago.
-4. Deletes up to 1,000 queued objects through `ObjectStore.delete/1` and removes each queue row after the store confirms (`204`, or `404` when the object is already gone). A failure leaves the row for the next sweep.
+4. Deletes up to 1,000 queued objects whose `delete_after` (D2) is more than 60 seconds past, a margin for clock skew between the sweep node, the node that signed the URL and the store, through `ObjectStore.delete/1` and removes each queue row after the store confirms (`204`, or `404` when the object is already gone). A failure leaves the row for the next sweep. No delete starts once the sweep has run for 200 seconds, so with the store's 15-second request timeout a slow store cannot push the job past its 300-second timeout; the rest stays queued.
 
-Steps 1 to 3 run in batches of 1,000 rows. Sweeps are idempotent, so the leader handover overlap that `ReaperScheduler` documents is harmless here too.
+Steps 1 to 3 run in batches of 1,000 rows. Without a cache bucket (D1) only step 4 is skipped, because objects cannot be deleted. Steps 1 and 2 only delete rows, and the trigger queues their objects, so they run as usual and step 4 catches up when a bucket is configured again. Sweeps are idempotent, so the leader handover overlap that `ReaperScheduler` documents is harmless here too.
 
 ### D8. Routes and pipelines
 
@@ -258,19 +261,21 @@ scope "/api/v1/projects/:project/caches" — [:api, :api_cache_authenticated, :l
   post "/entries/:key"                 CacheEntryController :reserve  (write)
   post "/uploads/:upload_id/commit"    CacheUploadController :commit  (write)
 
-scope "/api/v1/projects/:project" — [:api, :api_authenticated, :api_write, :load_project]
+scope "/api/v1/projects/:project" — [:api, :api_authenticated, :api_write, :load_project, :cache_access]
   get    "/caches"                     CacheEntryController :index
   delete "/caches/entries/:key"        CacheEntryController :delete
   delete "/caches/entries"             CacheEntryController :delete_matching
+
+scope "/api/v1/projects/:project" — [:api, :api_authenticated, :api_write, :load_project]
   get    "/cache-keys"                 CacheKeyController :index
   post   "/cache-keys"                 CacheKeyController :create
   delete "/cache-keys/:id"             CacheKeyController :delete
   patch  "/"                           ProjectController :update
 ```
 
-`RequireCacheAccess` runs after `LoadProject`. It returns `403` for a `pk_` key and for a `ck_` key of another project, then `503` when the bucket is not configured. The per-scope check needs the request's `scope`, so it runs in the controller through `ApiKey.cache_access/4`. The read/write split is by action. List, purge and minting sit on the existing `sk_` write pipeline, so the new default `ApiAuth` refusal returns `403` to `ck_` keys there.
+`RequireCacheAccess` runs after `LoadProject`. It returns `403` for a `pk_` key and for a `ck_` key of another project, then `503` when the bucket is not configured. List and purge also pass through `:cache_access`, so they too respond `503` without a bucket, while the cache-key routes and `PATCH /` do not. The per-scope check needs the request's `scope`, so it runs in the controller through `ApiKey.cache_access/4`. Before that, and before the path key, Content-Type, query or body is validated, `ApiKey.precheck_cache_access/4` refuses with `403` a key that cannot satisfy the request whatever its fields: a `read` key reserving or committing, or a bound key whose raw `scope` is neither its bound scope nor (for reads) the default branch or absent. An unbound `ck_` key and an `sk_` key may use any valid scope, so their scope is checked after validation, and a malformed field gets `422`. The read/write split is by action. List, purge and minting sit on the existing `sk_` write pipeline, so the new default `ApiAuth` refusal returns `403` to `ck_` keys there.
 
-The reserve body is small JSON and goes through `Plug.Parsers` like any other request. `RequireParsedBody` is not in the cache pipeline, so reserve does its own `415` check on Content-Type. Commit has no body.
+The reserve body is small JSON and goes through `Plug.Parsers` like any other request. `RequireParsedBody` is not in the cache pipeline, so reserve does its own `415` check on Content-Type: it parses the header with `Plug.Conn.Utils.content_type/1`, so the media type is matched case-insensitively and parameters such as `charset=utf-8` are allowed. Commit has no body.
 
 A cache key carries no user scope of its own, but `ApiAuth` still assigns `current_scope` from its `account_user`, so audit fields keep working.
 
@@ -282,7 +287,7 @@ The dashboard neither lists nor purges entries, and it doesn't create cache keys
 
 Add the schemas `CacheEntry`, `CacheEntryResponse`, `CacheReservationRequest`, `CacheReservationResponse`, `CacheListResponse`, `CachePurgeResponse`, `CacheKeyRequest`, `CacheKeyResponse` and `ProjectUpdateRequest`, and the `key`, `upload_id` and `scope` parameters. Document `403`, `404`, `409`, `413`, `422`, `503` and `507` where they apply.
 
-Presigned URLs are bearer credentials. They never appear in logs: cache controller actions run with `Logger` metadata only, the S3 client does not log URLs, and `SentryScrubber` drops the response body for cache routes. The proposal tells the CLI never to send `Authorization` to them. Tests assert a sentinel signature string never shows in captured logs.
+Presigned URLs are bearer credentials. They never appear in logs: cache controller actions run with `Logger` metadata only, the S3 client does not log URLs, and `SentryScrubber` drops the request body for cache routes (the body `Sentry.PlugContext` captures; response bodies are never sent to Sentry). The proposal tells the CLI never to send `Authorization` to them. Tests assert a sentinel signature string never shows in captured logs.
 
 ## Resolved Questions
 
@@ -302,8 +307,8 @@ Approved by the user on 2026-11-16:
 ## Risks / Trade-offs
 
 - [Provider checksum support] -> Commit requires the store's `HEAD` to return `x-amz-checksum-sha256`. AWS S3, R2 and MinIO support SHA-256 PUT checksums. GCS interop may not, and a provider without them makes every commit fail with `422`. That fails closed. Task 6.2 checks R2 and MinIO before rollout.
-- [A slow PUT outlives its reservation] -> The URL must be used within 15 minutes and the reservation lasts two hours, so only a PUT that runs for more than 105 minutes can finish after the sweep deleted its object. That leaves an orphan the app no longer tracks. A bucket lifecycle rule can't clean it up safely, because object age is not access age and the rule would also delete hot entries. Accepted for this version. A reconcile that lists `caches/` and deletes untracked objects is a follow-up if orphans show up in bucket usage.
-- [Purge is not instant for URLs already issued] -> A URL issued before the purge works until the next sweep, about 5 minutes. Acceptable for a poisoned cache. The CLI should also check the downloaded archive against the entry's `sha256` before unpacking it.
+- [A slow PUT outlives its row] -> An object is deleted only once its row is gone and its upload URL has expired (D2), so expiry, a rejected commit, purge and eviction never leave an object behind that a later PUT recreates. The one gap is a PUT the store accepted before the URL expired and that is still running when the object is deleted: for an expired reservation that means a PUT running for more than 105 minutes (the URL lasts 15 minutes, the reservation two hours), and for a reservation rejected or purged earlier, a PUT still running when its URL's 15 minutes are up. That leaves an orphan the app no longer tracks. A bucket lifecycle rule can't clean it up safely, because object age is not access age and the rule would also delete hot entries. Accepted for this version. A reconcile that lists `caches/` and deletes untracked objects is a follow-up if orphans show up in bucket usage.
+- [Purge is not instant for URLs already issued] -> A URL issued before the purge works until the next sweep, about 5 minutes, or for an entry reserved less than 15 minutes before the purge, until the sweep after its upload URL expires. Acceptable for a poisoned cache. The CLI should also check the downloaded archive against the entry's `sha256` before unpacking it.
 - [Eviction is per project and LRU] -> A project with one huge, frequently restored cache can evict its smaller ones. A rolling cache that writes 5 GB on every commit across many branches can churn through the quota and evict caches that are still useful but restored less often. A per-name quota is a follow-up if that shows up.
 - [Large reservations hold quota] -> Each unexpired reservation counts toward the quota for up to 2 hours. Ten concurrent 5 GB reservations fill a 50 GiB project, and the eleventh gets `507` until one commits or expires. The CLI treats `507` as a skipped save.
 - [Scope is a label the client picks] -> The server doesn't check that a scope is a real branch. Authority comes only from the key: an `sk_` or unbound read-write key may write any label, and a bound key only its own. A client that sends a wrong label with an unbound key can write any scope, `main` included, so Sprite keys must be bound.
@@ -316,4 +321,4 @@ Approved by the user on 2026-11-16:
 1. Migrations: `add_default_branch_to_projects` (`text not null default 'main'`), `add_cache_columns_to_api_keys`, `create_cache_entries` (with `cache_object_deletions` and the trigger). None of them rewrites an existing row beyond the column default.
 2. Deploy with `CACHE_S3_BUCKET` unset. Cache routes respond `503` and nothing else changes.
 3. Create the R2 bucket and an R2 API token scoped to it, set `CACHE_S3_*`, and restart. Enable remote caching in goodflows.
-4. Rollback: unset `CACHE_S3_BUCKET` to stop serving caches. Dropping the table and columns loses only caches, and the bucket can be emptied separately.
+4. Rollback: unset `CACHE_S3_BUCKET` to stop serving caches. Code from before this change cannot load an `api_keys` row of a cache type, so before redeploying older code, revoke cache keys and roll back the migrations (`mix ecto.rollback -n 3`). `add_cache_columns_to_api_keys` has an explicit `down` that deletes every cache key before it drops the constraints, index and columns. Dropping the table and columns loses only caches, and the bucket can be emptied separately.

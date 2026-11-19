@@ -472,6 +472,7 @@ defmodule GoodFlows.Accounts do
   def list_api_keys(%AccountUser{} = account_user) do
     ApiKey
     |> where([k], k.account_user_id == ^account_user.id)
+    |> where([k], k.type in ^ApiKey.dashboard_types())
     |> order_by([k], desc: k.inserted_at, desc: k.id)
     |> Repo.all()
   end
@@ -480,8 +481,14 @@ defmodule GoodFlows.Accounts do
   @spec get_api_key(AccountUser.t(), String.t()) :: ApiKey.t() | nil
   def get_api_key(%AccountUser{} = account_user, id) do
     case Ecto.UUID.cast(id) do
-      {:ok, uuid} -> Repo.get_by(ApiKey, id: uuid, account_user_id: account_user.id)
-      :error -> nil
+      {:ok, uuid} ->
+        ApiKey
+        |> where([k], k.id == ^uuid and k.account_user_id == ^account_user.id)
+        |> where([k], k.type in ^ApiKey.dashboard_types())
+        |> Repo.one()
+
+      :error ->
+        nil
     end
   end
 

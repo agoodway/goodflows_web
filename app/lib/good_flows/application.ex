@@ -52,7 +52,8 @@ defmodule GoodFlows.Application do
     [
       GoodFlows.Spry.ShutdownDrain,
       {PgFlow, opts},
-      GoodFlows.Spry.ReaperScheduler
+      GoodFlows.Spry.ReaperScheduler,
+      GoodFlows.Caches.SweepScheduler
     ]
   end
 

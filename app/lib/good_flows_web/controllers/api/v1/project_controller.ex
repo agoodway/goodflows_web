@@ -1,8 +1,9 @@
 defmodule GoodFlowsWeb.Api.V1.ProjectController do
   @moduledoc """
-  Create, list, show, and delete the account's projects. Reads accept any
-  API key; writes require a private (`sk_`) key. There is no update or
-  rename route: the slug is the project's public name.
+  Create, list, show, update, and delete the account's projects. Reads
+  accept any API key; writes require a private (`sk_`) key. `PATCH`
+  changes only `default_branch`; there is no rename: the slug is the
+  project's public name.
   """
   use GoodFlowsWeb, :controller
   use OpenApiSpex.ControllerSpecs
@@ -16,6 +17,7 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
     ProjectListResponse,
     ProjectRequest,
     ProjectResponse,
+    ProjectUpdateRequest,
     ValidationErrorResponse
   }
 
@@ -48,13 +50,14 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
       forbidden: {"Public keys cannot write", "application/json", ErrorResponse},
       unprocessable_entity:
-        {"Invalid or duplicate slug", "application/json", ValidationErrorResponse}
+        {"Invalid or duplicate slug, or invalid `default_branch`", "application/json",
+         ValidationErrorResponse}
     ]
   )
 
   @doc "Creates a project."
   def create(conn, _params) do
-    attrs = Map.take(conn.body_params, ["slug"])
+    attrs = Map.take(conn.body_params, ["slug", "default_branch"])
 
     with {:ok, project} <- Projects.create_project(conn.assigns.current_account, attrs) do
       conn
@@ -79,10 +82,51 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
     render(conn, :show, project: conn.assigns.project)
   end
 
+  operation(:update,
+    summary: "Change a project's default branch",
+    description: """
+    Accepts only `default_branch`, the project's fallback cache scope. Any
+    other key, `slug` included, is `422`: a project cannot be renamed.
+    Changing `default_branch` changes only which scope later cache lookups
+    fall back to. It moves or deletes no cache entry.
+    """,
+    parameters: @project_param,
+    request_body: {"Project update", "application/json", ProjectUpdateRequest, required: true},
+    responses: [
+      ok: {"The updated project", "application/json", ProjectResponse},
+      unsupported_media_type: ApiParams.unsupported_media_type(),
+      unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
+      forbidden: {"Public keys cannot write", "application/json", ErrorResponse},
+      not_found: {"No such project in this account", "application/json", ErrorResponse},
+      unprocessable_entity:
+        {"Invalid `default_branch`, an unknown key, or an invalid project slug",
+         "application/json", ValidationErrorResponse}
+    ]
+  )
+
+  @doc "Updates the project's `default_branch`; any other body key is `422`."
+  def update(conn, _params) do
+    body = conn.body_params
+
+    case Map.keys(body) -- ["default_branch"] do
+      [] ->
+        with {:ok, project} <-
+               Projects.update_project(conn.assigns.current_account, conn.assigns.project, body) do
+          render(conn, :show, project: project)
+        end
+
+      unknown ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{errors: Map.new(unknown, &{&1, ["is not allowed"]})})
+    end
+  end
+
   operation(:delete,
     summary: "Delete a project",
     description:
-      "Only a project without recipes or test reports can be deleted; otherwise `409`.",
+      "Only a project without recipes, test reports or workflow runs can be deleted; " <>
+        "otherwise `409`. Cache entries and cache keys are deleted with the project.",
     parameters: @project_param,
     responses: [
       no_content: "Deleted",

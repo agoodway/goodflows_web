@@ -74,6 +74,8 @@ defmodule GoodFlows.MixProject do
 
       # HTTP Client (always use Req, never HTTPoison/Tesla)
       {:req, "~> 0.5"},
+      # S3-compatible object storage (cache archives): presigned URLs, HEAD, DELETE
+      {:req_s3, "~> 0.2"},
 
       # Fly.io Sprites SDK (remote sandboxes / command execution)
       {:sprites, "~> 0.2.4"},

@@ -122,6 +122,39 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "The run could not be queued; no run was created"}})
   end
 
+  def call(conn, {:error, :cache_conflict}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "The key is already committed or reserved in this scope"}})
+  end
+
+  def call(conn, {:error, :entry_too_large}) do
+    conn
+    |> put_status(413)
+    |> json(%{errors: %{detail: "size is above the cache entry cap"}})
+  end
+
+  def call(conn, {:error, :quota_exceeded}) do
+    conn
+    |> put_status(507)
+    |> json(%{
+      errors: %{detail: "Unexpired reservations fill the project's cache quota; retry later"}
+    })
+  end
+
+  def call(conn, {:error, :unsupported_media_type}) do
+    conn
+    |> put_status(:unsupported_media_type)
+    |> json(ErrorJSON.render("415.json", %{}))
+  end
+
+  def call(conn, {:error, :object_store_unavailable}) do
+    conn
+    |> put_status(:service_unavailable)
+    |> put_resp_header("retry-after", "1")
+    |> json(%{errors: %{detail: "The cache object store is unavailable; retry the request"}})
+  end
+
   def call(conn, {:error, status}) when status in [:not_found, :forbidden, :unauthorized] do
     conn
     |> put_status(status)

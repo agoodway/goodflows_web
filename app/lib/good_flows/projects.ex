@@ -37,8 +37,21 @@ defmodule GoodFlows.Projects do
     |> Repo.insert()
   end
 
+  @doc "Changes the project's `default_branch`, its fallback cache scope."
+  @spec update_project(Account.t(), Project.t(), map()) ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found}
+  def update_project(%Account{id: account_id}, %Project{account_id: account_id} = project, attrs) do
+    project
+    |> Project.update_changeset(attrs)
+    |> Repo.update()
+  end
+
+  def update_project(%Account{}, %Project{}, _attrs), do: {:error, :not_found}
+
   @doc """
   Deletes a project that has no recipes, test reports, or workflow runs.
+  Its cache entries and cache keys never block the delete: the database
+  deletes them with the project and queues their objects for deletion.
   Returns `{:error, :has_recipes}` while any recipe belongs to it,
   `{:error, :has_test_reports}` while any test report does, and
   `{:error, :has_workflow_runs}` while any workflow run does, including

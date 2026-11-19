@@ -6,6 +6,7 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
   use GoodFlows.DataCase, async: false
 
   import GoodFlows.AccountsFixtures
+  import GoodFlows.CacheFixtures
   import GoodFlows.SpryFixtures
 
   alias Ecto.Migrator
@@ -22,14 +23,29 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
   @runs_version 20_261_109_162_737
   @runs_migration GoodFlows.Repo.Migrations.CreateWorkflowRuns
 
+  # Cache entries and cache-key columns also reference `projects`, so they
+  # are rolled back (newest first) before `projects` and migrated up after.
+  @cache_migrations [
+    {20_261_118_100_200, GoodFlows.Repo.Migrations.CreateCacheEntries, "create_cache_entries"},
+    {20_261_118_100_100, GoodFlows.Repo.Migrations.AddCacheColumnsToApiKeys,
+     "add_cache_columns_to_api_keys"},
+    {20_261_118_100_000, GoodFlows.Repo.Migrations.AddDefaultBranchToProjects,
+     "add_default_branch_to_projects"}
+  ]
+
   setup_all do
     # `mix test` usually loaded them already through `ecto.migrate`;
     # compiling them again would only warn about redefining the modules.
-    for {module, file} <- [
-          {@migration, "#{@version}_create_projects.exs"},
-          {@reports_migration, "#{@reports_version}_create_test_reports.exs"},
-          {@runs_migration, "#{@runs_version}_create_workflow_runs.exs"}
-        ],
+    for {module, file} <-
+          [
+            {@migration, "#{@version}_create_projects.exs"},
+            {@reports_migration, "#{@reports_version}_create_test_reports.exs"},
+            {@runs_migration, "#{@runs_version}_create_workflow_runs.exs"}
+          ] ++
+            for(
+              {version, module, name} <- @cache_migrations,
+              do: {module, "#{version}_#{name}.exs"}
+            ),
         not Code.ensure_loaded?(module) do
       Code.require_file(file, Migrator.migrations_path(Repo))
     end
@@ -60,6 +76,22 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
     List.flatten(rows)
   end
 
+  defp cache_key_rows do
+    %{rows: [[count]]} =
+      Repo.query!("SELECT count(*) FROM api_keys WHERE type IN ('cache_read','cache_write')")
+
+    count
+  end
+
+  defp key_rows(account_user_id) do
+    %{rows: [[count]]} =
+      Repo.query!("SELECT count(*) FROM api_keys WHERE account_user_id = $1", [
+        Ecto.UUID.dump!(account_user_id)
+      ])
+
+    count
+  end
+
   defp table?(name) do
     %{rows: [[exists?]]} = Repo.query!("SELECT to_regclass($1) IS NOT NULL", [name])
     exists?
@@ -67,6 +99,25 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
   test "down and up round-trip; up refuses existing recipes" do
     assert migrated?()
+
+    # `AddCacheColumnsToApiKeys` down deletes cache keys and keeps the rest.
+    key_account = account_fixture()
+    owner = account_user_fixture(key_account, user_fixture(), :owner)
+    {_dashboard_key, _token} = api_key_fixture(owner, %{type: :private})
+    cache_key_fixture(key_account, project_fixture(key_account))
+    assert cache_key_rows() == 1
+
+    for {version, module, _name} <- @cache_migrations do
+      assert migrate(version, module, :down) == [version]
+
+      if module == GoodFlows.Repo.Migrations.AddCacheColumnsToApiKeys do
+        assert cache_key_rows() == 0
+        assert key_rows(owner.id) == 1
+      end
+    end
+
+    refute table?("cache_entries")
+    refute table?("cache_object_deletions")
     assert migrate(@runs_version, @runs_migration, :down) == [@runs_version]
     refute table?("workflow_runs")
     assert migrate(@reports_version, @reports_migration, :down) == [@reports_version]
@@ -104,6 +155,13 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
     assert table?("test_reports")
     assert migrate(@runs_version, @runs_migration, :up) == [@runs_version]
     assert table?("workflow_runs")
+
+    for {version, module, _name} <- Enum.reverse(@cache_migrations) do
+      assert migrate(version, module, :up) == [version]
+    end
+
+    assert table?("cache_entries")
+    assert table?("cache_object_deletions")
   end
 
   test "down refuses while two projects of an account share a recipe name" do

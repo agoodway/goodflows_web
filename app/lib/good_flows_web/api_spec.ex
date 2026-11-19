@@ -28,6 +28,8 @@ defmodule GoodFlowsWeb.ApiSpec do
 
         - **Public keys** (`pk_…`) are read-only.
         - **Private keys** (`sk_…`) can also write.
+        - **Cache keys** (`ck_…`) are minted by a private key and work only on
+          one project's cache routes (see **Caches**).
 
         A key is scoped to your membership in one account. To work with
         several accounts, create a key in each.
@@ -254,6 +256,64 @@ defmodule GoodFlowsWeb.ApiSpec do
         then `report_id`, without report contents. There is no foreign key
         either way: reports often arrive before the run, and either side may
         be absent.
+
+        ## Caches
+
+        `/api/v1/projects/{project}/caches` is a remote store for goodflows
+        job caches. Archive bytes never pass through this API: it hands out
+        presigned URLs for an S3-compatible bucket. When the server has no
+        bucket configured, every cache route responds `503` (treat it as a
+        miss or a skipped save); the cache-key routes keep working.
+
+        **Scopes.** Entries are immutable and keyed per project and *scope*.
+        A scope is an opaque label of 1 to 256 bytes with no control
+        characters, usually a branch name; it is not validated as a Git ref
+        and is compared byte for byte. The project's `default_branch`
+        (default `main`, changed with `PATCH /api/v1/projects/{project}`)
+        names the fallback scope. A lookup with `scope` reads that scope and
+        then the default-branch scope; without `scope` it reads only the
+        default-branch scope. No other scope is ever read. `key`, `partial`
+        and `sha256` are 64 lowercase hex characters.
+
+        **Saving.** `POST …/caches/entries/{key}` reserves the key in one
+        scope (`409` if it is committed or reserved there) and returns an
+        `upload_id`, an `upload_url` and `upload_headers`. PUT the archive to
+        `upload_url` sending exactly `upload_headers`
+        (`content-length`, `content-type: application/gzip`,
+        `x-amz-checksum-sha256`); they are signed into the URL, so the bucket
+        rejects a body whose size or SHA-256 differs. Then
+        `POST …/caches/uploads/{upload_id}/commit`: the server checks the
+        stored object and makes the entry visible (`422` on `upload`
+        otherwise). Entries are 1 byte to 5,000,000,000 bytes (`413` above).
+        A project's committed entries and unexpired reservations share a
+        byte quota (50 GiB by default) and an entry cap (10,000): a
+        reservation that does not fit evicts the least recently used
+        entries, and `507` means unexpired reservations fill the quota.
+        Entries not restored for 7 days are deleted.
+
+        **Restoring.** `GET …/caches/entries/{key}` restores an exact key and
+        `GET …/caches/entries?partial=` the newest entry with that partial.
+        A hit returns metadata and a `download_url`.
+
+        **Presigned URLs are bearer credentials.** Never send your
+        `Authorization` header to `upload_url` or `download_url`: they are on
+        another origin and carry their own signature. Do not log them. Verify
+        a downloaded archive against `sha256` before unpacking it.
+
+        **Keys.** Private keys can do everything, including listing
+        (`GET …/caches`) and purging (`DELETE …/caches/entries/{key}?scope=`
+        and `DELETE …/caches/entries?name=&scope=&partial=`). Public keys get
+        `403` on every cache route. `POST /api/v1/projects/{project}/cache-keys`
+        (private keys only) mints a `ck_…` key with `read` or `read_write`
+        access, optionally bound to one `scope`; `GET` lists active ones and
+        `DELETE …/cache-keys/{id}` revokes one. A cache key works only on its
+        project's lookup, reserve and commit routes and gets `403` everywhere
+        else. Unbound, it reads any scope (and a `read_write` key writes any
+        scope). Bound to scope `B`, it reads only `B`, the default-branch
+        scope, or without `scope`, and a `read_write` key writes only `B`.
+        `read_write` keys expire within 24 hours; `read` keys may last up to a
+        year or, with `"ttl_seconds": null` and a `name`, never expire. The
+        default lifetime is 6 hours.
         """
       },
       paths: Paths.from_router(Router),
@@ -263,7 +323,8 @@ defmodule GoodFlowsWeb.ApiSpec do
             type: "http",
             scheme: "bearer",
             bearerFormat: "API key",
-            description: "`pk_…` (read-only) or `sk_…` (read-write)"
+            description:
+              "`pk_…` (read-only), `sk_…` (read-write) or `ck_…` (cache routes of one project)"
           }
         }
       },
