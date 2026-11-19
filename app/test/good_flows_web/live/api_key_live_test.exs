@@ -5,6 +5,8 @@ defmodule GoodFlowsWeb.ApiKeyLiveTest do
   import Phoenix.LiveViewTest
 
   alias GoodFlows.Accounts
+  alias GoodFlows.Caches.Keys
+  alias GoodFlows.SpryFixtures
 
   setup :register_and_log_in_user
 
@@ -78,6 +80,28 @@ defmodule GoodFlowsWeb.ApiKeyLiveTest do
     render_click(view, "confirm_revoke", %{"id" => api_key.id})
     refute has_element?(view, "#revoke-confirm-modal")
     assert {:ok, _} = Accounts.verify_api_token(token)
+  end
+
+  test "minted cache keys are not listed", %{
+    conn: conn,
+    path: path,
+    account: account,
+    account_user: account_user
+  } do
+    project = SpryFixtures.project_fixture(account)
+
+    {:ok, {cache_key, _token}} =
+      Keys.mint(account_user, project, %{"access" => "read"})
+
+    {own_key, _token} = api_key_fixture(account_user)
+
+    {:ok, view, _html} = live(conn, path)
+
+    assert has_element?(view, "#api_keys-#{own_key.id}")
+    refute has_element?(view, "#api_keys-#{cache_key.id}")
+    assert [%{id: id}] = Accounts.list_api_keys(account_user)
+    assert id == own_key.id
+    refute Accounts.get_api_key(account_user, cache_key.id)
   end
 
   defp attribute_value(html, attr) do

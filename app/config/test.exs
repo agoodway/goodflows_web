@@ -50,6 +50,12 @@ config :good_flows,
   workflow_run_read_timeout_ms: 30_000,
   workflow_run_db_timeout_ms: 15_000
 
+# Remote caches use the in-memory object store (started in test_helper.exs).
+# The limits keep the defaults from config/config.exs.
+config :good_flows, GoodFlows.Caches.ObjectStore,
+  adapter: GoodFlows.Caches.ObjectStore.Fake,
+  bucket: "test-caches"
+
 # Lets tests collect Sentry events (none are sent: there is no DSN).
 config :sentry, test_mode: true
 

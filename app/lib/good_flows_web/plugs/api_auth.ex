@@ -2,8 +2,12 @@ defmodule GoodFlowsWeb.Plugs.ApiAuth do
   @moduledoc """
   Bearer token authentication for JSON API requests.
 
-      plug GoodFlowsWeb.Plugs.ApiAuth                         # any valid key
+      plug GoodFlowsWeb.Plugs.ApiAuth                         # any valid pk_ or sk_ key
+      plug GoodFlowsWeb.Plugs.ApiAuth, :allow_cache_keys      # also ck_ keys (cache routes)
       plug GoodFlowsWeb.Plugs.ApiAuth, :require_write_access  # private sk_ keys only
+
+  The default clause refuses cache (`ck_`) keys with `403`, so every route
+  outside the cache routes refuses them without a change of its own.
 
   On success assigns `:current_api_key`, `:current_account_user`,
   `:current_account`, and `:current_scope` (for the key's user).
@@ -23,7 +27,15 @@ defmodule GoodFlowsWeb.Plugs.ApiAuth do
 
   @impl Plug
   def call(conn, :require_write_access), do: require_write_access(conn, [])
-  def call(conn, opts), do: require_api_auth(conn, opts)
+  def call(conn, :allow_cache_keys), do: require_api_auth(conn, [])
+
+  def call(conn, opts) do
+    conn = require_api_auth(conn, opts)
+
+    if not conn.halted and ApiKey.cache_key?(conn.assigns.current_api_key),
+      do: halt_with(conn, :forbidden),
+      else: conn
+  end
 
   @doc """
   Authenticates the request from its `Authorization: Bearer <token>` header,

@@ -36,6 +36,17 @@ defmodule GoodFlowsWeb.Router do
     plug GoodFlowsWeb.Plugs.ApiAuth
   end
 
+  # Cache routes are the only routes that accept cache (`ck_`) keys.
+  pipeline :api_cache_authenticated do
+    plug GoodFlowsWeb.Plugs.ApiAuth, :allow_cache_keys
+  end
+
+  # After `:load_project`: refuses `pk_` keys and other projects' `ck_`
+  # keys, then responds `503` while no cache bucket is configured.
+  pipeline :cache_access do
+    plug GoodFlowsWeb.Plugs.RequireCacheAccess
+  end
+
   pipeline :api_write do
     plug GoodFlowsWeb.Plugs.ApiAuth, :require_write_access
     plug GoodFlowsWeb.Plugs.RequireParsedBody
@@ -90,6 +101,17 @@ defmodule GoodFlowsWeb.Router do
     get "/workflow-runs/:run_id", WorkflowRunController, :show
   end
 
+  # Cache lookup, reserve and commit: `sk_` and `ck_` keys. The per-scope
+  # check needs the request's `scope`, so it runs in the controller.
+  scope "/api/v1/projects/:project/caches", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_cache_authenticated, :load_project, :cache_access]
+
+    get "/entries/:key", CacheEntryController, :show
+    get "/entries", CacheEntryController, :lookup
+    post "/entries/:key", CacheEntryController, :reserve
+    post "/uploads/:upload_id/commit", CacheUploadController, :commit
+  end
+
   # Write endpoints: private (sk_) API keys only.
   scope "/api/v1", GoodFlowsWeb.Api.V1, as: :api_v1 do
     pipe_through [:api, :api_authenticated, :api_write]
@@ -103,6 +125,7 @@ defmodule GoodFlowsWeb.Router do
   scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
     pipe_through [:api, :api_authenticated, :api_write, :load_project]
 
+    patch "/", ProjectController, :update
     delete "/", ProjectController, :delete
     post "/recipes", RecipeController, :create
     put "/recipes/:id", RecipeController, :update
@@ -111,6 +134,26 @@ defmodule GoodFlowsWeb.Router do
     post "/test-reports", TestReportController, :create
     # Private keys only. Auth and LoadProject run before WorkflowRunBody.
     post "/workflow-runs", WorkflowRunController, :create
+  end
+
+  # Cache listing and purging: private (sk_) keys only, and `503` while no
+  # cache bucket is configured.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write, :load_project, :cache_access]
+
+    get "/caches", CacheEntryController, :index
+    delete "/caches/entries/:key", CacheEntryController, :delete
+    delete "/caches/entries", CacheEntryController, :delete_matching
+  end
+
+  # Cache-key minting, listing and revoking: private (sk_) keys only. They
+  # work without a cache bucket.
+  scope "/api/v1/projects/:project", GoodFlowsWeb.Api.V1, as: :api_v1 do
+    pipe_through [:api, :api_authenticated, :api_write, :load_project]
+
+    get "/cache-keys", CacheKeyController, :index
+    post "/cache-keys", CacheKeyController, :create
+    delete "/cache-keys/:id", CacheKeyController, :delete
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development

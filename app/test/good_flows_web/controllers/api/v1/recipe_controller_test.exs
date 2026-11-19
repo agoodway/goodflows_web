@@ -399,7 +399,10 @@ defmodule GoodFlowsWeb.Api.V1.RecipeControllerTest do
     paths = conn |> get(~p"/api/v1/openapi") |> json_response(200) |> Map.fetch!("paths")
 
     assert Map.keys(paths["/api/v1/projects"]) |> Enum.sort() == ["get", "post"]
-    assert Map.keys(paths["/api/v1/projects/{project}"]) |> Enum.sort() == ["delete", "get"]
+
+    assert Map.keys(paths["/api/v1/projects/{project}"]) |> Enum.sort() ==
+             ["delete", "get", "patch"]
+
     assert Map.keys(paths["/api/v1/projects/{project}/recipes"]) |> Enum.sort() == ["get", "post"]
 
     assert Map.keys(paths["/api/v1/projects/{project}/recipes/{id}"]) |> Enum.sort() ==

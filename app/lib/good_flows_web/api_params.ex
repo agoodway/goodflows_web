@@ -42,4 +42,47 @@ defmodule GoodFlowsWeb.ApiParams do
     {"Body is not `application/json` (or another parseable type)", "application/json",
      ErrorResponse}
   end
+
+  @doc "The `:project` and cache `:key` path parameters."
+  @spec cache_key() :: keyword()
+  def cache_key do
+    project() ++
+      [
+        key: [
+          in: :path,
+          type: :string,
+          description: "64 lowercase hex characters. Any other value is `404`.",
+          required: true
+        ]
+      ]
+  end
+
+  @doc "The cache `scope` query parameter; `required` for purges."
+  @spec cache_scope(boolean()) :: keyword()
+  def cache_scope(required) do
+    [
+      scope: [
+        in: :query,
+        type: :string,
+        description:
+          "Opaque scope label, usually a branch: 1 to 256 bytes with no control " <>
+            "characters, not validated as a Git ref. Any other value is `422`.",
+        required: required
+      ]
+    ]
+  end
+
+  @doc "The `403` response of cache routes."
+  @spec cache_forbidden() :: {String.t(), String.t(), module()}
+  def cache_forbidden do
+    {"Public keys, cache keys of another project, or a scope the key may not use",
+     "application/json", ErrorResponse}
+  end
+
+  @doc "The `503` response of cache routes without a configured bucket."
+  @spec cache_unavailable() :: {String.t(), String.t(), module()}
+  def cache_unavailable do
+    {"No cache bucket is configured, or the object store is unavailable", "application/json",
+     ErrorResponse}
+  end
 end

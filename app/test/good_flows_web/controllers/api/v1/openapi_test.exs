@@ -50,6 +50,17 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
   @project_operations [
     {"/api/v1/projects/{project}", "get"},
     {"/api/v1/projects/{project}", "delete"},
+    {"/api/v1/projects/{project}", "patch"},
+    {"/api/v1/projects/{project}/cache-keys", "get"},
+    {"/api/v1/projects/{project}/cache-keys", "post"},
+    {"/api/v1/projects/{project}/cache-keys/{id}", "delete"},
+    {"/api/v1/projects/{project}/caches", "get"},
+    {"/api/v1/projects/{project}/caches/entries", "get"},
+    {"/api/v1/projects/{project}/caches/entries", "delete"},
+    {"/api/v1/projects/{project}/caches/entries/{key}", "get"},
+    {"/api/v1/projects/{project}/caches/entries/{key}", "post"},
+    {"/api/v1/projects/{project}/caches/entries/{key}", "delete"},
+    {"/api/v1/projects/{project}/caches/uploads/{upload_id}/commit", "post"},
     {"/api/v1/projects/{project}/recipes", "get"},
     {"/api/v1/projects/{project}/recipes", "post"},
     {"/api/v1/projects/{project}/recipes/{id}", "get"},
@@ -466,5 +477,60 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
   test "serves Swagger UI", %{conn: conn} do
     assert conn |> get(~p"/api/v1/docs") |> html_response(200) =~ "/api/v1/openapi"
+  end
+
+  describe "caches" do
+    setup %{conn: conn} do
+      %{doc: conn |> get(~p"/api/v1/openapi") |> json_response(200)}
+    end
+
+    test "documents the cache section of the description", %{doc: doc} do
+      description = doc["info"]["description"]
+
+      assert description =~ "## Caches"
+      assert description =~ "Never send your\n`Authorization` header"
+      assert description =~ "opaque label"
+      assert description =~ "`ck_…`"
+      assert description =~ "`507`"
+    end
+
+    test "defines the cache schemas", %{doc: doc} do
+      for name <-
+            ~w(CacheEntry CacheEntryResponse CacheReservationRequest CacheReservationResponse
+               CacheListResponse CachePurgeResponse CacheKeyRequest CacheKeyResponse
+               CacheKeyListResponse ProjectUpdateRequest) do
+        assert doc["components"]["schemas"][name], "missing schema #{name}"
+      end
+
+      assert doc["components"]["schemas"]["CacheKeyRequest"]["additionalProperties"] == false
+    end
+
+    test "documents the cache responses and parameters", %{doc: doc} do
+      paths = doc["paths"]
+      reserve = paths["/api/v1/projects/{project}/caches/entries/{key}"]["post"]
+
+      assert Enum.sort(Map.keys(reserve["responses"])) ==
+               ~w(201 401 403 404 409 413 415 422 503 507)
+
+      assert reserve["requestBody"]["content"]["application/json"]["schema"]["$ref"] =~
+               "CacheReservationRequest"
+
+      show = paths["/api/v1/projects/{project}/caches/entries/{key}"]["get"]
+      names = Enum.map(show["parameters"], & &1["name"])
+      assert "key" in names and "scope" in names
+      assert Enum.sort(Map.keys(show["responses"])) == ~w(200 401 403 404 422 503)
+
+      commit = paths["/api/v1/projects/{project}/caches/uploads/{upload_id}/commit"]["post"]
+      assert "upload_id" in Enum.map(commit["parameters"], & &1["name"])
+      assert Enum.sort(Map.keys(commit["responses"])) == ~w(200 401 403 404 422 503)
+
+      purge = paths["/api/v1/projects/{project}/caches/entries/{key}"]["delete"]
+      assert Enum.find(purge["parameters"], &(&1["name"] == "scope"))["required"]
+
+      mint = paths["/api/v1/projects/{project}/cache-keys"]["post"]
+
+      assert mint["responses"]["201"]["content"]["application/json"]["schema"]["$ref"] =~
+               "CacheKeyResponse"
+    end
   end
 end

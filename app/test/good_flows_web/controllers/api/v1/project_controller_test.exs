@@ -158,12 +158,154 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
     end
   end
 
-  test "there is no update route", ctx do
-    project = project_fixture(ctx.account)
+  describe "default branch" do
+    test "create defaults default_branch to main and accepts another", ctx do
+      body =
+        ctx.sk_conn |> post(~p"/api/v1/projects", %{"slug" => "goodcases"}) |> json_response(201)
 
-    assert ctx.sk_conn
-           |> put(~p"/api/v1/projects/#{project.slug}", %{"slug" => "renamed"})
-           |> response(404)
+      assert body["data"]["default_branch"] == "main"
+
+      body =
+        ctx.sk_conn
+        |> post(~p"/api/v1/projects", %{"slug" => "other", "default_branch" => "trunk"})
+        |> json_response(201)
+
+      assert_schema(body, "ProjectResponse", ApiSpec.spec())
+      assert body["data"]["default_branch"] == "trunk"
+    end
+
+    test "a default branch that is not a Git ref is accepted", ctx do
+      body =
+        ctx.sk_conn
+        |> post(~p"/api/v1/projects", %{"slug" => "odd", "default_branch" => "pr 42..head"})
+        |> json_response(201)
+
+      assert body["data"]["default_branch"] == "pr 42..head"
+    end
+
+    test "an invalid default branch is 422 on default_branch and stores nothing", ctx do
+      for branch <- ["", "main\n", String.duplicate("a", 257), 42] do
+        body =
+          ctx.sk_conn
+          |> post(~p"/api/v1/projects", %{"slug" => "goodcases", "default_branch" => branch})
+          |> json_response(422)
+
+        assert body["errors"]["default_branch"], "expected #{inspect(branch)} to be rejected"
+      end
+
+      assert Projects.list_projects(ctx.account) == []
+    end
+
+    test "show and list render default_branch", ctx do
+      project = project_fixture(ctx.account)
+
+      body = ctx.pk_conn |> get(~p"/api/v1/projects/#{project.slug}") |> json_response(200)
+      assert body["data"]["default_branch"] == "main"
+
+      body = ctx.pk_conn |> get(~p"/api/v1/projects") |> json_response(200)
+      assert [%{"default_branch" => "main"}] = body["data"]
+    end
+
+    test "PATCH changes default_branch", ctx do
+      project = project_fixture(ctx.account)
+
+      body =
+        ctx.sk_conn
+        |> patch(~p"/api/v1/projects/#{project.slug}", %{"default_branch" => "trunk"})
+        |> json_response(200)
+
+      assert_schema(body, "ProjectResponse", ApiSpec.spec())
+      assert body["data"]["default_branch"] == "trunk"
+      assert {:ok, %{default_branch: "trunk"}} = Projects.get_project(ctx.account, project.slug)
+    end
+
+    test "PATCH refuses a rename and any other key", ctx do
+      project = project_fixture(ctx.account)
+
+      for body <- [
+            %{"slug" => "renamed"},
+            %{"default_branch" => "trunk", "slug" => "renamed"},
+            %{"default_branch" => "trunk", "other" => 1}
+          ] do
+        resp =
+          ctx.sk_conn |> patch(~p"/api/v1/projects/#{project.slug}", body) |> json_response(422)
+
+        assert_schema(resp, "ValidationErrorResponse", ApiSpec.spec())
+      end
+
+      assert {:ok, %{slug: slug, default_branch: "main"}} =
+               Projects.get_project(ctx.account, project.slug)
+
+      assert slug == project.slug
+    end
+
+    test "PATCH with an invalid default branch is 422", ctx do
+      project = project_fixture(ctx.account)
+
+      for branch <- ["", "x\ny", String.duplicate("b", 257), nil] do
+        body =
+          ctx.sk_conn
+          |> patch(~p"/api/v1/projects/#{project.slug}", %{"default_branch" => branch})
+          |> json_response(422)
+
+        assert body["errors"]["default_branch"]
+      end
+    end
+
+    test "public keys cannot update", ctx do
+      project = project_fixture(ctx.account)
+
+      assert ctx.pk_conn
+             |> patch(~p"/api/v1/projects/#{project.slug}", %{"default_branch" => "trunk"})
+             |> json_response(403)
+
+      assert {:ok, %{default_branch: "main"}} = Projects.get_project(ctx.account, project.slug)
+    end
+
+    test "PATCH on an invalid path slug is 422; another account's project is 404", ctx do
+      for slug <- ["GoodCases", "-app"] do
+        assert ctx.sk_conn
+               |> patch("/api/v1/projects/#{slug}", %{"default_branch" => "trunk"})
+               |> json_response(422)
+      end
+
+      other = project_fixture(ctx.other_account)
+
+      assert ctx.sk_conn
+             |> patch(~p"/api/v1/projects/#{other.slug}", %{"default_branch" => "trunk"})
+             |> json_response(404)
+    end
+
+    test "PUT is still not a route", ctx do
+      project = project_fixture(ctx.account)
+
+      assert ctx.sk_conn
+             |> put(~p"/api/v1/projects/#{project.slug}", %{"slug" => "renamed"})
+             |> response(404)
+    end
+  end
+
+  test "a project whose only content is caches and a cache key is deleted", ctx do
+    import GoodFlows.CacheFixtures
+
+    project = project_fixture(ctx.account)
+    entry = entry_fixture(project)
+    {_key, token} = cache_key_fixture(ctx.account, project, %{"access" => "read"})
+
+    assert ctx.sk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> response(204)
+    assert ctx.sk_conn |> get(~p"/api/v1/projects/#{project.slug}") |> json_response(404)
+    refute Repo.get(GoodFlows.Caches.Entry, entry.id)
+
+    assert %{rows: [[1]]} =
+             Repo.query!(
+               "SELECT count(*) FROM cache_object_deletions WHERE object_key = $1",
+               [entry.object_key]
+             )
+
+    assert token
+           |> api_conn()
+           |> get("/api/v1/projects/#{project.slug}/caches/entries/#{entry.key}")
+           |> json_response(401)
   end
 
   test "operations appear in the OpenAPI document", %{conn: conn} do
@@ -174,7 +316,12 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
     assert delete["responses"]["409"]["content"]["application/json"]["schema"]["$ref"] =~
              "ConflictResponse"
 
-    for name <- ~w(Project ProjectRequest ProjectResponse ProjectListResponse) do
+    assert doc["paths"]["/api/v1/projects/{project}"]["patch"]["requestBody"]["content"][
+             "application/json"
+           ]["schema"]["$ref"] =~ "ProjectUpdateRequest"
+
+    for name <-
+          ~w(Project ProjectRequest ProjectResponse ProjectListResponse ProjectUpdateRequest) do
       assert doc["components"]["schemas"][name], "missing schema #{name}"
     end
   end

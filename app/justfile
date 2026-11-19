@@ -4,6 +4,10 @@ up:
 port:
   @bash scripts/dev_port.sh
 
+# Local MinIO for remote caches (foreground); prints the CACHE_S3_* settings.
+minio:
+  bash scripts/minio.sh
+
 install:
     mix deps.get
     mix assets.setup
