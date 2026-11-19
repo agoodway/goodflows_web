@@ -115,7 +115,7 @@ For a public (`pk_`) key, every `results` entry in `document` MUST have `command
 - **THEN** the API responds `409` and the stored run is unchanged
 
 ### Requirement: Thread URLs are plain https URLs
-Each `links.threads` entry MUST be a string of at most 2,048 bytes that parses as an absolute RFC 3986 URL with the scheme written as `https`, a nonempty host, and no userinfo, query, or fragment. An empty query (`?`) or an empty fragment (`#`) counts as present. Entries MUST be unique by exact string, and each repeat after the first MUST return `422` with `must be unique` on its own path.
+Each `links.threads` entry MUST be a string of at most 2,048 bytes that parses as an absolute RFC 3986 URL with the scheme written as `https`, a nonempty host, a port of at most 65,535, and no userinfo, query, or fragment. An empty query (`?`) or an empty fragment (`#`) counts as present. Entries MUST be unique by exact string, and each repeat after the first MUST return `422` with `must be unique` on its own path.
 
 #### Scenario: Amp thread URL
 - **WHEN** a document's `links.threads` is `["https://ampcode.com/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"]`
@@ -125,8 +125,12 @@ Each `links.threads` entry MUST be a string of at most 2,048 bytes that parses a
 - **WHEN** a document's `links.threads[0]` is `https://ampcode.com/threads/T-1?token=secret`
 - **THEN** the API responds `422` with an error on `links.threads[0]` and the response does not contain `secret`
 
+#### Scenario: Bare query or fragment
+- **WHEN** a document's `links.threads[0]` is `https://ampcode.com/threads/T-1?` or `https://ampcode.com/threads/T-1#`
+- **THEN** the API responds `422` with an error on `links.threads[0]`
+
 #### Scenario: Insecure or credentialed URL
-- **WHEN** a document's `links.threads[0]` is `http://ampcode.com/threads/T-1` or `https://user:pw@ampcode.com/threads/T-1`
+- **WHEN** a document's `links.threads[0]` is `http://ampcode.com/threads/T-1`, `HTTPS://ampcode.com/threads/T-1`, or `https://user:pw@ampcode.com/threads/T-1`
 - **THEN** the API responds `422` with an error on `links.threads[0]`
 
 #### Scenario: Oversized URL
@@ -137,19 +141,38 @@ Each `links.threads` entry MUST be a string of at most 2,048 bytes that parses a
 - **WHEN** a document's `links.threads` holds the same URL at index 0 and index 1
 - **THEN** the API responds `422` with an error on `links.threads[1]`
 
+### Requirement: Thread URL paths are RFC 3986 safe
+Every byte of a `links.threads` entry's path MUST be an RFC 3986 `pchar` (an unreserved character, a sub-delim, `:`, or `@`) or `/`, and every `%` MUST start a `%` followed by two hex digits. An entry that breaks this MUST return `422` on its path.
+
+#### Scenario: Characters outside pchar
+- **WHEN** a document's `links.threads[0]` is `https://ampcode.com/threads/T-1[x]` or `https://ampcode.com/threads/T|1`
+- **THEN** the API responds `422` with an error on `links.threads[0]`
+
+#### Scenario: Malformed percent
+- **WHEN** a document's `links.threads[0]` is `https://ampcode.com/threads/T-1%zz` or `https://ampcode.com/threads/T-1%`
+- **THEN** the API responds `422` with an error on `links.threads[0]`
+
 ### Requirement: Thread URLs arrive normalized
-Each `links.threads` entry MUST already be in normal form: its host has no ASCII uppercase letter, it has no explicit port 443, its path is nonempty, and no path segment is `.` or `..`. An entry that is not MUST return `422` with `must be normalized` on its path. The server MUST NOT rewrite an entry.
+Each `links.threads` entry MUST already be in the form `reqwest::Url` serializes: a host with no ASCII uppercase letter or `%`, an IP host in canonical form, no port that is empty, zero-padded, or 443, a nonempty path, and no `.` or `..` segment, including one spelled with `%2e`. Percent triplets MUST be kept as written, never decoded or recased. Any other entry MUST return `422` with `must be normalized` on its path. The server MUST NOT rewrite an entry.
 
 #### Scenario: Not normalized
-- **WHEN** a document's `links.threads[0]` is `HTTPS://AmpCode.com/threads/T-1`, `https://ampcode.com:443/threads/T-1`, `https://ampcode.com`, or `https://ampcode.com/a/../threads/T-1`
+- **WHEN** a document's `links.threads[0]` is `https://AmpCode.com/threads/T-1`, `https://ampcode.com:443/threads/T-1`, `https://ampcode.com:0443/threads/T-1`, `https://ampcode.com`, `https://ampcode.com/a/../threads/T-1`, or `https://ampcode.com/a/%2E%2e/threads/T-1`
 - **THEN** the API responds `422` with an error on `links.threads[0]` and stores nothing
+
+#### Scenario: Host not in serialized form
+- **WHEN** a document's `links.threads[0]` is `https://ex%61mple.com/threads/T-1`, `https://0x7f.1/threads/T-1`, or `https://[0:0:0:0:0:0:0:1]/threads/T-1`
+- **THEN** the API responds `422` with an error on `links.threads[0]`
+
+#### Scenario: Percent triplets kept as written
+- **WHEN** a document's `links.threads` is `["https://ampcode.com/threads/a%7Eb", "https://ampcode.com/threads/a%2fb"]`
+- **THEN** the API responds `201` and a later `sk_` show returns both strings unchanged
 
 #### Scenario: WHATWG-serialized URL
 - **WHEN** a document's `links.threads[0]` is `https://ampcode.com/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b`, as `reqwest::Url` serializes it
 - **THEN** the API responds `201` and a later `sk_` show returns that exact string
 
 ### Requirement: Tickets are short printable IDs
-Each `links.tickets` entry MUST be a string of 1 to 64 bytes, each a printable ASCII character from `!` to `~`, so no whitespace, control, or non-ASCII character is allowed. Entries MUST be unique ignoring ASCII case, and each repeat after the first MUST return `422` with `must be unique` on its own path. The server SHALL store each ticket as given.
+Each `links.tickets` entry MUST be a string of 1 to 64 bytes, each a printable ASCII character from `!` to `~` other than `,`, so no whitespace, comma, control, or non-ASCII character is allowed. Entries MUST be unique ignoring ASCII case, and each repeat after the first MUST return `422` with `must be unique` on its own path. The server SHALL store each ticket as given.
 
 #### Scenario: Ticket stored as written
 - **WHEN** a document's `links.tickets` is `["goo-291", "GOO-300"]`
@@ -160,7 +183,7 @@ Each `links.tickets` entry MUST be a string of 1 to 64 bytes, each a printable A
 - **THEN** the API responds `422` with an error on `links.tickets[2]`
 
 #### Scenario: Whitespace or long ticket
-- **WHEN** a document's `links.tickets[0]` is `GOO 1`, an empty string, a 65-byte string, or `GOÖ-1`
+- **WHEN** a document's `links.tickets[0]` is `GOO 1`, `GOO-1,GOO-2`, an empty string, a 65-byte string, or `GOÖ-1`
 - **THEN** the API responds `422` with an error on `links.tickets[0]`
 
 ### Requirement: The list can be filtered by ticket
@@ -183,11 +206,15 @@ The list SHALL accept a `ticket` filter for every valid key, including `pk_` key
 - **THEN** that run is not returned
 
 ### Requirement: The list can be filtered by thread URL
-The list SHALL accept a `thread_url` filter for every valid key, including `pk_` keys. Before matching, the server SHALL lowercase the value's scheme and host, remove an explicit port 443, and replace an empty path with `/`. The result MUST follow the thread URL rules, or the API MUST return `422` on `thread_url`. It SHALL match a run when any of the run's `links.threads` equals the result. Thread URLs SHALL be indexed so the lookup does not read `payload`.
+The list SHALL accept a `thread_url` filter for every valid key, including `pk_` keys. The server SHALL lowercase its scheme and host, drop a port that is empty or 443, and turn an empty path into `/`, leaving percent triplets as written. The result MUST follow the thread URL rules, or the API MUST return `422` on `thread_url`. It SHALL match a run when one of the run's `links.threads` equals it, through an index rather than `payload`.
 
 #### Scenario: Thread URL in another spelling
 - **WHEN** a stored run has `links.threads` `["https://ampcode.com/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"]` and a client lists with `thread_url=HTTPS://AmpCode.com:443/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b`
 - **THEN** that run is returned
+
+#### Scenario: Percent triplets match as written
+- **WHEN** a stored run has `links.threads` `["https://ampcode.com/threads/a%7Eb"]`, and a client lists with `thread_url=https://ampcode.com/threads/a%7eb`, then with `thread_url=https://ampcode.com/threads/a~b`
+- **THEN** neither list returns that run
 
 #### Scenario: Public key filters by thread
 - **WHEN** a client with a `pk_` key lists with a `thread_url` that a stored run names
