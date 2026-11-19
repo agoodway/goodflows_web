@@ -492,13 +492,31 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       assert description =~ "opaque label"
       assert description =~ "`ck_…`"
       assert description =~ "`507`"
+      assert description =~ "**Multipart saves.**"
+      assert description =~ "no\n        `Authorization`" or description =~ "no\n`Authorization`"
+      assert description =~ "restoring clients must check it"
+    end
+
+    test "documents parts on reserve and upload_parts in the reservation", %{doc: doc} do
+      schemas = doc["components"]["schemas"]
+      request = schemas["CacheReservationRequest"]
+      assert "parts" in Map.keys(request["properties"])
+      refute "parts" in request["required"]
+      assert schemas["CacheUploadParts"]["additionalProperties"] == false
+      assert schemas["CacheUploadParts"]["properties"]["size"]["minimum"] == 5_242_880
+
+      data = schemas["CacheReservationResponse"]["properties"]["data"]
+      assert data["properties"]["upload_parts"]["items"]["$ref"] =~ "CacheUploadPart"
+      assert data["properties"]["upload_url"]["description"] =~ "without `parts`"
+      assert data["properties"]["upload_headers"]["description"] =~ "without `parts`"
+      refute "upload_url" in data["required"]
     end
 
     test "defines the cache schemas", %{doc: doc} do
       for name <-
             ~w(CacheEntry CacheEntryResponse CacheReservationRequest CacheReservationResponse
                CacheListResponse CachePurgeResponse CacheKeyRequest CacheKeyResponse
-               CacheKeyListResponse ProjectUpdateRequest) do
+               CacheKeyListResponse ProjectUpdateRequest CacheUploadParts CacheUploadPart) do
         assert doc["components"]["schemas"][name], "missing schema #{name}"
       end
 

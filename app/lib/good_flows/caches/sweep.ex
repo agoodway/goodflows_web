@@ -13,7 +13,10 @@ defmodule GoodFlows.Caches.Sweep do
      object already gone). A failed delete stays queued for a later sweep.
      Step 4 stops starting deletes after a time budget (200 seconds by
      default), so a slow store cannot push a sweep past `SweepJob`'s
-     300-second timeout; what is left stays queued.
+     300-second timeout; what is left stays queued. A queued multipart
+     upload (its row was queued with `delete_after` now) is aborted first,
+     then its object key is deleted (an upload completed before the abort
+     has an object); the queue row goes once both are confirmed or gone.
 
   Steps 1 to 3 delete in batches (1,000 rows by default) until nothing is
   left. Every deleted entry queues its object (database trigger), so step 4
@@ -102,27 +105,32 @@ defmodule GoodFlows.Caches.Sweep do
     |> where([d], d.delete_after <= type(^delete_cutoff(), :utc_datetime_usec))
     |> order_by([d], asc: d.delete_after, asc: d.object_key)
     |> limit(^batch_size)
-    |> select([d], d.object_key)
+    |> select([d], {d.object_key, d.multipart_upload_id})
     |> Repo.all()
-    |> Enum.reduce_while({0, 0}, fn object_key, {deleted, failed} ->
+    |> Enum.reduce_while({0, 0}, fn {object_key, upload_id}, {deleted, failed} ->
       if System.monotonic_time(:millisecond) >= deadline do
         {:halt, {deleted, failed}}
       else
-        {:cont, delete_object(object_key, deleted, failed)}
+        {:cont, delete_object(object_key, upload_id, deleted, failed)}
       end
     end)
   end
 
   defp delete_cutoff, do: DateTime.add(DateTime.utc_now(), -@delete_grace_seconds, :second)
 
-  defp delete_object(object_key, deleted, failed) do
-    case ObjectStore.delete(object_key) do
-      result when result in [:ok, {:error, :not_found}] ->
-        "cache_object_deletions" |> where([d], d.object_key == ^object_key) |> Repo.delete_all()
-        {deleted + 1, failed}
-
-      {:error, _reason} ->
-        {deleted, failed + 1}
+  # Aborting before deleting: a commit completing after the abort gets
+  # `NoSuchUpload`, and one that completed before it left an object the
+  # delete removes.
+  defp delete_object(object_key, upload_id, deleted, failed) do
+    with result when result in [:ok, {:error, :not_found}] <- abort(object_key, upload_id),
+         result when result in [:ok, {:error, :not_found}] <- ObjectStore.delete(object_key) do
+      "cache_object_deletions" |> where([d], d.object_key == ^object_key) |> Repo.delete_all()
+      {deleted + 1, failed}
+    else
+      {:error, _reason} -> {deleted, failed + 1}
     end
   end
+
+  defp abort(_object_key, nil), do: :ok
+  defp abort(object_key, upload_id), do: ObjectStore.abort_multipart(object_key, upload_id)
 end

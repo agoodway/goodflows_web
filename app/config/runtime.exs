@@ -172,6 +172,17 @@ if config_env() != :test do
   reservation_ttl = env_int.("CACHE_RESERVATION_TTL_SECONDS", "7200")
   upload_url_ttl = env_int.("CACHE_UPLOAD_URL_TTL_SECONDS", "900")
 
+  # Part URLs of a multipart upload expire with the reservation, and a SigV4
+  # presigned URL lasts at most a week.
+  sigv4_max_expires = 604_800
+
+  if reservation_ttl > sigv4_max_expires do
+    raise """
+    CACHE_RESERVATION_TTL_SECONDS (#{reservation_ttl}) must be at most
+    #{sigv4_max_expires} (a week, the longest lifetime of a presigned URL).
+    """
+  end
+
   # An upload URL that outlived its reservation could create an object after
   # the sweep deleted the reservation.
   if upload_url_ttl > reservation_ttl do

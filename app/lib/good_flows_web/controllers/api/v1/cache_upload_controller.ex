@@ -25,6 +25,16 @@ defmodule GoodFlowsWeb.Api.V1.CacheUploadController do
     check fails the reservation is deleted and the response is `422` on
     `upload`. Committing an upload this key already committed is `200`
     again. There is no body.
+
+    For a reservation with `parts`, the server lists the uploaded parts
+    from the store (client ETags are never used): every part must be
+    present with an ETag equal to the hex of its declared MD5 and its
+    declared length. It then completes the upload and checks the object's
+    length and multipart ETag. A failed check deletes the reservation,
+    aborts the upload and is `422` on `upload`. The entry's `sha256` is the
+    declared value, not verified by the store. Completing many parts can
+    take up to about two minutes; `503` keeps the reservation and the
+    commit can be retried.
     """,
     parameters:
       ApiParams.project() ++
@@ -45,7 +55,7 @@ defmodule GoodFlowsWeb.Api.V1.CacheUploadController do
         {"No such upload in this project, expired, or reserved by another key",
          "application/json", ErrorResponse},
       unprocessable_entity:
-        {"The object is missing or has the wrong size or checksum (on `upload`)",
+        {"The object is missing, has missing or wrong parts, or has the wrong size or checksum (on `upload`)",
          "application/json", ValidationErrorResponse},
       service_unavailable: ApiParams.cache_unavailable()
     ]

@@ -100,6 +100,15 @@ defmodule GoodFlows.RuntimeConfigTest do
       assert get_in(config, [:good_flows, :cache_upload_url_ttl_seconds]) == 7_200
     end
 
+    test "the server refuses to boot with a reservation TTL above a week" do
+      assert_raise RuntimeError, ~r/CACHE_RESERVATION_TTL_SECONDS \(604801\)/, fn ->
+        read_runtime(%{"CACHE_RESERVATION_TTL_SECONDS" => "604801"})
+      end
+
+      config = read_runtime(%{"CACHE_RESERVATION_TTL_SECONDS" => "604800"})
+      assert get_in(config, [:good_flows, :cache_reservation_ttl_seconds]) == 604_800
+    end
+
     test "an entry cap at R2's single-request limit is accepted" do
       config = read_runtime(%{"CACHE_MAX_ENTRY_BYTES" => "5363466240"})
       assert get_in(config, [:good_flows, :cache_max_entry_bytes]) == 5_363_466_240

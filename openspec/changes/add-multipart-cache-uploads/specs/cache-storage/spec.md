@@ -78,6 +78,10 @@ Committing a reservation with `parts` MUST read the uploaded parts from the obje
 - **WHEN** the object store cannot answer while a multipart reservation is committed
 - **THEN** the API responds `503` with `retry-after: 1`, and the reservation stays and can be committed later
 
+#### Scenario: Upload gone but no object yet
+- **WHEN** the store reports the multipart upload no longer exists and the object does not exist yet, as while another commit is still completing it
+- **THEN** the API responds `503` with `retry-after: 1` and the reservation stays
+
 ### Requirement: A failed multipart commit aborts the upload
 When a part is missing, a part's ETag or the object's ETag or length differs, or the store refuses to complete the upload, commit MUST respond `422` on `upload`, delete the reservation, and abort the multipart upload, so a later part PUT fails.
 
