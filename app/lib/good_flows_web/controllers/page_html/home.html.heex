@@ -34,7 +34,11 @@ depends_on = ["compile"]</:source>
         <.button id="home-login-link" navigate={~p"/users/log-in"} variant="primary">
           Log in
         </.button>
-        <.button id="home-register-link" navigate={~p"/users/register"}>
+        <.button
+          :if={GoodFlows.Accounts.registration_enabled?()}
+          id="home-register-link"
+          navigate={~p"/users/register"}
+        >
           Create an account
         </.button>
       <% end %>

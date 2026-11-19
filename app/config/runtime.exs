@@ -54,6 +54,19 @@ if config_env() in [:dev, :test] do
   config :good_flows, GoodFlows.Repo, database: database
 end
 
+boolean_env = fn name, default ->
+  case System.get_env(name) do
+    nil -> default
+    val -> String.downcase(val) in ~w(true 1 yes)
+  end
+end
+
+# New account registration: open in dev/test, closed in prod unless
+# GOOD_FLOWS_USER_REGISTRATION_ENABLED says otherwise.
+config :good_flows,
+       :user_registration_enabled,
+       boolean_env.("GOOD_FLOWS_USER_REGISTRATION_ENABLED", config_env() != :prod)
+
 # Sentry error tracking
 if sentry_dsn = System.get_env("SENTRY_DSN") do
   config :sentry,
