@@ -678,6 +678,146 @@ defmodule GoodFlowsWeb.Api.V1.CacheEntryControllerTest do
     end
   end
 
+  describe "multipart" do
+    @part 5_242_880
+
+    setup ctx do
+      body = :crypto.strong_rand_bytes(@part + 1_000)
+      chunks = [binary_part(body, 0, @part), binary_part(body, @part, 1_000)]
+      md5s = Enum.map(chunks, &Base.encode64(:crypto.hash(:md5, &1)))
+      attrs = Map.put(reservation_body(body), "parts", %{"size" => @part, "md5" => md5s})
+      %{body: body, chunks: chunks, attrs: attrs, prefix: "caches/#{ctx.project.id}/"}
+    end
+
+    defp put_parts(data, chunks, numbers) do
+      for n <- numbers do
+        part = Enum.at(data["upload_parts"], n - 1)
+        assert :ok = Fake.put_part(part["url"], part["headers"], Enum.at(chunks, n - 1))
+      end
+    end
+
+    test "201 has upload_parts in order and no single upload URL", ctx do
+      body = ctx.sk_conn |> reserve(ctx.project, hex(:k), ctx.attrs) |> json_response(201)
+      assert_schema(body, "CacheReservationResponse", ApiSpec.spec())
+      data = body["data"]
+
+      assert Map.keys(data) |> Enum.sort() ==
+               ~w(expires_at upload_id upload_parts upload_url_expires_at)
+
+      assert [%{"number" => 1} = p1, %{"number" => 2} = p2] = data["upload_parts"]
+      assert Map.keys(p1) |> Enum.sort() == ~w(headers number url)
+      [m1, m2] = ctx.attrs["parts"]["md5"]
+      assert p1["headers"] == %{"content-length" => "5242880", "content-md5" => m1}
+      assert p2["headers"] == %{"content-length" => "1000", "content-md5" => m2}
+
+      signed = p1["url"] |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
+      assert signed["X-Amz-SignedHeaders"] == "content-length;content-md5;host"
+      assert signed["partNumber"] == "1"
+
+      {:ok, expires, _} = DateTime.from_iso8601(data["upload_url_expires_at"])
+      assert DateTime.diff(expires, DateTime.utc_now()) in 7_190..7_200
+    end
+
+    test "a single-PUT reservation has no upload_parts", ctx do
+      data =
+        ctx.sk_conn |> reserve(ctx.project, hex(:k), reservation_body("x")) |> json_response(201)
+
+      refute Map.has_key?(data["data"], "upload_parts")
+      assert data["data"]["upload_url"]
+    end
+
+    test "invalid parts are 422 on parts and reserve nothing", ctx do
+      [m1, _m2] = ctx.attrs["parts"]["md5"]
+
+      for parts <- [
+            %{"size" => @part, "md5" => [m1]},
+            %{"size" => @part - 1, "md5" => ctx.attrs["parts"]["md5"]},
+            %{"size" => @part, "md5" => [m1, "AAAA"]},
+            Map.put(ctx.attrs["parts"], "etags", ["x"])
+          ] do
+        body =
+          ctx.sk_conn
+          |> reserve(ctx.project, hex(:k), Map.put(ctx.attrs, "parts", parts))
+          |> json_response(422)
+
+        assert body["errors"]["parts"]
+      end
+
+      body =
+        ctx.sk_conn
+        |> reserve(ctx.project, hex(:k), Map.delete(ctx.attrs, "sha256"))
+        |> json_response(422)
+
+      assert body["errors"]["sha256"]
+      assert entries_count(ctx.project) == 0
+    end
+
+    test "a store that cannot start the upload is 503 with retry-after", ctx do
+      Fake.fail(:create_multipart, ctx.prefix)
+      conn = ctx.sk_conn |> reserve(ctx.project, hex(:k), ctx.attrs)
+      assert json_response(conn, 503)
+      assert get_resp_header(conn, "retry-after") == ["1"]
+      assert entries_count(ctx.project) == 0
+
+      Fake.heal(:create_multipart, ctx.prefix)
+      assert ctx.sk_conn |> reserve(ctx.project, hex(:k), ctx.attrs) |> json_response(201)
+    end
+
+    test "409 for a taken key aborts the upload it started", ctx do
+      entry_fixture(ctx.project, key: hex(:k), scope: "main")
+      assert ctx.sk_conn |> reserve(ctx.project, hex(:k), ctx.attrs) |> json_response(409)
+      assert [{_id, _key, :aborted}] = Fake.uploads(ctx.prefix)
+    end
+
+    test "commit after all parts is 200; the download is the archive; lookup has sha256", ctx do
+      data = ctx.sk_conn |> reserve(ctx.project, hex(:k), ctx.attrs) |> json_response(201)
+      data = data["data"]
+      put_parts(data, ctx.chunks, [2, 1])
+
+      body = ctx.sk_conn |> commit(ctx.project, data["upload_id"]) |> json_response(200)
+      assert_schema(body, "CacheEntryResponse", ApiSpec.spec())
+      assert body["data"]["sha256"] == ctx.attrs["sha256"]
+      assert body["data"]["download_url"] =~ Fake.signature()
+      object_key = "#{ctx.prefix}#{data["upload_id"]}"
+      assert Fake.body(object_key) == ctx.body
+
+      assert ctx.sk_conn |> commit(ctx.project, data["upload_id"]) |> json_response(200)
+
+      hit = ctx.sk_conn |> show(ctx.project, hex(:k), %{"scope" => "main"}) |> json_response(200)
+      assert hit["data"]["sha256"] == ctx.attrs["sha256"]
+    end
+
+    test "commit with a part missing is 422 on upload and the key is free again", ctx do
+      data = ctx.sk_conn |> reserve(ctx.project, hex(:k), ctx.attrs) |> json_response(201)
+      data = data["data"]
+      put_parts(data, ctx.chunks, [1])
+
+      body = ctx.sk_conn |> commit(ctx.project, data["upload_id"]) |> json_response(422)
+      assert body["errors"]["upload"] == ["has missing or wrong parts"]
+
+      part = Enum.at(data["upload_parts"], 1)
+
+      assert {:error, :no_such_upload} =
+               Fake.put_part(part["url"], part["headers"], Enum.at(ctx.chunks, 1))
+
+      assert ctx.sk_conn |> reserve(ctx.project, hex(:k), ctx.attrs) |> json_response(201)
+    end
+
+    test "a store that cannot list parts is 503 with retry-after; a retry commits", ctx do
+      data = ctx.sk_conn |> reserve(ctx.project, hex(:k), ctx.attrs) |> json_response(201)
+      data = data["data"]
+      put_parts(data, ctx.chunks, [1, 2])
+      Fake.fail(:list_parts, ctx.prefix)
+
+      conn = ctx.sk_conn |> commit(ctx.project, data["upload_id"])
+      assert json_response(conn, 503)
+      assert get_resp_header(conn, "retry-after") == ["1"]
+
+      Fake.heal(:list_parts, ctx.prefix)
+      assert ctx.sk_conn |> commit(ctx.project, data["upload_id"]) |> json_response(200)
+    end
+  end
+
   describe "list and purge" do
     test "lists by name with usage", ctx do
       deps = entry_fixture(ctx.project, name: "deps", size: 10)

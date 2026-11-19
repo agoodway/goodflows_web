@@ -130,6 +130,14 @@ defmodule GoodFlowsWeb.Api.V1.CacheEntryController do
     reserved and unexpired, in that scope. A reservation that does not fit
     the project's quota evicts the least recently used committed entries;
     `507` when unexpired reservations alone fill it.
+
+    With `parts` (the part size and the base64 MD5 of every part), the
+    server starts a multipart upload and returns `upload_parts` instead of
+    `upload_url` and `upload_headers`: one presigned PUT per part, each
+    with the `content-length` and `content-md5` it must send, valid until
+    `upload_url_expires_at` (the reservation's lifetime). Upload parts in
+    any order or in parallel, never with `Authorization`. `503` when the
+    object store cannot start the upload.
     """,
     parameters: ApiParams.cache_key(),
     request_body: {"Reservation", "application/json", CacheReservationRequest, required: true},
@@ -147,9 +155,11 @@ defmodule GoodFlowsWeb.Api.V1.CacheEntryController do
       unsupported_media_type:
         {"Body is not `application/json`", "application/json", ErrorResponse},
       unprocessable_entity:
-        {"Missing, invalid or unknown body field, or invalid project slug", "application/json",
-         ValidationErrorResponse},
-      service_unavailable: ApiParams.cache_unavailable(),
+        {"Missing, invalid or unknown body field (including `parts`), or invalid project slug",
+         "application/json", ValidationErrorResponse},
+      service_unavailable:
+        {"No cache bucket is configured, or the object store is unavailable or cannot start a multipart upload (`retry-after: 1`)",
+         "application/json", ErrorResponse},
       insufficient_storage:
         {"Unexpired reservations fill the project's quota", "application/json", ErrorResponse}
     ]

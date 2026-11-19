@@ -71,13 +71,19 @@ defmodule GoodFlows.CacheFixtures do
   Inserts a reservation directly. Options: `:scope`, `:key`, `:size`,
   `:expires_at` (default two hours from now), `:upload_expires_at` (default
   15 minutes ago: the upload URL expired beyond the sweep's clock-skew
-  margin), `:api_key_id`.
+  margin), `:api_key_id`, and `:multipart` (`{upload_id, part_size,
+  part_md5s}`, default none).
   """
   def reservation_fixture(project, opts \\ []) do
     id = Ecto.UUID.generate()
     now = DateTime.utc_now()
 
+    {upload_id, part_size, part_md5s} = Keyword.get(opts, :multipart, {nil, nil, nil})
+
     Repo.insert!(%Entry{
+      multipart_upload_id: upload_id,
+      part_size: part_size,
+      part_md5s: part_md5s,
       id: id,
       account_id: project.account_id,
       project_id: project.id,

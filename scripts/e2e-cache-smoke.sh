@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# End-to-end smoke test of remote caches (openspec change
-# add-remote-cache-storage) against a local GoodFlows Web server and MinIO,
-# with curl standing in for the goodflows CLI. Run after .agents/setup:
+# End-to-end smoke test of remote caches (openspec changes
+# add-remote-cache-storage and add-multipart-cache-uploads) against a local
+# GoodFlows Web server and MinIO, with curl standing in for the goodflows
+# CLI. Run after .agents/setup:
 #
 #   scripts/e2e-cache-smoke.sh
 #
@@ -179,6 +180,98 @@ api DELETE "/api/v1/projects/$project/cache-keys/$ck_id" SK
 check "revoke 204" is 204
 api GET "$caches/entries/$key?scope=main" CK
 check "revoked key 401" is 401
+
+say "Multipart save: mint a fresh cache key bound to main"
+api POST "/api/v1/projects/$project/cache-keys" SK '{"access":"read_write","scope":"main","ttl_seconds":3600}'
+check "mint 201" is 201
+CK=$(jq -r .data.token "$work/body")
+
+say "Multipart archive, split into 5 MiB parts"
+part_size=5242880
+mkdir -p "$work/mp-src" "$work/mp-parts"
+head -c 11000000 /dev/urandom >"$work/mp-src/blob"
+tar -czf "$work/mp.tar.gz" -C "$work/mp-src" .
+mp_size=$(stat -c %s "$work/mp.tar.gz")
+mp_sha=$(sha256sum "$work/mp.tar.gz" | cut -d' ' -f1)
+mp_key=$(printf 'mp-key-%s' "$mp_sha" | sha256sum | cut -d' ' -f1)
+echo "\$ split -b $part_size -d -a 4 mp.tar.gz part.   # then: openssl md5 -binary part.N | base64"
+split -b "$part_size" -d -a 4 "$work/mp.tar.gz" "$work/mp-parts/part."
+md5s=$(for f in "$work"/mp-parts/part.*; do openssl md5 -binary "$f" | base64; done | jq -R . | jq -s -c .)
+echo "size=$mp_size sha256=$mp_sha parts=$(jq length <<<"$md5s") md5=$md5s"
+check "at least two parts" test "$(jq length <<<"$md5s")" -ge 2
+
+say "Reserve with parts"
+mp_body=$(jq -n -c --arg p "$partial" --arg sha "$mp_sha" --argjson size "$mp_size" \
+  --argjson ps "$part_size" --argjson md5 "$md5s" \
+  '{name: "deps-mp", partial: $p, scope: "main", size: $size, sha256: $sha, parts: {size: $ps, md5: $md5}}')
+api POST "$caches/entries/$mp_key" CK "$mp_body"
+check "multipart reserve 201" is 201
+cp "$work/body" "$work/mp-reservation.json"
+check "upload_parts in order, no upload_url" jq -e \
+  '(.data.upload_parts | map(.number)) == ([range(1; (.data.upload_parts | length) + 1)]) and (.data | has("upload_url") | not) and (.data | has("upload_headers") | not)' \
+  "$work/mp-reservation.json"
+check "part headers carry the declared MD5s" jq -e --argjson md5 "$md5s" \
+  '[.data.upload_parts[].headers["content-md5"]] == $md5' "$work/mp-reservation.json"
+mp_upload_id=$(jq -r .data.upload_id "$work/mp-reservation.json")
+
+# put_part RESERVATION N FILE -> HTTP status; PUTs part N with its headers, no Authorization.
+put_part() {
+  local args=()
+  while IFS=$'\t' read -r name value; do args+=(-H "$name: $value"); done \
+    < <(jq -r --argjson n "$2" '.data.upload_parts[] | select(.number == $n) | .headers | to_entries[] | [.key, .value] | @tsv' "$1")
+  curl -sS -o "$work/part-$2.body" -w '%{http_code}' -X PUT -T "$3" "${args[@]}" \
+    "$(jq -r --argjson n "$2" '.data.upload_parts[] | select(.number == $n) | .url' "$1")"
+}
+
+say "PUT the parts in parallel, each with exactly its headers (no Authorization)"
+jq -r '.data.upload_parts[] | "$ curl -X PUT -T part.\(.number) -H \u0027content-length: \(.headers["content-length"])\u0027 -H \u0027content-md5: \(.headers["content-md5"])\u0027 \"$upload_parts[\(.number)].url\" &   # no Authorization"' \
+  "$work/mp-reservation.json"
+n=0
+for f in "$work"/mp-parts/part.*; do
+  n=$((n + 1))
+  (put_part "$work/mp-reservation.json" "$n" "$f" >"$work/part-$n.status") &
+done
+wait
+for i in $(seq "$n"); do
+  echo "  part $i -> $(cat "$work/part-$i.status")"
+  check "part $i PUT 200" test "$(cat "$work/part-$i.status")" = 200
+done
+
+say "Commit the multipart upload (no body; the server lists and checks the parts)"
+api POST "$caches/uploads/$mp_upload_id/commit" CK
+check "multipart commit 200" is 200
+check "the entry keeps the declared sha256" jq -e --arg sha "$mp_sha" '.data.sha256 == $sha' "$work/body"
+
+say "Restore the multipart entry and verify size and sha256 before extracting"
+api GET "$caches/entries/$mp_key?scope=main" CK
+check "multipart lookup 200" is 200
+echo "\$ curl -o restored-mp.tar.gz \"\$download_url\"   # no Authorization"
+curl -fsS -o "$work/restored-mp.tar.gz" "$(jq -r .data.download_url "$work/body")"
+check "downloaded multipart archive matches sha256" \
+  test "$(sha256sum "$work/restored-mp.tar.gz" | cut -d' ' -f1)" = "$mp_sha"
+
+say "Rejected multipart: a wrong part body is refused by the store, a missing part by commit"
+bad_key=$(printf 'mp-bad-%s' "$mp_sha" | sha256sum | cut -d' ' -f1)
+api POST "$caches/entries/$bad_key" CK "$mp_body"
+check "second multipart reserve 201" is 201
+cp "$work/body" "$work/bad-reservation.json"
+bad_upload_id=$(jq -r .data.upload_id "$work/bad-reservation.json")
+head -c "$part_size" /dev/urandom >"$work/wrong-part"
+echo "\$ curl -X PUT -T wrong-part ... \"\$upload_parts[1].url\"   # body differs from content-md5"
+status=$(put_part "$work/bad-reservation.json" 1 "$work/wrong-part")
+echo "  -> $status $(grep -o '<Code>[^<]*</Code>' "$work/part-1.body" || true)"
+check "wrong part body 400" test "$status" = 400
+echo "\$ curl -X PUT -T part.1 ... \"\$upload_parts[1].url\"   # part 2 is never uploaded"
+status=$(put_part "$work/bad-reservation.json" 1 "$work/mp-parts/part.0000")
+echo "  -> $status"
+check "right part 1 PUT 200" test "$status" = 200
+api POST "$caches/uploads/$bad_upload_id/commit" CK
+check "commit with a part missing 422" is 422
+check "error is on upload" jq -e '.errors.upload == ["has missing or wrong parts"]' "$work/body"
+echo "\$ curl -X PUT -T part.2 ... \"\$upload_parts[2].url\"   # after the rejected commit"
+status=$(put_part "$work/bad-reservation.json" 2 "$work/mp-parts/part.0001")
+echo "  -> $status $(grep -o '<Code>[^<]*</Code>' "$work/part-2.body" || true)"
+check "part PUT after the rejected commit 404 (upload aborted)" test "$status" = 404
 
 say "Result"
 echo "project $project, workspace $work"

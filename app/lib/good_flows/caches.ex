@@ -36,17 +36,37 @@ defmodule GoodFlows.Caches do
   @touch_after_seconds 3_600
   @default_page_size 50
   @max_page_size 200
-  @reservation_fields ~w(name partial scope size sha256)
+  @reservation_fields ~w(name partial scope size sha256 parts)
+  @min_part_size 5_242_880
+  @max_part_size 5_368_709_120
+  @max_parts 10_000
 
   @typedoc "A presigned download URL and when it expires."
   @type download :: %{url: String.t(), expires_at: DateTime.t()}
 
-  @typedoc "A reservation and its presigned upload."
-  @type reservation :: %{
-          entry: Entry.t(),
-          upload_url: String.t(),
-          upload_headers: ObjectStore.upload_headers(),
-          upload_url_expires_at: DateTime.t()
+  @typedoc """
+  A reservation and its presigned upload: one PUT (`upload_url` and
+  `upload_headers`) or, for a reservation with `parts`, one presigned PUT
+  per part (`upload_parts`, in part order).
+  """
+  @type reservation ::
+          %{
+            entry: Entry.t(),
+            upload_url: String.t(),
+            upload_headers: ObjectStore.upload_headers(),
+            upload_url_expires_at: DateTime.t()
+          }
+          | %{
+              entry: Entry.t(),
+              upload_parts: [upload_part()],
+              upload_url_expires_at: DateTime.t()
+            }
+
+  @typedoc "A presigned part PUT."
+  @type upload_part :: %{
+          number: pos_integer(),
+          url: String.t(),
+          headers: ObjectStore.upload_headers()
         }
 
   @typedoc "Errors a cache operation reports to the API."
@@ -161,7 +181,8 @@ defmodule GoodFlows.Caches do
   Reserves `key` in the body's `scope` for `api_key` and presigns its upload.
 
   `attrs` is the decoded JSON body: `name`, `partial`, `scope`, `size` and
-  `sha256`, all required, and no other key. Errors, in order:
+  `sha256`, all required, an optional `parts` (`size` and the base64 `md5`
+  of every part), and no other key. Errors, in order:
   `:forbidden` when the key cannot write at all or is bound to another
   scope than the one sent, `:not_found` for a malformed `key`, an invalid
   body (changeset), `:forbidden` when
@@ -171,6 +192,11 @@ defmodule GoodFlows.Caches do
   when unexpired reservations leave no room. An expired reservation in the
   slot is replaced. Reservations of one project are serialized by a
   `FOR NO KEY UPDATE` lock on the project row.
+
+  With `parts`, the multipart upload is created before the transaction
+  (`:object_store_unavailable` when the store cannot) and every part URL is
+  presigned for the reservation's lifetime. When the transaction then
+  fails, the upload is queued for abort and aborted once.
   """
   @spec reserve(Account.t(), Project.t(), ApiKey.t(), String.t(), map()) ::
           {:ok, reservation()} | {:error, error()}
@@ -187,32 +213,104 @@ defmodule GoodFlows.Caches do
          {:ok, params} <- reservation_params(attrs),
          :ok <- ApiKey.cache_access(api_key, project, params.scope, :write),
          :ok <- check_size(params.size),
-         upload = presign_upload(project, params),
-         {:ok, entry} <- insert_reservation(project, api_key, key, params, upload) do
-      {:ok,
-       %{
-         entry: entry,
-         upload_url: upload.url,
-         upload_headers: upload.headers,
-         upload_url_expires_at: DateTime.truncate(upload.expires_at, :second)
-       }}
+         {:ok, upload} <- prepare_upload(project, params),
+         {:ok, entry} <- insert_tracked(project, api_key, key, params, upload) do
+      {:ok, reservation(entry, upload)}
     end
   end
 
   def reserve(%Account{}, %Project{}, _api_key, _key, _attrs), do: {:error, :not_found}
 
+  defp reservation(entry, %{multipart_upload_id: nil} = upload) do
+    %{
+      entry: entry,
+      upload_url: upload.url,
+      upload_headers: upload.headers,
+      upload_url_expires_at: DateTime.truncate(upload.expires_at, :second)
+    }
+  end
+
+  defp reservation(entry, upload) do
+    %{
+      entry: entry,
+      upload_parts: upload.parts,
+      upload_url_expires_at: DateTime.truncate(upload.expires_at, :second)
+    }
+  end
+
   defp reservation_params(attrs) do
     types = %{name: :string, partial: :string, scope: :string, size: :integer, sha256: :string}
     unknown = ChangesetErrors.unknown_keys(attrs, @reservation_fields, "is not allowed")
 
-    {%{}, types}
+    {%{parts: nil}, Map.put(types, :parts, :any)}
     |> Changeset.cast(attrs, Map.keys(types), empty_values: [])
     |> Changeset.validate_required(Map.keys(types))
     |> validate_integer(attrs, "size", :size)
     |> Changeset.validate_number(:size, greater_than_or_equal_to: 1)
     |> Rules.validate([:name, :partial, :scope, :sha256])
+    |> validate_parts(attrs["parts"])
     |> ChangesetErrors.prepend(unknown)
     |> Changeset.apply_action(:reserve)
+  end
+
+  # `parts`: exactly `size` (a JSON integer within the S3 part limits) and
+  # `md5` (padded base64 of 16 bytes per part), with one MD5 per part of
+  # the reservation's `size`. `null` is no parts.
+  defp validate_parts(changeset, nil), do: changeset
+
+  defp validate_parts(changeset, parts) do
+    case parts_error(parts, Changeset.get_change(changeset, :size)) do
+      nil -> Changeset.put_change(changeset, :parts, %{size: parts["size"], md5: parts["md5"]})
+      message -> Changeset.add_error(changeset, :parts, message)
+    end
+  end
+
+  defp parts_error(parts, size) do
+    cond do
+      not is_map(parts) or Enum.sort(Map.keys(parts)) != ["md5", "size"] ->
+        "must be an object with exactly size and md5"
+
+      not part_size?(parts["size"]) ->
+        "part size must be from #{@min_part_size} through #{@max_part_size}"
+
+      not is_list(parts["md5"]) or not Enum.all?(parts["md5"], &md5?/1) ->
+        "md5 entries must be base64 of 16 bytes"
+
+      true ->
+        part_count_error(parts, size)
+    end
+  end
+
+  # Without a valid `size` the count cannot be checked; `size` has its own
+  # error.
+  defp part_count_error(_parts, size) when not is_integer(size) or size < 1, do: nil
+
+  defp part_count_error(parts, size) do
+    count = part_count(size, parts["size"])
+
+    cond do
+      count > @max_parts -> "must have at most #{@max_parts} parts"
+      length(parts["md5"]) != count -> "md5 must have #{count} entries"
+      true -> nil
+    end
+  end
+
+  defp part_size?(value),
+    do: is_integer(value) and value >= @min_part_size and value <= @max_part_size
+
+  defp md5?(value) when is_binary(value) and byte_size(value) == 24,
+    do: match?({:ok, <<_::binary-size(16)>>}, Base.decode64(value))
+
+  defp md5?(_value), do: false
+
+  defp part_count(size, part_size), do: div(size + part_size - 1, part_size)
+
+  # Part `number` is `part_size` bytes long, except the last, which holds
+  # the rest.
+  defp part_length(size, part_size, number) do
+    if number == part_count(size, part_size),
+      do: size - (number - 1) * part_size,
+      else: part_size
   end
 
   # Ecto casts `"100"` to an integer; the wire contract wants a JSON integer.
@@ -230,6 +328,99 @@ defmodule GoodFlows.Caches do
 
   defp check_size(size) do
     if size > setting(:cache_max_entry_bytes), do: {:error, :entry_too_large}, else: :ok
+  end
+
+  defp prepare_upload(project, %{parts: nil} = params),
+    do: {:ok, presign_upload(project, params)}
+
+  # Creates the multipart upload and signs every part URL for the
+  # reservation's lifetime, before the row exists and outside the project
+  # lock. The time is taken after signing, so no part URL outlives the row.
+  defp prepare_upload(project, %{parts: parts} = params) do
+    id = Ecto.UUID.generate()
+    object_key = Entry.object_key(project.id, id)
+    ttl = setting(:cache_reservation_ttl_seconds)
+
+    case ObjectStore.create_multipart(object_key) do
+      {:ok, upload_id} ->
+        upload_parts =
+          parts.md5
+          |> Enum.with_index(1)
+          |> Enum.map(fn {md5, number} ->
+            {url, headers} =
+              ObjectStore.presign_part(object_key, upload_id, number, %{
+                size: part_length(params.size, parts.size, number),
+                md5: md5,
+                expires_in: ttl
+              })
+
+            %{number: number, url: url, headers: headers}
+          end)
+
+        {:ok,
+         %{
+           id: id,
+           object_key: object_key,
+           multipart_upload_id: upload_id,
+           part_size: parts.size,
+           part_md5s: parts.md5,
+           parts: upload_parts,
+           expires_at: DateTime.add(DateTime.utc_now(), ttl, :second)
+         }}
+
+      {:error, _reason} ->
+        {:error, :object_store_unavailable}
+    end
+  end
+
+  # A failed reservation leaves no row for the trigger to queue, so its
+  # multipart upload is queued for abort here (outside the rolled-back
+  # transaction) and aborted once; the sweep retries a failed abort. When
+  # the transaction raises or exits (a lost connection), the upload is
+  # aborted and queued on a best-effort basis before the error propagates.
+  defp insert_tracked(project, api_key, key, params, upload) do
+    project |> insert_reservation(api_key, key, params, upload) |> cleanup_failed(upload)
+  catch
+    kind, reason ->
+      abort_untracked(upload)
+      :erlang.raise(kind, reason, __STACKTRACE__)
+  end
+
+  defp cleanup_failed({:ok, _entry} = result, _upload), do: result
+  defp cleanup_failed(error, %{multipart_upload_id: nil}), do: error
+
+  defp cleanup_failed(error, upload) do
+    queue_abort(upload)
+    _ = ObjectStore.abort_multipart(upload.object_key, upload.multipart_upload_id)
+    error
+  end
+
+  defp abort_untracked(%{multipart_upload_id: nil}), do: :ok
+
+  defp abort_untracked(upload) do
+    _ = ObjectStore.abort_multipart(upload.object_key, upload.multipart_upload_id)
+    queue_abort(upload)
+  catch
+    _kind, _reason -> :ok
+  end
+
+  defp queue_abort(upload) do
+    now = NaiveDateTime.utc_now()
+
+    Repo.insert_all(
+      "cache_object_deletions",
+      [
+        %{
+          object_key: upload.object_key,
+          multipart_upload_id: upload.multipart_upload_id,
+          inserted_at: now,
+          delete_after: now
+        }
+      ],
+      on_conflict: :nothing
+    )
+
+    :ok
   end
 
   # Signs the upload of a new object before its row exists, so the row can
@@ -252,6 +443,9 @@ defmodule GoodFlows.Caches do
       object_key: object_key,
       url: url,
       headers: headers,
+      multipart_upload_id: nil,
+      part_size: nil,
+      part_md5s: nil,
       expires_at: DateTime.add(DateTime.utc_now(), ttl, :second)
     }
   end
@@ -341,6 +535,9 @@ defmodule GoodFlows.Caches do
       reserved_by_api_key_id: api_key.id,
       expires_at: DateTime.add(now, setting(:cache_reservation_ttl_seconds), :second),
       upload_expires_at: upload.expires_at,
+      multipart_upload_id: upload.multipart_upload_id,
+      part_size: upload.part_size,
+      part_md5s: upload.part_md5s,
       inserted_at: now
     }
     |> Changeset.change()
@@ -365,6 +562,16 @@ defmodule GoodFlows.Caches do
   object's length and recorded SHA-256 must match the reservation; when
   they do not, or the object is missing or has no SHA-256, the reservation
   is deleted (queueing its object) and the error is `422` on `upload`.
+
+  A multipart reservation is verified from the store's part list instead:
+  parts 1 through N with ETags equal to the declared MD5s and the declared
+  lengths, then the server completes the upload and checks the object's
+  length and multipart ETag. A failed check deletes the reservation, aborts
+  the upload and is `422` on `upload`. A store error at any step is
+  `:object_store_unavailable` and keeps the reservation; `NoSuchUpload`
+  (an earlier attempt completed the upload) goes on to the `HEAD`, where a
+  missing object is then also `:object_store_unavailable`, since another
+  commit may still be completing it.
   """
   @spec commit(Project.t(), ApiKey.t(), term()) :: {:ok, Entry.t()} | {:error, error()}
   def commit(%Project{} = project, %ApiKey{id: api_key_id}, upload_id) do
@@ -420,6 +627,12 @@ defmodule GoodFlows.Caches do
     end
   end
 
+  defp verify_object(%Entry{multipart_upload_id: upload_id} = entry) when upload_id != nil do
+    with {:ok, upload_state} <- complete_parts(entry) do
+      verify_multipart_object(entry, upload_state)
+    end
+  end
+
   defp verify_object(entry) do
     expected = entry.sha256 |> Base.decode16!(case: :lower) |> Base.encode64()
     size = entry.size
@@ -433,8 +646,77 @@ defmodule GoodFlows.Caches do
     end
   end
 
+  # Lists the uploaded parts (never trusting the client), checks them
+  # against the declaration and completes the upload. Returns `{:ok,
+  # :completed}`, or `{:ok, :gone}` when the store reports `NoSuchUpload`:
+  # an earlier commit completed the upload, or one is still completing it
+  # (nothing in the app aborts a live reservation's upload), so the HEAD
+  # that follows decides and a missing object is retryable.
+  defp complete_parts(entry) do
+    %{object_key: object_key, multipart_upload_id: upload_id} = entry
+
+    case ObjectStore.list_parts(object_key, upload_id) do
+      {:ok, parts} ->
+        if parts_match?(entry, parts),
+          do: complete_upload(entry, parts),
+          else: reject_upload(entry, "has missing or wrong parts")
+
+      {:error, :not_found} ->
+        {:ok, :gone}
+
+      {:error, _reason} ->
+        {:error, :object_store_unavailable}
+    end
+  end
+
+  defp complete_upload(entry, parts) do
+    entry.object_key
+    |> ObjectStore.complete_multipart(
+      entry.multipart_upload_id,
+      Enum.map(parts, &{&1.number, &1.etag})
+    )
+    |> case do
+      :ok -> {:ok, :completed}
+      {:error, :not_found} -> {:ok, :gone}
+      {:error, {:rejected, _code}} -> reject_upload(entry, "has missing or wrong parts")
+      {:error, _reason} -> {:error, :object_store_unavailable}
+    end
+  end
+
+  defp parts_match?(entry, parts) do
+    count = length(entry.part_md5s)
+
+    length(parts) == count and
+      parts
+      |> Enum.zip(Enum.with_index(entry.part_md5s, 1))
+      |> Enum.all?(fn {part, {md5, number}} ->
+        part.number == number and
+          part.etag == md5 |> Base.decode64!() |> Base.encode16(case: :lower) and
+          part.size == part_length(entry.size, entry.part_size, number)
+      end)
+  end
+
+  defp verify_multipart_object(entry, upload_state) do
+    etag = ObjectStore.multipart_etag(entry.part_md5s)
+    size = entry.size
+
+    case ObjectStore.head(entry.object_key) do
+      {:ok, %{size: ^size, etag: ^etag}} -> :ok
+      {:ok, %{size: ^size}} -> reject_upload(entry, "has the wrong checksum")
+      {:ok, _info} -> reject_upload(entry, "has the wrong size")
+      {:error, :not_found} when upload_state == :gone -> {:error, :object_store_unavailable}
+      {:error, :not_found} -> reject_upload(entry, "is missing")
+      {:error, _reason} -> {:error, :object_store_unavailable}
+    end
+  end
+
+  # Deleting the row queues the object (and a multipart upload's abort);
+  # a multipart upload is also aborted at once so later part PUTs fail.
   defp reject_upload(entry, message) do
     Entry |> where([e], e.id == ^entry.id and e.state == :reserved) |> Repo.delete_all()
+
+    if Entry.multipart?(entry),
+      do: _ = ObjectStore.abort_multipart(entry.object_key, entry.multipart_upload_id)
 
     changeset =
       {%{}, %{upload: :string}}

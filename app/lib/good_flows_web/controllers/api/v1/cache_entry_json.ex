@@ -16,7 +16,22 @@ defmodule GoodFlowsWeb.Api.V1.CacheEntryJSON do
     }
   end
 
-  @doc "Renders a reservation and its presigned upload."
+  @doc """
+  Renders a reservation and its presigned upload: `upload_parts` in part
+  order for a reservation with `parts`, otherwise `upload_url` and
+  `upload_headers`.
+  """
+  def reservation(%{reservation: %{upload_parts: parts} = reservation}) do
+    %{
+      data: %{
+        upload_id: reservation.entry.id,
+        upload_parts: Enum.map(parts, &Map.take(&1, [:number, :url, :headers])),
+        upload_url_expires_at: reservation.upload_url_expires_at,
+        expires_at: reservation.entry.expires_at
+      }
+    }
+  end
+
   def reservation(%{reservation: reservation}) do
     %{
       data: %{

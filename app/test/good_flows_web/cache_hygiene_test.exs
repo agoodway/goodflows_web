@@ -65,6 +65,35 @@ defmodule GoodFlowsWeb.CacheHygieneTest do
     refute inspect(sentry) =~ Fake.signature()
   end
 
+  test "a multipart reservation and commit at :debug never log a part URL", ctx do
+    chunk = :crypto.strong_rand_bytes(1_000)
+    md5 = Base.encode64(:crypto.hash(:md5, chunk))
+    attrs = Map.put(reservation_body(chunk), "parts", %{"size" => 5_242_880, "md5" => [md5]})
+
+    log =
+      at_debug(fn ->
+        body =
+          ctx.sk_conn
+          |> put_req_header("content-type", "application/json")
+          |> post("/api/v1/projects/alpha/caches/entries/#{hex(:mp)}", Jason.encode!(attrs))
+          |> json_response(201)
+
+        [part] = body["data"]["upload_parts"]
+        assert part["url"] =~ Fake.signature()
+        assert :ok = Fake.put_part(part["url"], part["headers"], chunk)
+
+        assert ctx.sk_conn
+               |> post(
+                 "/api/v1/projects/alpha/caches/uploads/#{body["data"]["upload_id"]}/commit"
+               )
+               |> json_response(200)
+      end)
+
+    assert log =~ "POST /api/v1/projects/alpha/caches/entries"
+    refute log =~ Fake.signature()
+    refute log =~ "fake-object-store.invalid"
+  end
+
   test "Sentry gets no request body for cache routes" do
     conn = %{
       build_conn(:post, "/api/v1/projects/alpha/caches/entries/#{hex(:k)}")

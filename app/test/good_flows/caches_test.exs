@@ -108,6 +108,42 @@ defmodule GoodFlows.CachesTest do
       refute Repo.get(GoodFlows.Accounts.ApiKey, cache_key.id)
     end
 
+    test "a multipart row is queued with its upload id at once; a single-PUT row waits", ctx do
+      future = DateTime.add(DateTime.utc_now(), 900, :second)
+      md5 = Base.encode64(:crypto.hash(:md5, "p"))
+
+      multipart =
+        reservation_fixture(ctx.project,
+          upload_expires_at: future,
+          multipart: {"up+load/id=", 5_242_880, [md5]}
+        )
+
+      single = reservation_fixture(ctx.project, upload_expires_at: future)
+      before = DateTime.utc_now()
+      Repo.delete!(multipart)
+      Repo.delete!(single)
+
+      rows =
+        Repo.all(
+          from d in "cache_object_deletions",
+            select: {d.object_key, {d.multipart_upload_id, d.delete_after}}
+        )
+        |> Map.new()
+
+      {"up+load/id=", multipart_after} = rows[multipart.object_key]
+      multipart_after = DateTime.from_naive!(multipart_after, "Etc/UTC")
+      assert DateTime.diff(multipart_after, before, :second) in -1..1
+
+      {nil, single_after} = rows[single.object_key]
+      assert DateTime.compare(DateTime.from_naive!(single_after, "Etc/UTC"), future) == :eq
+    end
+
+    test "the multipart columns are all set or all null", ctx do
+      assert_raise Ecto.ConstraintError, ~r/cache_entries_multipart_check/, fn ->
+        reservation_fixture(ctx.project, multipart: {"id", nil, nil})
+      end
+    end
+
     test "deleting an account queues its entries' objects once", ctx do
       entry = entry_fixture(ctx.project)
       Repo.delete!(ctx.account)
@@ -397,6 +433,208 @@ defmodule GoodFlows.CachesTest do
     end
   end
 
+  describe "multipart reserve (3.1, 3.2)" do
+    @mib16 16_777_216
+
+    defp md5_of(seed), do: Base.encode64(:crypto.hash(:md5, inspect(seed)))
+
+    defp parts_body(size, part_size, count, overrides \\ %{}) do
+      md5s = for n <- 1..count, do: md5_of({:part, n})
+
+      reservation_body("x", %{"size" => size})
+      |> Map.put("parts", %{"size" => part_size, "md5" => md5s})
+      |> Map.merge(overrides)
+    end
+
+    defp prefix(ctx), do: "caches/#{ctx.project.id}/"
+
+    defp deletion_row(object_key) do
+      Repo.one(
+        from d in "cache_object_deletions",
+          where: d.object_key == ^object_key,
+          select: {d.multipart_upload_id, d.delete_after}
+      )
+    end
+
+    defp assert_parts_error(ctx, attrs) do
+      assert {:error, %Ecto.Changeset{} = cs} = reserve(ctx, hex(:k), attrs)
+      assert List.keymember?(cs.errors, :parts, 0), "#{inspect(attrs)} should fail on parts"
+      refute Repo.exists?(from e in Entry, where: e.project_id == ^ctx.project.id)
+      assert Fake.uploads(prefix(ctx)) == []
+    end
+
+    test "valid parts reserve with part URLs and no single upload URL", ctx do
+      attrs = parts_body(52_428_800, @mib16, 4)
+      assert {:ok, r} = reserve(ctx, hex(:k), attrs)
+      refute Map.has_key?(r, :upload_url)
+      refute Map.has_key?(r, :upload_headers)
+      assert Enum.map(r.upload_parts, & &1.number) == [1, 2, 3, 4]
+      assert r.entry.part_size == @mib16
+      assert r.entry.part_md5s == attrs["parts"]["md5"]
+      assert Entry.multipart?(r.entry)
+      assert [{upload_id, _key, :open}] = Fake.uploads(prefix(ctx))
+      assert r.entry.multipart_upload_id == upload_id
+    end
+
+    test "the three-part scenario signs each part's length and MD5 for the reservation TTL",
+         ctx do
+      attrs = parts_body(40_000_000, @mib16, 3)
+      assert {:ok, r} = reserve(ctx, hex(:k), attrs)
+
+      assert Enum.map(r.upload_parts, & &1.headers) == [
+               %{"content-length" => "16777216", "content-md5" => md5_of({:part, 1})},
+               %{"content-length" => "16777216", "content-md5" => md5_of({:part, 2})},
+               %{"content-length" => "6445568", "content-md5" => md5_of({:part, 3})}
+             ]
+
+      for part <- r.upload_parts do
+        query = part.url |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
+        assert query["partNumber"] == Integer.to_string(part.number)
+        assert query["uploadId"] == r.entry.multipart_upload_id
+        assert query["X-Amz-Expires"] == "7200"
+      end
+
+      assert DateTime.diff(r.upload_url_expires_at, DateTime.utc_now()) in 7_190..7_200
+      assert DateTime.compare(r.upload_url_expires_at, r.entry.expires_at) != :gt
+      assert DateTime.compare(r.entry.upload_expires_at, r.entry.expires_at) != :gt
+    end
+
+    test "a reservation smaller than parts.size is one part", ctx do
+      attrs = parts_body(1_000, @mib16, 1)
+
+      assert {:ok, %{upload_parts: [%{number: 1, headers: headers}]}} =
+               reserve(ctx, hex(:k), attrs)
+
+      assert headers["content-length"] == "1000"
+    end
+
+    test "\"parts\": null is a single-PUT reservation", ctx do
+      attrs = Map.put(reservation_body("x"), "parts", nil)
+      assert {:ok, r} = reserve(ctx, hex(:k), attrs)
+
+      assert Map.keys(r) |> Enum.sort() ==
+               [:entry, :upload_headers, :upload_url, :upload_url_expires_at]
+
+      refute Entry.multipart?(r.entry)
+      assert Fake.uploads(prefix(ctx)) == []
+    end
+
+    test "a reservation without parts is unchanged", ctx do
+      assert {:ok, r} = reserve(ctx, hex(:k), "x")
+
+      assert Map.keys(r) |> Enum.sort() ==
+               [:entry, :upload_headers, :upload_url, :upload_url_expires_at]
+
+      assert %{multipart_upload_id: nil, part_size: nil, part_md5s: nil} = r.entry
+      assert DateTime.diff(r.upload_url_expires_at, DateTime.utc_now()) in 890..900
+    end
+
+    test "invalid parts are 422 on parts and reserve nothing", ctx do
+      good = parts_body(52_428_800, @mib16, 4)
+      md5s = good["parts"]["md5"]
+      put = fn parts -> Map.put(good, "parts", parts) end
+
+      for attrs <- [
+            parts_body(52_428_800, @mib16, 3),
+            parts_body(52_428_800, @mib16, 5),
+            parts_body(52_428_800, 5_242_879, 11),
+            parts_body(10_000_000, 5_368_709_121, 1),
+            put.(%{"size" => @mib16, "md5" => [Base.encode64(:binary.copy("a", 20)) | tl(md5s)]}),
+            put.(%{"size" => @mib16, "md5" => ["not base64 at all!!!!!!!" | tl(md5s)]}),
+            put.(%{"size" => @mib16, "md5" => [String.trim_trailing(hd(md5s), "=") | tl(md5s)]}),
+            put.(%{"size" => @mib16, "md5" => [1 | tl(md5s)]}),
+            put.(%{"size" => @mib16, "md5" => md5s, "etags" => md5s}),
+            put.(%{"size" => @mib16}),
+            put.(%{"size" => "16777216", "md5" => md5s}),
+            put.(%{"size" => 16_777_216.0, "md5" => md5s}),
+            put.(%{"size" => @mib16, "md5" => "x"}),
+            put.([1, 2]),
+            put.("parts"),
+            parts_body(60_000_000_000, 5_242_880, 1)
+          ] do
+        assert_parts_error(ctx, attrs)
+      end
+    end
+
+    test "the part limit and the count rule name themselves", ctx do
+      assert {:error, cs} = reserve(ctx, hex(:k), parts_body(60_000_000_000, 5_242_880, 1))
+      assert {"must have at most 10000 parts", _} = cs.errors[:parts]
+
+      assert {:error, cs} = reserve(ctx, hex(:k), parts_body(52_428_800, @mib16, 3))
+      assert {"md5 must have 4 entries", _} = cs.errors[:parts]
+
+      assert {:error, cs} = reserve(ctx, hex(:k), parts_body(52_428_800, 5_242_879, 11))
+      assert {"part size must be from 5242880 through 5368709120", _} = cs.errors[:parts]
+    end
+
+    test "parts without sha256 is 422 on sha256", ctx do
+      attrs = 52_428_800 |> parts_body(@mib16, 4) |> Map.delete("sha256")
+      assert {:error, cs} = reserve(ctx, hex(:k), attrs)
+      assert List.keymember?(cs.errors, :sha256, 0)
+      assert Fake.uploads(prefix(ctx)) == []
+    end
+
+    test "a store that cannot create the upload is unavailable and reserves nothing", ctx do
+      Fake.fail(:create_multipart, prefix(ctx))
+
+      assert {:error, :object_store_unavailable} =
+               reserve(ctx, hex(:k), parts_body(52_428_800, @mib16, 4))
+
+      refute Repo.exists?(from e in Entry, where: e.project_id == ^ctx.project.id)
+
+      refute Repo.exists?(
+               from d in "cache_object_deletions", where: like(d.object_key, ^"#{prefix(ctx)}%")
+             )
+
+      Fake.heal(:create_multipart, prefix(ctx))
+      assert {:ok, _} = reserve(ctx, hex(:k), parts_body(52_428_800, @mib16, 4))
+    end
+
+    test "409 aborts the upload it started and queues it", ctx do
+      key = hex(:k)
+      entry_fixture(ctx.project, key: key, scope: "main")
+      before = DateTime.utc_now()
+
+      assert {:error, :cache_conflict} = reserve(ctx, key, parts_body(52_428_800, @mib16, 4))
+      assert [{upload_id, object_key, :aborted}] = Fake.uploads(prefix(ctx))
+      assert {^upload_id, delete_after} = deletion_row(object_key)
+      assert NaiveDateTime.diff(delete_after, DateTime.to_naive(before)) in 0..2
+    end
+
+    test "507 aborts the upload it started and queues it, evicting nothing", ctx do
+      committed = entry_fixture(ctx.project, size: 2 * @gib, last_accessed_at: ago(86_400))
+      reservation_fixture(ctx.project, size: 48 * @gib)
+
+      assert {:error, :quota_exceeded} =
+               reserve(ctx, hex(:new), parts_body(4_000_000_000, 64 * @mib16, 4))
+
+      assert Repo.get(Entry, committed.id)
+      assert [{upload_id, object_key, :aborted}] = Fake.uploads(prefix(ctx))
+      assert {^upload_id, _delete_after} = deletion_row(object_key)
+    end
+
+    test "a failed immediate abort stays queued for the sweep", ctx do
+      key = hex(:k)
+      entry_fixture(ctx.project, key: key, scope: "main")
+      Fake.fail(:abort_multipart, prefix(ctx))
+
+      assert {:error, :cache_conflict} = reserve(ctx, key, parts_body(52_428_800, @mib16, 4))
+      assert [{upload_id, object_key, :open}] = Fake.uploads(prefix(ctx))
+      assert {^upload_id, _delete_after} = deletion_row(object_key)
+    end
+
+    test "quota eviction counts the declared size, as without parts", ctx do
+      a = entry_fixture(ctx.project, size: 25 * @gib, last_accessed_at: ago(86_400))
+      b = entry_fixture(ctx.project, size: 25 * @gib, last_accessed_at: ago(60))
+
+      assert {:ok, r} = reserve(ctx, hex(:new), parts_body(4_000_000_000, 64 * @mib16, 4))
+      assert r.entry.size == 4_000_000_000
+      refute Repo.get(Entry, a.id)
+      assert Repo.get(Entry, b.id)
+      assert Caches.usage(ctx.project).bytes == 25 * @gib + 4_000_000_000
+    end
+  end
+
   describe "commit (4.4)" do
     setup ctx do
       body = :crypto.strong_rand_bytes(256)
@@ -530,6 +768,212 @@ defmodule GoodFlows.CachesTest do
                ObjectStore.head(committed.object_key)
 
       assert sum == :sha256 |> :crypto.hash(body2) |> Base.encode64()
+    end
+  end
+
+  describe "multipart commit (4.1)" do
+    @part 5_242_880
+
+    setup ctx do
+      body = :crypto.strong_rand_bytes(2 * @part + 1_000)
+
+      chunks = [
+        binary_part(body, 0, @part),
+        binary_part(body, @part, @part),
+        binary_part(body, 2 * @part, 1_000)
+      ]
+
+      md5s = Enum.map(chunks, &Base.encode64(:crypto.hash(:md5, &1)))
+
+      attrs =
+        body
+        |> reservation_body()
+        |> Map.put("parts", %{"size" => @part, "md5" => md5s})
+
+      {:ok, r} = reserve(ctx, hex(:k), attrs)
+
+      Map.merge(ctx, %{
+        body: body,
+        chunks: chunks,
+        attrs: attrs,
+        reservation: r,
+        prefix: "caches/#{ctx.project.id}/"
+      })
+    end
+
+    defp upload(r, chunks, numbers \\ [1, 2, 3]) do
+      for n <- numbers do
+        part = Enum.at(r.upload_parts, n - 1)
+        assert :ok = Fake.put_part(part.url, part.headers, Enum.at(chunks, n - 1))
+      end
+    end
+
+    defp commit(ctx), do: Caches.commit(ctx.project, ctx.sk_key, ctx.reservation.entry.id)
+
+    defp assert_rejected(ctx, message) do
+      r = ctx.reservation
+      assert {:error, %Ecto.Changeset{errors: [upload: {^message, _}]}} = commit(ctx)
+      refute Repo.get(Entry, r.entry.id)
+      assert Fake.upload_state(r.entry.multipart_upload_id) in [:aborted, :completed]
+      assert queued?(r.entry.object_key)
+      assert {:error, :not_found} = Caches.lookup_key(ctx.account, ctx.project, hex(:k), "main")
+    end
+
+    defp assert_kept(ctx) do
+      assert {:error, :object_store_unavailable} = commit(ctx)
+      assert Repo.get!(Entry, ctx.reservation.entry.id).state == :reserved
+      refute queued?(ctx.reservation.entry.object_key)
+    end
+
+    test "commits after every part; the download is the concatenated parts", ctx do
+      r = ctx.reservation
+      upload(r, ctx.chunks)
+      refute Fake.exists?(r.entry.object_key)
+
+      assert {:ok, entry} = commit(ctx)
+      assert entry.state == :committed
+      assert entry.sha256 == ctx.attrs["sha256"]
+      assert Fake.body(r.entry.object_key) == ctx.body
+      assert Fake.upload_state(r.entry.multipart_upload_id) == :completed
+
+      assert {:ok, %{sha256: sha}} = Caches.lookup_key(ctx.account, ctx.project, hex(:k), "main")
+      assert sha == ctx.attrs["sha256"]
+      assert {:ok, again} = commit(ctx)
+      assert again.id == entry.id
+    end
+
+    test "parts uploaded but not committed leave no object and no hit", ctx do
+      upload(ctx.reservation, ctx.chunks)
+      refute Fake.exists?(ctx.reservation.entry.object_key)
+      assert {:error, :not_found} = Caches.lookup_key(ctx.account, ctx.project, hex(:k), "main")
+    end
+
+    test "a missing part is 422, frees the slot and aborts the upload", ctx do
+      r = ctx.reservation
+      upload(r, ctx.chunks, [1, 3])
+      assert_rejected(ctx, "has missing or wrong parts")
+      assert Fake.upload_state(r.entry.multipart_upload_id) == :aborted
+
+      part = Enum.at(r.upload_parts, 1)
+
+      assert {:error, :no_such_upload} =
+               Fake.put_part(part.url, part.headers, Enum.at(ctx.chunks, 1))
+
+      assert {:ok, _} = reserve(ctx, hex(:k), ctx.attrs)
+    end
+
+    test "a part with another ETag or size is 422", ctx do
+      r = ctx.reservation
+      upload(r, ctx.chunks)
+      # Re-presign part 3 for other bytes of the same length, as a client
+      # holding the bucket's keys could.
+      other = :crypto.strong_rand_bytes(1_000)
+
+      {url, headers} =
+        ObjectStore.presign_part(
+          r.entry.object_key,
+          r.entry.multipart_upload_id,
+          3,
+          %{
+            size: 1_000,
+            md5: Base.encode64(:crypto.hash(:md5, other)),
+            expires_in: 60
+          }
+        )
+
+      assert :ok = Fake.put_part(url, headers, other)
+      assert_rejected(ctx, "has missing or wrong parts")
+    end
+
+    test "a completed object with another ETag or size is 422", ctx do
+      r = ctx.reservation
+      upload(r, ctx.chunks)
+      Fake.complete_upload(r.entry.multipart_upload_id)
+      Fake.put_object(r.entry.object_key, byte_size(ctx.body), nil, "0123-3")
+      assert_rejected(ctx, "has the wrong checksum")
+
+      {:ok, r} = reserve(ctx, hex(:k), ctx.attrs)
+      ctx = %{ctx | reservation: r}
+      upload(r, ctx.chunks)
+      Fake.complete_upload(r.entry.multipart_upload_id)
+      etag = ObjectStore.multipart_etag(ctx.attrs["parts"]["md5"])
+      Fake.put_object(r.entry.object_key, byte_size(ctx.body) - 1, nil, etag)
+      assert_rejected(ctx, "has the wrong size")
+    end
+
+    test "a completion the store refuses is 422", ctx do
+      upload(ctx.reservation, ctx.chunks)
+      Fake.fail(:complete_multipart, ctx.prefix, {:error, {:rejected, "InvalidPart"}})
+      on_exit(fn -> Fake.heal(:complete_multipart, ctx.prefix) end)
+      assert_rejected(ctx, "has missing or wrong parts")
+    end
+
+    test "list, complete or HEAD failures are 503 and keep the reservation", ctx do
+      r = ctx.reservation
+      upload(r, ctx.chunks)
+
+      for call <- [:list_parts, :complete_multipart, :head] do
+        Fake.fail(call, ctx.prefix)
+        assert_kept(ctx)
+        Fake.heal(call, ctx.prefix)
+      end
+
+      assert {:ok, %{state: :committed}} = commit(ctx)
+    end
+
+    test "a retry after the upload was completed behind the server's back is 200", ctx do
+      r = ctx.reservation
+      upload(r, ctx.chunks)
+      Fake.complete_upload(r.entry.multipart_upload_id)
+
+      assert {:ok, entry} = commit(ctx)
+      assert entry.state == :committed
+      assert Fake.body(r.entry.object_key) == ctx.body
+    end
+
+    test "the upload gone and no object yet is 503 and keeps the reservation", ctx do
+      # Another commit's CompleteMultipartUpload may still be running.
+      ObjectStore.abort_multipart(
+        ctx.reservation.entry.object_key,
+        ctx.reservation.entry.multipart_upload_id
+      )
+
+      assert_kept(ctx)
+    end
+
+    test "a complete that reports the upload gone and no object yet is 503", ctx do
+      upload(ctx.reservation, ctx.chunks)
+      Fake.fail(:complete_multipart, ctx.prefix, {:error, :not_found})
+      on_exit(fn -> Fake.heal(:complete_multipart, ctx.prefix) end)
+      assert_kept(ctx)
+    end
+
+    test "a completed upload whose object then vanished is 422 is missing", ctx do
+      r = ctx.reservation
+      upload(r, ctx.chunks)
+      # The store completes the upload but the object is not there for HEAD.
+      Fake.fail(:head, ctx.prefix, {:error, :not_found})
+      on_exit(fn -> Fake.heal(:head, ctx.prefix) end)
+      assert_rejected(ctx, "is missing")
+    end
+
+    test "a transaction that raises aborts the started upload and queues it", ctx do
+      # The project is deleted between the access checks and the insert,
+      # so locking its row raises.
+      :ok = GoodFlows.Projects.delete_project(ctx.account, ctx.project)
+      prefix = "caches/#{ctx.project.id}/"
+
+      assert_raise Ecto.NoResultsError, fn -> reserve(ctx, hex(:other), ctx.attrs) end
+
+      assert [{upload_id, object_key, :aborted}] =
+               prefix
+               |> Fake.uploads()
+               |> Enum.reject(&(elem(&1, 0) == ctx.reservation.entry.multipart_upload_id))
+
+      assert Repo.exists?(
+               from d in "cache_object_deletions",
+                 where: d.object_key == ^object_key and d.multipart_upload_id == ^upload_id
+             )
     end
   end
 

@@ -8,13 +8,20 @@ defmodule GoodFlows.Caches.Entry do
   pairing). `(project_id, scope, key)` is unique, so a reservation holds its
   slot. `object_key` (`caches/<project_id>/<id>`) is chosen by the server.
 
-  `upload_expires_at` is when the presigned upload URL expires; the URL
-  never outlives it.
+  `upload_expires_at` is when the presigned upload URL (or every part URL)
+  expires; the URLs never outlive it.
+
+  A reservation made with `parts` records its S3 multipart upload in
+  `multipart_upload_id`, `part_size` and `part_md5s` (the declared base64
+  MD5s in part order); the three are all set or all null (check
+  constraint) and stay after commit.
 
   Rows are written only by `GoodFlows.Caches`; there is no user changeset.
   Deleting a row queues its object in `cache_object_deletions` (database
-  trigger), to be deleted no earlier than `upload_expires_at`, so no new
-  PUT can start after the object is deleted.
+  trigger). A single-PUT object is deleted no earlier than
+  `upload_expires_at`, so no new PUT can start after the object is
+  deleted. A multipart row is queued with its upload id for immediate
+  abort: part PUTs never create an object.
   """
   use Ecto.Schema
 
@@ -40,6 +47,9 @@ defmodule GoodFlows.Caches.Entry do
     field :committed_at, :utc_datetime_usec
     field :last_accessed_at, :utc_datetime_usec
     field :inserted_at, :utc_datetime_usec
+    field :multipart_upload_id, :string
+    field :part_size, :integer
+    field :part_md5s, {:array, :string}
 
     belongs_to :account, Account
     belongs_to :project, Project
@@ -49,4 +59,8 @@ defmodule GoodFlows.Caches.Entry do
   @doc "The object key of upload `id` in `project_id`."
   @spec object_key(Ecto.UUID.t(), Ecto.UUID.t()) :: String.t()
   def object_key(project_id, id), do: "caches/#{project_id}/#{id}"
+
+  @doc "Whether the entry was reserved with `parts` (an S3 multipart upload)."
+  @spec multipart?(t()) :: boolean()
+  def multipart?(%__MODULE__{multipart_upload_id: upload_id}), do: upload_id != nil
 end

@@ -291,6 +291,21 @@ defmodule GoodFlowsWeb.ApiSpec do
         entries, and `507` means unexpired reservations fill the quota.
         Entries not restored for 7 days are deleted.
 
+        **Multipart saves.** A reservation may add `parts`, `{"size": <part
+        size>, "md5": [<base64 MD5 of each part>, …]}` (part size 5 MiB to
+        5 GiB, one MD5 per part, at most 10,000 parts). The response then
+        has `upload_parts`, `[{"number", "url", "headers"}]`, instead of
+        `upload_url` and `upload_headers`: PUT each part to its `url` with
+        exactly its `headers` (`content-length`, `content-md5`) and no
+        `Authorization`, in parallel if you like, before
+        `upload_url_expires_at` (the reservation's lifetime). Commit as
+        usual; the server lists the parts itself, checks them against the
+        declared MD5s and sizes, completes the upload and checks the
+        object. Missing or wrong parts are `422` on `upload` and abort the
+        upload. Commit can take up to about two minutes for many parts. The
+        store cannot verify a multipart entry's `sha256`: it is the value
+        sent at reserve, so restoring clients must check it.
+
         **Restoring.** `GET …/caches/entries/{key}` restores an exact key and
         `GET …/caches/entries?partial=` the newest entry with that partial.
         A hit returns metadata and a `download_url`.

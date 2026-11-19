@@ -204,4 +204,129 @@ defmodule GoodFlows.Caches.SweepTest do
     assert GoodFlows.Spry.ReaperScheduler in children
     assert GoodFlows.Caches.SweepScheduler in children
   end
+
+  describe "multipart uploads (6.1)" do
+    alias GoodFlows.Caches.ObjectStore
+
+    # A reservation with an open multipart upload and part 1 uploaded.
+    defp multipart_fixture(project, opts) do
+      body = :crypto.strong_rand_bytes(1_000)
+      md5 = Base.encode64(:crypto.hash(:md5, body))
+
+      entry =
+        reservation_fixture(project, Keyword.put(opts, :multipart, {"pending", 5_242_880, [md5]}))
+
+      {:ok, upload_id} = ObjectStore.create_multipart(entry.object_key)
+
+      {url, headers} =
+        ObjectStore.presign_part(entry.object_key, upload_id, 1, %{
+          size: 1_000,
+          md5: md5,
+          expires_in: 7_200
+        })
+
+      :ok = Fake.put_part(url, headers, body)
+
+      Repo.update_all(from(e in Entry, where: e.id == ^entry.id),
+        set: [multipart_upload_id: upload_id]
+      )
+
+      %{entry | multipart_upload_id: upload_id}
+    end
+
+    # Moves every queued row of the project 61 seconds into the past, as if
+    # that much time had gone by since it was queued.
+    defp shift_queue(project) do
+      prefix = "caches/#{project.id}/%"
+
+      Repo.update_all(
+        from(d in "cache_object_deletions",
+          where: like(d.object_key, ^prefix),
+          update: [set: [delete_after: fragment("? - interval '61 seconds'", d.delete_after)]]
+        ),
+        []
+      )
+    end
+
+    test "an expired reservation is aborted after the margin, not after its part URLs", ctx do
+      future = DateTime.add(DateTime.utc_now(), 7_000, :second)
+      multipart = multipart_fixture(ctx.project, expires_at: ago(1), upload_expires_at: future)
+      single = reservation_fixture(ctx.project, expires_at: ago(1), upload_expires_at: future)
+      Fake.put_object(single.object_key, 1, nil)
+
+      Sweep.run()
+      refute Repo.get(Entry, multipart.id)
+      assert Fake.upload_state(multipart.multipart_upload_id) == :open
+      assert queued?(multipart.object_key)
+
+      shift_queue(ctx.project)
+      Sweep.run()
+      assert Fake.upload_state(multipart.multipart_upload_id) == :aborted
+      refute queued?(multipart.object_key)
+      refute Fake.exists?(multipart.object_key)
+
+      # The single-PUT object still waits for its upload URL to expire.
+      assert queued?(single.object_key)
+      assert Fake.exists?(single.object_key)
+    end
+
+    test "a purged committed multipart entry's object is deleted", ctx do
+      entry = multipart_fixture(ctx.project, [])
+      :ok = Fake.complete_upload(entry.multipart_upload_id)
+
+      now = DateTime.utc_now()
+
+      Repo.update_all(from(e in Entry, where: e.id == ^entry.id),
+        set: [state: :committed, committed_at: now, last_accessed_at: now, expires_at: nil]
+      )
+
+      assert Fake.exists?(entry.object_key)
+      Repo.delete_all(from e in Entry, where: e.id == ^entry.id)
+      shift_queue(ctx.project)
+      Sweep.run()
+      refute Fake.exists?(entry.object_key)
+      refute queued?(entry.object_key)
+    end
+
+    test "a project delete aborts its open uploads", ctx do
+      entry = multipart_fixture(ctx.project, [])
+      :ok = GoodFlows.Projects.delete_project(ctx.account, ctx.project)
+      shift_queue(ctx.project)
+      Sweep.run()
+      assert Fake.upload_state(entry.multipart_upload_id) == :aborted
+      refute queued?(entry.object_key)
+    end
+
+    test "the sweep never deletes an object before the abort succeeds", ctx do
+      entry = multipart_fixture(ctx.project, [])
+      :ok = Fake.complete_upload(entry.multipart_upload_id)
+      Repo.delete_all(from e in Entry, where: e.id == ^entry.id)
+      prefix = "caches/#{ctx.project.id}/"
+      Fake.fail(:abort_multipart, prefix)
+      on_exit(fn -> Fake.heal(:abort_multipart, prefix) end)
+
+      shift_queue(ctx.project)
+      Sweep.run()
+      assert Fake.exists?(entry.object_key)
+      assert queued?(entry.object_key)
+    end
+
+    test "a failing abort stays queued and a later sweep clears it", ctx do
+      entry = multipart_fixture(ctx.project, expires_at: ago(1))
+      prefix = "caches/#{ctx.project.id}/"
+      Fake.fail(:abort_multipart, prefix)
+      on_exit(fn -> Fake.heal(:abort_multipart, prefix) end)
+
+      Sweep.run()
+      shift_queue(ctx.project)
+      Sweep.run()
+      assert queued?(entry.object_key)
+      assert Fake.upload_state(entry.multipart_upload_id) == :open
+
+      Fake.heal(:abort_multipart, prefix)
+      Sweep.run()
+      refute queued?(entry.object_key)
+      assert Fake.upload_state(entry.multipart_upload_id) == :aborted
+    end
+  end
 end
