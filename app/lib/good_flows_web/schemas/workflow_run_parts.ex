@@ -31,7 +31,8 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
 
   @doc """
   Schema of a stored document as shown. Every `command` and condition
-  `text` is nullable, because a public key receives them as null.
+  `text`, and `links.threads`, is nullable, because a public key receives
+  them as null.
   """
   @spec shown_document() :: Schema.t()
   def shown_document, do: Validator.document_spec() |> redactable() |> to_schema()
@@ -133,6 +134,10 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
 
   defp redactable(key, {:nullable, _spec} = spec) when key in ~w(command text), do: spec
   defp redactable(key, spec) when key in ~w(command text), do: {:nullable, spec}
+
+  defp redactable("links", {:omit, {:object, %{"threads" => {:omit, threads}} = fields}}),
+    do: {:omit, {:object, %{fields | "threads" => {:omit, {:nullable, threads}}}}}
+
   defp redactable(_key, spec), do: redactable(spec)
 
   defp nullable(schema, note) do
@@ -219,6 +224,21 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
       type: :string,
       maxLength: 2_048,
       description: "An absolute `https` URL with a host, at most 2,048 bytes."
+    }
+  end
+
+  defp to_schema({:fun, _fun, :thread_url}) do
+    %Schema{
+      type: :string,
+      maxLength: 2_048,
+      description:
+        "An `https` URL with a host and no userinfo, query or fragment (an empty `?` or " <>
+          "`#` counts), at most 2,048 bytes. Every path byte is an RFC 3986 `pchar` or " <>
+          "`/`, and every `%` starts a `%` plus two hex digits. It must already be in the " <>
+          "form `reqwest::Url` (WHATWG) serializes, or it is `must be normalized`: a " <>
+          "lowercase host without `%`, a canonical IP host, no empty, zero-padded or 443 " <>
+          "port, a nonempty path and no `.` or `..` segment (including `%2e` spellings). " <>
+          "Percent triplets are kept as written. The server never rewrites it."
     }
   end
 

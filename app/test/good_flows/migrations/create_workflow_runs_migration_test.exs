@@ -54,6 +54,53 @@ defmodule GoodFlows.Migrations.CreateWorkflowRunsMigrationTest do
     assert columns["source_branch"] == %{type: "text", precision: nil, nullable: "YES"}
     assert columns["ci"] == %{type: "jsonb", precision: nil, nullable: "YES"}
     refute Map.has_key?(columns, "graph")
+
+    # Added by AddLinksToWorkflowRuns. `links` itself stays in `payload`.
+    assert columns["link_tickets"] == %{type: "ARRAY", precision: nil, nullable: "NO"}
+    assert columns["link_threads"] == %{type: "ARRAY", precision: nil, nullable: "NO"}
+    refute Map.has_key?(columns, "links")
+  end
+
+  test "link columns are text arrays with GIN indexes and an empty default" do
+    indexes = indexes()
+
+    assert indexes["workflow_runs_link_tickets_index"] =~
+             "ON public.workflow_runs USING gin (link_tickets)"
+
+    assert indexes["workflow_runs_link_threads_index"] =~
+             "ON public.workflow_runs USING gin (link_threads)"
+
+    %{rows: rows} =
+      Repo.query!("""
+      SELECT column_name, udt_name, column_default
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'workflow_runs'
+        AND column_name IN ('link_tickets', 'link_threads')
+      ORDER BY column_name
+      """)
+
+    assert rows == [
+             ["link_threads", "_text", "'{}'::text[]"],
+             ["link_tickets", "_text", "'{}'::text[]"]
+           ]
+  end
+
+  test "a row written without the link columns reads back with empty arrays" do
+    account = account_fixture()
+    project = project_fixture(account)
+    run_id = "44444444-4444-4444-8444-444444444444"
+    insert_run(account, project, run_id)
+
+    %{rows: [[tickets, threads]]} =
+      Repo.query!(
+        "SELECT link_tickets, link_threads FROM workflow_runs WHERE run_id = $1::uuid",
+        [Ecto.UUID.dump!(run_id)]
+      )
+
+    assert {tickets, threads} == {[], []}
+
+    run = Repo.get_by!(GoodFlows.WorkflowRuns.Run, run_id: run_id)
+    assert {run.link_tickets, run.link_threads} == {[], []}
   end
 
   test "indexes serve identity, keyset order, workflow, graph, commit, branch, and api key nilify" do

@@ -25,7 +25,7 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunResponse do
             WorkflowRunParts.shown_document()
             | description:
                 "The stored upload. A public key receives every `command` and condition " <>
-                  "`text` as null."
+                  "`text` as null, and `links.threads` as null when the run has threads."
           },
           test_reports: %Schema{
             type: :array,
@@ -40,8 +40,10 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunResponse do
     description: """
     `document` equals the upload as a JSON value (key order is not preserved).
     A public (`pk_`) key receives each `results` entry with `command` and
-    `error` set to null, and each `graph` job's and step's `command` and
-    condition `text` set to null. The stored row is unchanged.
+    `error` set to null, each `graph` job's and step's `command` and
+    condition `text` set to null, and `links.threads` set to null when the
+    document has it (a `links` without threads gains no `threads` key;
+    `links.tickets` is as stored). The stored row is unchanged.
     """
   })
 end

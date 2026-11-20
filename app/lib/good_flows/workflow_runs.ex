@@ -131,9 +131,16 @@ defmodule GoodFlows.WorkflowRuns do
   #{@max_page_size}, default #{@default_page_size}), `"cursor"` (the
   previous page's `next_cursor`) and the exact-match filters `"workflow"`,
   `"environment"`, `"outcome"`, `"commit"` (`source.commit`), `"branch"`
-  (`source.branch`), `"event"` (`ci.event`) and `"graph_sha256"`. Unknown
-  keys are ignored. A filter, limit or cursor
-  that breaks its rule returns a changeset (`422`).
+  (`source.branch`), `"event"` (`ci.event`) and `"graph_sha256"`, and the
+  link filters `"ticket"` and `"thread_url"`. Unknown keys are ignored. A
+  filter, limit or cursor that breaks its rule returns a changeset (`422`).
+
+  `"ticket"` follows the ticket rule and matches any of a run's
+  `links.tickets` ignoring ASCII case. `"thread_url"` is normalized first
+  (lowercase scheme and host, no empty or 443 port, `/` for an empty path,
+  percent triplets as sent), must then be a valid thread URL, and matches
+  one of a run's `links.threads` exactly. Both use the GIN-indexed
+  `link_tickets` and `link_threads` columns, which are never selected.
 
   Only the copied columns are selected, never `payload`. `source` is
   rebuilt by the JSON view from `source_commit`, `source_dirty` and
@@ -219,7 +226,9 @@ defmodule GoodFlows.WorkflowRuns do
       commit: :string,
       branch: :string,
       event: :string,
-      graph_sha256: :string
+      graph_sha256: :string,
+      ticket: :string,
+      thread_url: :string
     }
 
     defaults = %{
@@ -231,7 +240,9 @@ defmodule GoodFlows.WorkflowRuns do
       commit: nil,
       branch: nil,
       event: nil,
-      graph_sha256: nil
+      graph_sha256: nil,
+      ticket: nil,
+      thread_url: nil
     }
 
     # `empty_values: []` keeps a whitespace-only filter. Ecto's default
@@ -251,8 +262,59 @@ defmodule GoodFlows.WorkflowRuns do
     |> validate_filter(:branch, &Validator.valid_branch?/1)
     |> validate_filter(:event, &Validator.valid_name?/1)
     |> validate_filter(:graph_sha256, &Validator.valid_graph_sha256?/1)
+    |> validate_filter(:ticket, &Validator.valid_ticket?/1)
+    |> rewrite_filter(:ticket, &String.downcase(&1, :ascii))
+    |> rewrite_filter(:thread_url, &normalize_thread_url/1)
+    |> validate_filter(:thread_url, &Validator.valid_thread_url?/1)
     |> Ecto.Changeset.apply_action(:list)
   end
+
+  defp rewrite_filter(changeset, field, fun) do
+    case Ecto.Changeset.get_change(changeset, field) do
+      nil -> changeset
+      value -> Ecto.Changeset.put_change(changeset, field, fun.(value))
+    end
+  end
+
+  # Design D3: lowercase the scheme and host, drop a port that is empty or
+  # 443 (`:`, `:443`, `:0443`) and turn an empty path into `/`. Nothing
+  # else changes: percent triplets, dot segments, IP spellings and other
+  # port spellings (`:080`) stay as sent, so the result must still pass
+  # `Validator.valid_thread_url?/1`. `URI.to_string/1` is not used because
+  # it would also unpad `:080`.
+  defp normalize_thread_url(value) do
+    case String.split(value, "://", parts: 2) do
+      [scheme, rest] ->
+        {authority, tail} = split_authority(rest)
+        String.downcase(scheme, :ascii) <> "://" <> drop_https_port(authority) <> root(tail)
+
+      [_no_authority] ->
+        value
+    end
+  end
+
+  defp split_authority(rest) do
+    case :binary.match(rest, ["/", "?", "#"]) do
+      {at, _length} -> :erlang.split_binary(rest, at)
+      :nomatch -> {rest, ""}
+    end
+  end
+
+  # A bracketed IPv6 host ends in `]`, so only a trailing `:digits` is a port.
+  defp drop_https_port(authority) do
+    authority = String.downcase(authority, :ascii)
+
+    case Regex.run(~r/\A(.*):([0-9]*)\z/s, authority) do
+      [_all, host, port] -> if https_port?(port), do: host, else: authority
+      nil -> authority
+    end
+  end
+
+  defp https_port?(""), do: true
+  defp https_port?(port), do: String.trim_leading(port, "0") == "443"
+
+  defp root("/" <> _path = tail), do: tail
+  defp root(tail), do: "/" <> tail
 
   defp validate_filter(changeset, field, valid?) do
     case Ecto.Changeset.get_change(changeset, field) do
@@ -309,9 +371,20 @@ defmodule GoodFlows.WorkflowRuns do
     |> filter(:commit, filters.commit)
     |> filter(:branch, filters.branch)
     |> filter(:event, filters.event)
+    |> filter(:ticket, filters.ticket)
+    |> filter(:thread_url, filters.thread_url)
   end
 
   defp filter(query, _field, nil), do: query
+
+  # `@>` on the GIN-indexed `text[]` columns. The cast is `text[]`: Ecto's
+  # `{:array, :string}` would send `varchar[]`, which has no `@>` here.
+  defp filter(query, :ticket, ticket),
+    do: where(query, [r], fragment("? @> ?::text[]", r.link_tickets, ^[ticket]))
+
+  defp filter(query, :thread_url, url),
+    do: where(query, [r], fragment("? @> ?::text[]", r.link_threads, ^[url]))
+
   defp filter(query, :commit, commit), do: where(query, [r], r.source_commit == ^commit)
   defp filter(query, :branch, branch), do: where(query, [r], r.source_branch == ^branch)
 
@@ -383,6 +456,8 @@ defmodule GoodFlows.WorkflowRuns do
       source_branch: columns.source_branch,
       ci: columns.ci,
       host: columns.host,
+      link_tickets: columns.link_tickets,
+      link_threads: columns.link_threads,
       payload: payload,
       payload_digest: JsonDocument.digest(payload),
       inserted_at: DateTime.utc_now()

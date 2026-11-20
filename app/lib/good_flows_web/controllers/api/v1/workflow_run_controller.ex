@@ -108,6 +108,26 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
                          description:
                            "Exact graph hash (64 lowercase hex characters). Any other value is `422`.",
                          required: false
+                       ],
+                       ticket: [
+                         in: :query,
+                         schema: @document_props["links"].properties["tickets"].items,
+                         description:
+                           "A ticket in `links.tickets`, matched ignoring ASCII case. Runs " <>
+                             "without tickets never match. A value that breaks the ticket rule " <>
+                             "(1 to 64 bytes of printable ASCII other than `,`) is `422`.",
+                         required: false
+                       ],
+                       thread_url: [
+                         in: :query,
+                         schema: %Schema{type: :string},
+                         description:
+                           "A thread URL in `links.threads`. The scheme and host are " <>
+                             "lowercased, an empty or 443 port is dropped and an empty path " <>
+                             "becomes `/`; percent triplets are matched as written. The result " <>
+                             "must be a valid thread URL (no query or fragment), or it is " <>
+                             "`422`. Runs without threads never match. Any key may filter.",
+                         required: false
                        ]
                      ]
 
@@ -116,7 +136,9 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
     description: """
     Stores one `schema_version` 1 run-history document for the project in the
     URL, including the CLI upload envelope (`source.branch`, `ci` and
-    `graph`) when sent. The body has no `project` or `account_id`. The first upload is
+    `graph`) and `links` (thread URLs and tickets) when sent. Thread URLs
+    must already be normalized and are never rewritten. The body has no
+    `project` or `account_id`. The first upload is
     `201`. An exact retry (equal JSON ignoring object key order) is `200`
     with the same `id` and `duplicate: true`. Any other body under that
     `run_id` is `409` and does not reveal the stored id or document.
@@ -178,7 +200,8 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
     Pages use keyset pagination on that order. Pass `next_cursor` as
     `cursor`. A run stored after a page was read does not shift the next
     page. Unknown query parameters are ignored. Summaries do not include
-    `results`. Any valid key of the account can list.
+    `results` or `links`. Any valid key of the account can list, and filter
+    by `ticket` or `thread_url`.
     """,
     parameters: @list_parameters,
     responses: [
@@ -197,7 +220,7 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
     filters =
       Map.take(
         params,
-        ~w(limit cursor workflow environment outcome commit branch event graph_sha256)
+        ~w(limit cursor workflow environment outcome commit branch event graph_sha256 ticket thread_url)
       )
 
     %{current_account: account, project: project} = conn.assigns
@@ -218,7 +241,10 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
 
     A public (`pk_`) key receives each result's `command` and `error`, and
     each `graph` job's and step's `command` and condition `text`, as null.
-    A private key sees them as stored. The stored row does not change.
+    It also receives `links.threads` as null when the run has threads; a
+    `links` without threads gains no `threads` key, and `links.tickets` is
+    as stored. A private key sees them as stored. The stored row does not
+    change.
     """,
     parameters:
       ApiParams.project() ++
@@ -241,7 +267,7 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunController do
     ]
   )
 
-  @doc "Shows one run. Public keys do not receive command text or errors."
+  @doc "Shows one run. Public keys do not receive command text, errors or thread URLs."
   def show(conn, %{"run_id" => run_id}) do
     %{current_account: account, project: project, current_api_key: api_key} = conn.assigns
 

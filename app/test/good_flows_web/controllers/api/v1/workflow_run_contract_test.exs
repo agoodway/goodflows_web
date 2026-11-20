@@ -71,6 +71,60 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunContractTest do
     refute Map.has_key?(summary, "graph")
   end
 
+  # goodflows `add-run-links` adds `links.json`, which is not vendored yet
+  # (design D6 of `accept-run-links`), so `links` is added to `full.json`
+  # in memory. The vendored files are unchanged.
+  test "full.json with links uploads, retries, round-trips and is found by link", ctx do
+    project = project_fixture(ctx.account)
+    thread = "https://ampcode.com/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"
+
+    links = %{
+      "threads" => [
+        thread,
+        "https://ampcode.com/threads/a%7Eb",
+        "https://ampcode.com/threads/a%2fb"
+      ],
+      "tickets" => ["GOO-291", "goo-300"]
+    }
+
+    fixture = Map.put(goodflows("full"), "links", links)
+    assert_schema(fixture, "WorkflowRunRequest", ApiSpec.spec())
+    body = Jason.encode!(fixture)
+
+    created = ctx.sk_conn |> upload(project.slug, body) |> json_response(201)
+    assert created["data"]["duplicate"] == false
+    retried = ctx.sk_conn |> upload(project.slug, body) |> json_response(200)
+    assert retried["data"] == %{created["data"] | "duplicate" => true}
+
+    shown =
+      ctx.sk_conn
+      |> get("/api/v1/projects/#{project.slug}/workflow-runs/#{fixture["run_id"]}")
+      |> json_response(200)
+
+    assert_schema(shown, "WorkflowRunResponse", ApiSpec.spec())
+    assert shown["data"]["document"] == fixture
+    assert shown["data"]["document"]["links"] == links
+
+    respelled = "HTTPS://AmpCode.com:443/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"
+
+    for query <- [
+          "ticket=goo-291",
+          "ticket=GOO-300",
+          "thread_url=" <> URI.encode_www_form(thread),
+          "thread_url=" <> URI.encode_www_form(respelled),
+          "thread_url=" <> URI.encode_www_form("https://ampcode.com/threads/a%7Eb"),
+          "thread_url=" <> URI.encode_www_form("https://ampcode.com/threads/a%2fb")
+        ] do
+      data =
+        ctx.sk_conn
+        |> get("/api/v1/projects/#{project.slug}/workflow-runs?#{query}")
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert Enum.map(data, & &1["run_id"]) == [fixture["run_id"]], query
+    end
+  end
+
   test "invalid envelope values are 422 on their path and store nothing", ctx do
     project = project_fixture(ctx.account)
     full = goodflows("full")

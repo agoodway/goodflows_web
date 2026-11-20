@@ -222,6 +222,16 @@ defmodule GoodFlowsWeb.ApiSpec do
         names are unique, dependencies are known and acyclic, every result
         `name` is a graph job, and a called workflow is referenced by
         `call.graph_sha256`, never inlined.
+        An optional `links` object names the agent threads and tickets
+        behind the run: `threads` (1 to 32 unique `https` thread URLs) and
+        `tickets` (1 to 32 IDs of 1 to 64 bytes of printable ASCII other
+        than `,`, unique ignoring ASCII case), at least one of them. A
+        thread URL has no userinfo, query or fragment, only RFC 3986
+        `pchar` and `/` in its path, and must already be in the form
+        `reqwest::Url` serializes (lowercase host, no explicit or empty 443
+        port, a nonempty path, no dot segments, percent triplets as
+        written); otherwise it is `422` with `must be normalized`. Links are
+        stored as sent.
         Objects and arrays nested more than 8 levels deep, duplicate keys,
         U+0000, non-integer numbers and integers beyond 2^53 - 1 are `422`.
         The body limit is 4 MiB (4,194,304 bytes) and the read deadline is
@@ -242,17 +252,26 @@ defmodule GoodFlowsWeb.ApiSpec do
         50, and `cursor`). Filters `workflow`, `environment`, `outcome`,
         `commit`, `branch` (`source.branch`), `event` (`ci.event`) and
         `graph_sha256` are exact and combined with AND.
+        `ticket` matches a run's `links.tickets` ignoring ASCII case.
+        `thread_url` is normalized (lowercase scheme and host, an empty or
+        443 port dropped, `/` for an empty path, percent triplets kept as
+        written) and then matches one of a run's `links.threads` exactly.
+        Every key type, including public keys, can use both.
         Unknown query parameters are ignored. A filter, `limit` or `cursor`
-        that breaks its rule is `422`. Summaries do not include `results`.
+        that breaks its rule is `422`. Summaries do not include `results`
+        or `links`.
 
         `GET /api/v1/projects/{project}/workflow-runs/{run_id}` returns the
         stored document. The run id must be a lowercase canonical UUID; any
         other spelling, including uppercase, is `404` and is not looked up
         after downcasing. A public (`pk_…`) key sees each result's `command`
         and `error`, and each graph job's and step's `command` and condition
-        `text`, as null; the stored row is not changed. Private keys see
-        them as stored. `test_reports` lists test reports in the same account
-        and project whose `workflow_run_id` equals this run, ordered by `job`
+        `text`, as null, and `links.threads` as null when the run has
+        threads (`links.tickets` is unchanged, and a `links` without
+        threads gains no `threads` key); the stored row is not changed.
+        Private keys see them as stored. `test_reports` lists test reports
+        in the same account and project whose `workflow_run_id` equals this
+        run, ordered by `job`
         then `report_id`, without report contents. There is no foreign key
         either way: reports often arrive before the run, and either side may
         be absent.

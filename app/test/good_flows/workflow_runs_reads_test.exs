@@ -20,6 +20,8 @@ defmodule GoodFlows.WorkflowRunsReadsTest do
   @graph_b String.duplicate("cd", 32)
   @commit_a String.duplicate("ab", 20)
   @commit_b String.duplicate("cd", 32)
+  @thread "https://ampcode.com/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"
+  @thread_path "/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"
 
   setup do
     account = account_fixture()
@@ -145,11 +147,25 @@ defmodule GoodFlows.WorkflowRunsReadsTest do
             {%{"limit" => "0"}, :limit},
             {%{"limit" => "201"}, :limit},
             {%{"limit" => "nope"}, :limit},
-            {%{"cursor" => "not-a-cursor"}, :cursor}
+            {%{"cursor" => "not-a-cursor"}, :cursor},
+            {%{"ticket" => "GOO 1"}, :ticket},
+            {%{"ticket" => ""}, :ticket},
+            {%{"ticket" => "GOO-1,GOO-2"}, :ticket},
+            {%{"ticket" => String.duplicate("T", 65)}, :ticket},
+            {%{"thread_url" => @thread <> "?token=secret"}, :thread_url},
+            {%{"thread_url" => @thread <> "#"}, :thread_url},
+            {%{"thread_url" => "http://ampcode.com" <> @thread_path}, :thread_url},
+            {%{"thread_url" => "https://ampcode.com:080" <> @thread_path}, :thread_url},
+            {%{"thread_url" => "https://ampcode.com/a/../threads/T-1"}, :thread_url},
+            {%{"thread_url" => "https://ampcode.com/threads/T-1%zz"}, :thread_url},
+            {%{"thread_url" => "https://ex%61mple.com/threads/T-1"}, :thread_url},
+            {%{"thread_url" => "ampcode.com/threads/T-1"}, :thread_url},
+            {%{"thread_url" => ""}, :thread_url}
           ] do
         case WorkflowRuns.list_runs(ctx.account, ctx.project, params) do
           {:error, changeset} ->
             assert errors_on(changeset)[field], "#{field} for #{inspect(params)}"
+            refute inspect(errors_on(changeset)) =~ "secret"
 
           other ->
             flunk("expected error for #{inspect(params)}, got #{inspect(other)}")
@@ -159,6 +175,112 @@ defmodule GoodFlows.WorkflowRunsReadsTest do
 
     test "a project from another account is not found", ctx do
       assert WorkflowRuns.list_runs(ctx.other, ctx.project, %{}) == {:error, :not_found}
+    end
+  end
+
+  describe "link filters" do
+    test "ticket matches ignoring ASCII case and nothing else", ctx do
+      store!(ctx, %{"run_id" => @early, "links" => %{"tickets" => ["GOO-291"]}})
+
+      store!(ctx, %{
+        "run_id" => @late,
+        "started_at" => @today,
+        "links" => %{"tickets" => ["GOO-2910", "GOO-0291"]}
+      })
+
+      for ticket <- ~w(GOO-291 goo-291 gOo-291) do
+        assert ids(ctx, %{"ticket" => ticket}) == {[@early], nil}, ticket
+      end
+
+      assert ids(ctx, %{"ticket" => "GOO-29"}) == {[], nil}
+      assert ids(ctx, %{"ticket" => "goo-0291"}) == {[@late], nil}
+    end
+
+    test "one ticket search returns the PR run and the main run, newest first", ctx do
+      store!(ctx, %{
+        "run_id" => @early,
+        "started_at" => @yesterday,
+        "ci" => %{"provider" => "github_actions", "event" => "pull_request", "pull_request" => 7},
+        "links" => %{"threads" => [@thread], "tickets" => ["GOO-291"]}
+      })
+
+      store!(ctx, %{
+        "run_id" => @mid,
+        "started_at" => @today,
+        "source" => %{"commit" => @commit_a, "branch" => "main"},
+        "ci" => %{"provider" => "github_actions", "event" => "push"},
+        "links" => %{"tickets" => ["goo-291"]}
+      })
+
+      store!(ctx, %{
+        "run_id" => @late,
+        "started_at" => @same,
+        "source" => %{"commit" => @commit_a, "branch" => "main"},
+        "links" => %{"tickets" => ["GOO-300"]}
+      })
+
+      assert ids(ctx, %{"ticket" => "GOO-291"}) == {[@mid, @early], nil}
+      assert {[@mid], cursor} = ids(ctx, %{"ticket" => "GOO-291", "limit" => "1"})
+
+      assert ids(ctx, %{"ticket" => "GOO-291", "limit" => "1", "cursor" => cursor}) ==
+               {[@early], nil}
+
+      assert ids(ctx, %{"ticket" => "GOO-291", "branch" => "main"}) == {[@mid], nil}
+      assert ids(ctx, %{"ticket" => "GOO-300", "branch" => "main"}) == {[@late], nil}
+      assert ids(ctx, %{"thread_url" => @thread, "branch" => "main"}) == {[], nil}
+      assert ids(ctx, %{"thread_url" => @thread, "event" => "pull_request"}) == {[@early], nil}
+      assert ids(ctx, %{"thread_url" => @thread, "ticket" => "goo-291"}) == {[@early], nil}
+
+      page = page(ctx, %{"ticket" => "GOO-291"})
+      assert Enum.all?(page.runs, &(&1.payload == nil))
+    end
+
+    test "thread_url matches after lowercasing scheme and host and dropping a 443 port", ctx do
+      store!(ctx, %{"run_id" => @early, "links" => %{"threads" => [@thread]}})
+
+      store!(ctx, %{
+        "run_id" => @late,
+        "started_at" => @today,
+        "links" => %{"threads" => ["https://ampcode.com/"]}
+      })
+
+      for url <- [
+            @thread,
+            "HTTPS://AmpCode.com" <> @thread_path,
+            "https://AMPCODE.COM:443" <> @thread_path,
+            "https://ampcode.com:0443" <> @thread_path,
+            "https://ampcode.com:" <> @thread_path
+          ] do
+        assert ids(ctx, %{"thread_url" => url}) == {[@early], nil}, url
+      end
+
+      for url <- ["https://ampcode.com", "HTTPS://AmpCode.com:443", "https://ampcode.com/"] do
+        assert ids(ctx, %{"thread_url" => url}) == {[@late], nil}, url
+      end
+
+      # The path is never recased.
+      assert ids(ctx, %{"thread_url" => String.upcase(@thread)}) == {[], nil}
+      assert ids(ctx, %{"thread_url" => "https://ampcode.com/threads/T-other"}) == {[], nil}
+    end
+
+    test "percent triplets match only as written", ctx do
+      store!(ctx, %{
+        "run_id" => @early,
+        "links" => %{"threads" => ["https://ampcode.com/threads/a%7Eb"]}
+      })
+
+      assert ids(ctx, %{"thread_url" => "https://ampcode.com/threads/a%7Eb"}) == {[@early], nil}
+      assert ids(ctx, %{"thread_url" => "https://ampcode.com/threads/a%7eb"}) == {[], nil}
+      assert ids(ctx, %{"thread_url" => "https://ampcode.com/threads/a~b"}) == {[], nil}
+    end
+
+    test "a run without links never matches a link filter", ctx do
+      store!(ctx, %{"run_id" => @early})
+      stored_run(ctx.account, ctx.project, %{run_id: @late})
+
+      assert {[_, _], nil} = ids(ctx)
+      assert ids(ctx, %{"ticket" => "GOO-291"}) == {[], nil}
+      assert ids(ctx, %{"thread_url" => @thread}) == {[], nil}
     end
   end
 

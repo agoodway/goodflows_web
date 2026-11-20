@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: The body is a run-history document
-The body SHALL be one goodflows run-history JSON object with `schema_version` `1`. Its required keys are `schema_version`, `workflow`, `run_id`, `started_at`, `outcome`, `duration_ms`, `parallelism`, `graph_sha256`, `max_in_flight`, `host`, and `results`. Its optional keys are `environment`, `requested_jobs`, `source`, `parent_run_id`, `caller_job`, `links`, and the upload envelope keys `ci` and `graph`. The body MUST NOT carry a project or account: `project`, `account_id`, and any other key are unknown fields (`422`).
+The body SHALL be one goodflows run-history JSON object with `schema_version` `1`. Its required keys are `schema_version`, `workflow`, `run_id`, `started_at`, `outcome`, `duration_ms`, `parallelism`, `graph_sha256`, `max_in_flight`, `host`, and `results`. Its optional keys are `environment`, `requested_jobs`, `source`, `parent_run_id`, `caller_job`, `links`, `ci`, and `graph`. The body MUST NOT carry a project or account: `project`, `account_id`, and any other key are unknown fields (`422`).
 
 #### Scenario: Minimal document
 - **WHEN** a client posts a document with only the required keys and an empty `results` array
@@ -24,7 +24,7 @@ The body SHALL be one goodflows run-history JSON object with `schema_version` `1
 - **THEN** the API responds `201` and stores `links` as given
 
 ### Requirement: The list can be filtered
-The list SHALL accept the exact-match filters `workflow`, `environment`, `outcome`, `commit` (matching `source.commit`), `branch` (matching `source.branch`), `event` (matching `ci.event`), and `graph_sha256`, and the link filters `ticket` and `thread_url` (see "The list can be filtered by ticket" and "The list can be filtered by thread URL"), combined with AND. A run without `source.branch` never matches `branch`, and a run without `ci.event` never matches `event`. A filter value that breaks its field's rule, an invalid `limit`, or an invalid `cursor` MUST return `422` on that parameter. Unknown query parameters SHALL be ignored.
+The list SHALL accept the exact-match filters `workflow`, `environment`, `outcome`, `commit` (`source.commit`), `branch` (`source.branch`), `event` (`ci.event`), and `graph_sha256`, and the link filters `ticket` and `thread_url`, combined with AND. A run without `source.branch` never matches `branch`, and a run without `ci.event` never matches `event`. A filter value, `limit`, or `cursor` that breaks its rule MUST return `422` on that parameter. Unknown query parameters SHALL be ignored.
 
 #### Scenario: Same graph across commits
 - **WHEN** a client lists with `workflow=ci&graph_sha256=<hex>`
@@ -59,7 +59,7 @@ The list SHALL accept the exact-match filters `workflow`, `environment`, `outcom
 - **THEN** the API responds `422` with an error on `branch`
 
 ### Requirement: Public keys do not see command text or errors
-For a public (`pk_`) key, every `results` entry in `document` MUST have `command` and `error` set to null, every `graph` job and step MUST have `command` set to null and any `condition` `text` set to null, and `links.threads`, when the document has it, MUST be null. Every other field, including job names, dependencies, partitions, `call`, condition `kind`, and `links.tickets`, MUST be as stored. A document without `links.threads` MUST NOT gain that key. Private keys MUST see the document as stored. The stored row MUST NOT change.
+For a public (`pk_`) key, every `results` entry in `document` MUST have `command` and `error` null, every `graph` job and step MUST have `command` and any `condition` `text` null, and `links.threads`, when present, MUST be null. Every other field, such as job names, dependencies, partitions, `call`, condition `kind`, and `links.tickets`, MUST be as stored. A document without `links.threads` MUST NOT gain it. Private keys MUST see the document as stored. The stored row MUST NOT change.
 
 #### Scenario: Public key reads a run
 - **WHEN** a client with a `pk_` key shows a run whose results have commands and errors
