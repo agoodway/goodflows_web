@@ -29,6 +29,17 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
   # `projects` too (and the last index is on `workflow_runs`), so they come
   # first.
   @cache_migrations [
+    {20_261_121_162_154, GoodFlows.Repo.Migrations.AddGradingToChangeRequestVerdicts,
+     "add_grading_to_change_request_verdicts"},
+    {20_261_121_162_152, GoodFlows.Repo.Migrations.CreateFeatureIndexVersions,
+     "create_feature_index_versions"},
+    {20_261_121_162_150, GoodFlows.Repo.Migrations.CreateVerifyRunArtifacts,
+     "create_verify_run_artifacts"},
+    {20_261_121_162_148, GoodFlows.Repo.Migrations.CreateVerifyRuns, "create_verify_runs"},
+    {20_261_121_162_146, GoodFlows.Repo.Migrations.CreateScenarioSetDecisions,
+     "create_scenario_set_decisions"},
+    {20_261_121_162_145, GoodFlows.Repo.Migrations.CreateScenarioSetVersions,
+     "create_scenario_set_versions"},
     {20_261_121_100_600, GoodFlows.Repo.Migrations.AddRequiredWorkflowIndexToWorkflowRuns,
      "add_required_workflow_index_to_workflow_runs"},
     {20_261_121_100_500, GoodFlows.Repo.Migrations.CreateChangeRequestVerdicts,

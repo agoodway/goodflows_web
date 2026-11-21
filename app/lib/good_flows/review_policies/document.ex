@@ -52,16 +52,23 @@ defmodule GoodFlows.ReviewPolicies.Document do
     "merge" => %{"lease_ttl" => "10m", "regrade_merge_result" => true}
   }
 
-  # Phase 1 (`add-change-request-core`): everything except `scenarios.*`,
-  # `evidence.ignore_paths`, `coverage.*` and `merge.*`.
+  # Phase 1 (`add-change-request-core`) and phase 2
+  # (`add-change-request-grading`): everything except `merge.*`.
   @active_settings ~w(
+    scenarios.require_approved_intent
+    scenarios.should_failures
+    scenarios.spec_gaps
+    scenarios.approver
     evidence.required_workflows
+    evidence.ignore_paths
     claims.one_way_door
     claims.min_proof_level
     claims.open_items
     paths
     size.max_changed_files
     size.max_changed_lines
+    coverage.unmapped_areas
+    coverage.undriven_features
   )
 
   @typedoc "A validated write body."

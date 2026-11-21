@@ -77,10 +77,10 @@ The API SHALL provide `POST /api/v1/projects`, `GET /api/v1/projects`, `GET /api
 - **THEN** the API responds `422` and does not write
 
 ### Requirement: Recipes, test reports, and workflow runs protect a project from deletion
-Deleting a project that has any recipe, test report, workflow run, or change request in any state MUST respond `409` and MUST keep the project and all its content. Deleting a project with none of them MUST respond `204`, and a later show MUST respond `404`. Review policy versions, cache entries, cache reservations and cache keys MUST NOT block deletion: they are deleted with the project, and cache objects are queued for deletion from object storage.
+Deleting a project that has any recipe, test report, workflow run, change request in any state, or verify run in any status MUST respond `409` and keep all of them. Otherwise it MUST respond `204`, and a later show MUST respond `404`. Scenario set versions go with their change requests. Review policy versions, feature index versions, cache entries, reservations and keys MUST NOT block deletion: they are deleted with the project and their objects queued for deletion.
 
 #### Scenario: Delete an empty project
-- **WHEN** a client deletes a project that has no recipes, test reports, workflow runs, or change requests
+- **WHEN** a client deletes a project that has no recipes, test reports, workflow runs, change requests, or verify runs
 - **THEN** the API responds `204` and a later show of that slug responds `404`
 
 #### Scenario: Delete a project that has a recipe
@@ -106,3 +106,19 @@ Deleting a project that has any recipe, test report, workflow run, or change req
 #### Scenario: Delete a project with only caches
 - **WHEN** a client deletes a project whose only content is committed cache entries and a cache key
 - **THEN** the API responds `204`, the cache key gets `401` on its next request, and the entries' objects are deleted by the next sweep
+
+#### Scenario: Delete a project with only a verify run
+- **WHEN** a client deletes a project whose only content is a final verify run
+- **THEN** the API responds `409` and the project and the verify run remain
+
+#### Scenario: Delete a project with a verify run whose artifacts expired
+- **WHEN** a client deletes a project whose only content is a verify run whose artifacts all have `expired` true
+- **THEN** the API responds `409`, because the run document still blocks deletion
+
+#### Scenario: Delete a project with only a feature index
+- **WHEN** a client deletes a project whose only content is three feature index versions
+- **THEN** the API responds `204` and the feature index versions are deleted
+
+#### Scenario: Uploading verify run
+- **WHEN** a client deletes a project whose only content is a verify run with `status` `uploading`
+- **THEN** the API responds `409` until the sweep deletes the expired run, after which deletion responds `204`

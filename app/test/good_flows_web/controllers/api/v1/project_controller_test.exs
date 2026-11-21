@@ -3,6 +3,7 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
 
   import Ecto.Query
   import GoodFlows.ChangeRequestFixtures
+  import GoodFlows.GradingFixtures
   import GoodFlows.SpryFixtures
   import GoodFlows.WorkflowRunFixtures
   import OpenApiSpex.TestAssertions
@@ -187,6 +188,46 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
 
       assert ctx.pk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> json_response(403)
       assert {:ok, _} = Projects.get_project(ctx.account, project.slug)
+    end
+
+    test "a project whose only content is a verify run is 409; a feature index is not", ctx do
+      project = project_fixture(ctx.account)
+      cr = create_cr(ctx.sk_conn, project.slug, %{"openspec_change" => "add-x"})
+      fm = intent_fm("add-x", [scenario("S1")])
+
+      digest =
+        ctx.sk_conn
+        |> post_json(cr_path(project.slug, 1, "/scenario-sets"), set_body(fm))
+        |> json_response(201)
+        |> get_in(["data", "digest"])
+
+      doc =
+        run_doc(digest, "intent", sha(1), [
+          result("S1")
+        ])
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{project.slug}/verify-runs", doc)
+        |> json_response(201)
+
+      Repo.delete_all(from c in GoodFlows.ChangeRequests.ChangeRequest, where: c.id == ^cr["id"])
+
+      body = ctx.sk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> json_response(409)
+      assert_schema(body, "ConflictResponse", ApiSpec.spec())
+      assert body["errors"]["detail"] == "The project has verify runs and cannot be deleted"
+      assert ctx.sk_conn |> get(~p"/api/v1/projects/#{project.slug}") |> json_response(200)
+
+      indexed = project_fixture(ctx.account)
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{indexed.slug}/feature-index", %{
+          "features" => [feature("x", ["lib/**"])]
+        })
+        |> json_response(201)
+
+      assert ctx.sk_conn |> delete(~p"/api/v1/projects/#{indexed.slug}") |> response(204)
     end
 
     test "a public key deleting a missing or invalid project is 403", ctx do

@@ -1,17 +1,27 @@
 defmodule GoodFlows.ProjectsTest do
   use GoodFlows.DataCase, async: true
 
+  import Ecto.Query
   import GoodFlows.AccountsFixtures
+  import GoodFlows.GradingFixtures
   import GoodFlows.SpryFixtures
   import GoodFlows.TestReportFixtures
   import GoodFlows.WorkflowRunFixtures
 
   alias GoodFlows.Accounts.Account
+  alias GoodFlows.ChangeRequests
+  alias GoodFlows.FeatureIndex
+  alias GoodFlows.FeatureIndex.Version, as: FeatureIndexVersion
   alias GoodFlows.Projects
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
+  alias GoodFlows.ScenarioSets
   alias GoodFlows.Spry.{Recipe, Run}
   alias GoodFlows.TestReports.Report
+  alias GoodFlows.VerifyRuns
+  alias GoodFlows.VerifyRuns.Artifact
+  alias GoodFlows.VerifyRuns.Run, as: VerifyRun
+  alias GoodFlows.VerifyRuns.Sweep
   alias GoodFlows.WorkflowRuns.Run, as: WorkflowRun
 
   setup do
@@ -144,6 +154,74 @@ defmodule GoodFlows.ProjectsTest do
     assert {:ok, _} = Projects.get_project(ctx.account, project.slug)
     assert Repo.get(Report, report_id)
     assert Repo.get(WorkflowRun, run_id)
+  end
+
+  describe "delete_project/2 with grading content" do
+    setup ctx do
+      user = GoodFlows.AccountsFixtures.user_fixture()
+      au = GoodFlows.AccountsFixtures.account_user_fixture(ctx.account, user, :member)
+      {key, _token} = GoodFlows.AccountsFixtures.api_key_fixture(au, %{type: :private})
+      %{key: key, project: project_fixture(ctx.account)}
+    end
+
+    # A verify run whose change request (and scenario set) were removed, so
+    # the run is the project's only content. Options go to `run_doc/5`.
+    defp only_verify_run(ctx, opts) do
+      {:ok, cr} =
+        ChangeRequests.create(ctx.account, ctx.project, ctx.key, %{
+          "title" => "t",
+          "source_branch" => "b",
+          "openspec_change" => "add-x"
+        })
+
+      fm = intent_fm("add-x", [scenario("S1")])
+      {:ok, :created, set} = ScenarioSets.upload(cr, ctx.key, set_body(fm))
+      doc = run_doc(set.digest, "intent", String.duplicate("1", 40), [result("S1")], opts)
+      {:ok, ingested} = VerifyRuns.ingest(ctx.account, ctx.project, ctx.key, doc)
+      Repo.delete!(cr)
+      ingested
+    end
+
+    test "a final verify run is :has_verify_runs, also with expired artifacts", ctx do
+      %{run: run} = only_verify_run(ctx, [])
+      assert Projects.delete_project(ctx.account, ctx.project) == {:error, :has_verify_runs}
+
+      Repo.insert!(%Artifact{
+        verify_run_id: run.id,
+        artifact_id: "a",
+        object_key: "verify-runs/#{run.id}/a",
+        size: 1,
+        sha256: String.duplicate("0", 64),
+        content_type: "image/png",
+        expired: true
+      })
+
+      assert Projects.delete_project(ctx.account, ctx.project) == {:error, :has_verify_runs}
+      assert Repo.get(VerifyRun, run.id)
+      assert {:ok, _} = Projects.get_project(ctx.account, ctx.project.slug)
+    end
+
+    test "an uploading run blocks until the sweep deletes it", ctx do
+      %{run: run} = only_verify_run(ctx, artifacts: [artifact("a", "bytes")])
+      assert run.status == "uploading"
+      assert Projects.delete_project(ctx.account, ctx.project) == {:error, :has_verify_runs}
+
+      Repo.update_all(from(r in VerifyRun, where: r.id == ^run.id),
+        set: [expires_at: DateTime.add(DateTime.utc_now(), -1, :second)]
+      )
+
+      Sweep.run()
+      assert Projects.delete_project(ctx.account, ctx.project) == :ok
+    end
+
+    test "a feature index is deleted with the project", ctx do
+      {:ok, :created, _} =
+        FeatureIndex.sync(ctx.project, ctx.key, %{"features" => [feature("x", ["lib/**"])]})
+
+      assert Projects.delete_project(ctx.account, ctx.project) == :ok
+      assert Projects.get_project(ctx.account, ctx.project.slug) == {:error, :not_found}
+      refute Repo.exists?(from v in FeatureIndexVersion, where: v.project_id == ^ctx.project.id)
+    end
   end
 
   test "delete_project/2 of an already-deleted project is :not_found", %{account: account} do

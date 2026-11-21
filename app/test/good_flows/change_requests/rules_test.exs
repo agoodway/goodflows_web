@@ -279,10 +279,7 @@ defmodule GoodFlows.ChangeRequests.RulesTest do
           [
             policy:
               policy(%{
-                "scenarios" => %{"approver" => "admin", "require_approved_intent" => true},
-                "coverage" => %{"undriven_features" => "blocked"},
-                "merge" => %{"lease_ttl" => "1h"},
-                "evidence" => %{"ignore_paths" => ["lib/**"]}
+                "merge" => %{"lease_ttl" => "1h", "regrade_merge_result" => false}
               })
           ]
       )

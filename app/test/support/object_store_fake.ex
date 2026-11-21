@@ -60,8 +60,10 @@ defmodule GoodFlows.Caches.ObjectStore.Fake do
   def signature, do: @signature
 
   @impl ObjectStore
-  def presign_put(object_key, %{size: size, sha256: sha256, expires_in: expires_in}) do
-    headers = ObjectStore.upload_headers(size, sha256)
+  def presign_put(object_key, %{size: size, sha256: sha256, expires_in: expires_in} = opts) do
+    headers =
+      ObjectStore.upload_headers(size, sha256, Map.get(opts, :content_type, "application/gzip"))
+
     Agent.update(__MODULE__, &put_in(&1, [:signed, object_key], headers))
     {url(object_key, expires_in, signed_list(headers), []), headers}
   end

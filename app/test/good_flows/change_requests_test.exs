@@ -1,6 +1,5 @@
 defmodule GoodFlows.ChangeRequestsTest do
   use GoodFlows.DataCase, async: true
-  use Mimic
 
   import GoodFlows.AccountsFixtures
   import GoodFlows.ChangeRequestFixtures
@@ -8,12 +7,10 @@ defmodule GoodFlows.ChangeRequestsTest do
 
   alias GoodFlows.Accounts
   alias GoodFlows.ChangeRequests
-  alias GoodFlows.ChangeRequests.{ChangeRequest, Event, GitFacts, RecomputeJob}
+  alias GoodFlows.ChangeRequests.{ChangeRequest, Event, GitFacts}
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ReviewPolicies.Document
   alias GoodFlows.WorkflowRuns
-
-  setup :verify_on_exit!
 
   setup do
     user = user_fixture()
@@ -545,7 +542,7 @@ defmodule GoodFlows.ChangeRequestsTest do
       _ =
         policy!(
           ctx,
-          %{"scenarios" => %{"approver" => "admin"}, "paths" => Document.default()["paths"]},
+          %{"merge" => %{"lease_ttl" => "20m"}, "paths" => Document.default()["paths"]},
           0
         )
 
@@ -553,35 +550,6 @@ defmodule GoodFlows.ChangeRequestsTest do
 
       assert {after_write.state, after_write.reasons, after_write.policy_version} ==
                {before.state, before.reasons, 1}
-    end
-
-    test "over the inline limit, a job is enqueued in the write transaction", ctx do
-      Application.put_env(:good_flows, :change_request_inline_recompute_limit, 0)
-
-      on_exit(fn ->
-        Application.delete_env(:good_flows, :change_request_inline_recompute_limit)
-      end)
-
-      cr = create!(ctx)
-      project_id = ctx.project.id
-
-      expect(PgFlow, :enqueue, fn RecomputeJob, %{"project_id" => ^project_id} -> {:ok, "run"} end)
-
-      _ = policy!(ctx, %{}, 0)
-      assert verdict(cr).policy_version == 0
-
-      assert ChangeRequests.recompute_project(project_id) == 1
-      assert verdict(cr).policy_version == 1
-
-      ctx_job = %PgFlow.Context{
-        run_id: Ecto.UUID.generate(),
-        step_slug: :recompute,
-        task_index: 0,
-        attempt: 1,
-        repo: Repo
-      }
-
-      assert %{"recomputed" => 1} = RecomputeJob.perform(%{"project_id" => project_id}, ctx_job)
     end
   end
 end

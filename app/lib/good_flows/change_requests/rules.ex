@@ -20,19 +20,34 @@ defmodule GoodFlows.ChangeRequests.Rules do
   head but no Git facts for it and the target branch, `git_facts_missing`
   (`[head]`) and the required-workflow rules fire. With facts but no
   claims, `claims_missing` replaces the claims rules.
+
+  Grading (`add-change-request-grading`) reads `inputs.grading`
+  (`GoodFlows.ChangeRequests.Grading`). `scenario_set_approval` and
+  `scenario_set_missing` read no Git facts and always run; every other
+  grading rule runs only once facts exist for the head, and `spec_gap`
+  only once claims do too. Scenario reasons have `subject`
+  `[source, scenario id]`; `spec_gap` has `[capability, requirement,
+  scenario]`. The verdict also carries `scenarios`, `coverage` and the
+  `counted_runs`.
   """
 
+  alias GoodFlows.ChangeRequests.Grading
+  alias GoodFlows.FeatureIndex
   alias GoodFlows.ReviewPolicies.Document
   alias GoodFlows.ReviewPolicies.Glob
 
   @precedence ~w(pending blocked needs_review)
   @gated ~w(needs_review blocked)
 
-  @typedoc "A compiled policy: its version, effective document and `paths` regexes."
+  @typedoc """
+  A compiled policy: its version, effective document, `paths` regexes and
+  `evidence.ignore_paths` regexes.
+  """
   @type policy :: %{
-          version: non_neg_integer(),
-          effective: map(),
-          globs: [{String.t(), String.t(), Regex.t()}]
+          required(:version) => non_neg_integer(),
+          required(:effective) => map(),
+          required(:globs) => [{String.t(), String.t(), Regex.t()}],
+          optional(:ignore) => [Regex.t()]
         }
 
   @typedoc "The newest clean run of a required workflow on the head, or nil."
@@ -40,11 +55,12 @@ defmodule GoodFlows.ChangeRequests.Rules do
 
   @typedoc "Everything the verdict depends on."
   @type inputs :: %{
-          head: String.t() | nil,
-          git_facts: %{document: map(), digest: binary()} | nil,
-          claims: %{front_matter: map(), digest: binary()} | nil,
-          workflows: %{String.t() => workflow_result()},
-          policy: policy()
+          required(:head) => String.t() | nil,
+          required(:git_facts) => %{document: map(), digest: binary()} | nil,
+          required(:claims) => %{front_matter: map(), digest: binary()} | nil,
+          required(:workflows) => %{String.t() => workflow_result()},
+          required(:policy) => policy(),
+          optional(:grading) => Grading.t()
         }
 
   @typedoc "One reason, as stored and rendered."
@@ -56,21 +72,308 @@ defmodule GoodFlows.ChangeRequests.Rules do
           head: String.t() | nil,
           policy_version: non_neg_integer(),
           reasons: [reason()],
-          inputs: map()
+          inputs: map(),
+          scenarios: map(),
+          coverage: map(),
+          counted_runs: [String.t()]
         }
 
   @doc "Computes the verdict for `inputs`."
   @spec evaluate(inputs()) :: verdict()
   def evaluate(inputs) do
-    reasons = inputs |> reasons() |> Enum.sort_by(&sort_key/1)
+    inputs = Map.put_new(inputs, :grading, Grading.empty())
+    reasons = inputs |> all_reasons() |> Enum.sort_by(&sort_key/1)
 
     %{
       state: state(reasons),
       head: inputs.head,
       policy_version: inputs.policy.version,
       reasons: reasons,
-      inputs: digests(inputs)
+      inputs: digests(inputs),
+      scenarios: scenarios_view(inputs),
+      coverage: coverage_view(inputs),
+      counted_runs: inputs.grading.runs |> Enum.map(& &1.run_id) |> Enum.sort()
     }
+  end
+
+  defp all_reasons(inputs) do
+    facts? = inputs.head != nil and inputs.git_facts != nil
+
+    reasons(inputs) ++
+      set_presence_reasons(inputs) ++ if(facts?, do: grading_reasons(inputs), else: [])
+  end
+
+  defp require?(policy), do: policy.effective["scenarios"]["require_approved_intent"]
+
+  defp set_presence_reasons(%{grading: grading, policy: policy}) do
+    cond do
+      not require?(policy) ->
+        []
+
+      grading.linked? and (grading.intent == nil or not grading.intent.approved) ->
+        subject = if grading.intent, do: [grading.intent.digest], else: []
+
+        [
+          reason(
+            "scenario_set_approval",
+            "pending",
+            subject,
+            "The intent scenario set has no approved current version"
+          )
+        ]
+
+      not grading.linked? and grading.diff == nil ->
+        [
+          reason(
+            "scenario_set_missing",
+            "pending",
+            [],
+            "The change request has no linked OpenSpec change and no diff scenario set"
+          )
+        ]
+
+      true ->
+        []
+    end
+  end
+
+  defp grading_reasons(%{grading: grading, policy: policy} = inputs) do
+    diff_only =
+      if require?(policy) and grading.diff != nil and grading.intent == nil,
+        do: [reason("diff_only_set", "needs_review", [], "Only a diff scenario set grades this")],
+        else: []
+
+    revision =
+      if grading.diff != nil and not grading.diff.graded,
+        do: [
+          reason(
+            "diff_set_revision",
+            "pending",
+            [grading.diff.revision],
+            "The diff scenario set does not name the head"
+          )
+        ],
+        else: []
+
+    diff_only ++
+      revision ++
+      Enum.flat_map(graded_sets(grading), &set_reasons(&1, grading.runs, policy)) ++
+      spec_gap_reasons(inputs) ++ coverage_reasons(inputs)
+  end
+
+  defp graded_sets(grading) do
+    for {source, set} <- [{"intent", grading.intent}, {"diff", grading.diff}],
+        set != nil and set.graded,
+        do: {source, set}
+  end
+
+  defp newest_run(runs, source, digest) do
+    runs
+    |> Enum.filter(&(&1.source == source and &1.digest == digest))
+    |> Enum.max_by(&{DateTime.to_unix(&1.finished_at, :microsecond), &1.run_id}, fn -> nil end)
+  end
+
+  defp set_reasons({source, set}, runs, policy) do
+    case newest_run(runs, source, set.digest) do
+      nil ->
+        [
+          reason(
+            "scenario_results_missing",
+            "pending",
+            [source],
+            "No counted verify run grades the #{source} scenario set at the head"
+          )
+        ]
+
+      run ->
+        should = policy.effective["scenarios"]["should_failures"]
+
+        for scenario <- set.scenarios,
+            reason = scenario_reason(source, scenario, run.results[scenario.id], should),
+            do: reason
+    end
+  end
+
+  defp scenario_reason(source, %{id: id, priority: "must"}, result, _should)
+       when result in ["failed", "not_run"],
+       do:
+         reason(
+           "must_failed",
+           "blocked",
+           [source, id],
+           "Must scenario #{id} of the #{source} set is #{result}"
+         )
+
+  defp scenario_reason(source, %{id: id, priority: "should"}, "failed", "needs_review"),
+    do:
+      reason(
+        "should_failed",
+        "needs_review",
+        [source, id],
+        "Should scenario #{id} of the #{source} set failed"
+      )
+
+  defp scenario_reason(source, %{id: id, priority: "should"}, "not_run", "needs_review"),
+    do:
+      reason(
+        "should_not_run",
+        "needs_review",
+        [source, id],
+        "Should scenario #{id} of the #{source} set was not run"
+      )
+
+  defp scenario_reason(_source, _scenario, _result, _should), do: nil
+
+  defp spec_gap_reasons(%{grading: %{intent: %{graded: true} = intent}, claims: claims} = inputs)
+       when claims != nil do
+    outcome = inputs.policy.effective["scenarios"]["spec_gaps"]
+    minimum = rank(inputs.policy.effective["claims"]["min_proof_level"])
+    proven = proven_covers(claims.front_matter, minimum)
+
+    for row <- intent.coverage,
+        outcome != "ignore",
+        row["status"] == "no_check",
+        key = %{
+          "capability" => row["capability"],
+          "requirement" => row["requirement"],
+          "scenario" => row["scenario"]
+        },
+        not MapSet.member?(proven, key),
+        do:
+          reason(
+            "spec_gap",
+            outcome,
+            [row["capability"], row["requirement"], row["scenario"]],
+            "An OpenSpec scenario has no QA check and no proven claim"
+          )
+  end
+
+  defp spec_gap_reasons(_inputs), do: []
+
+  defp proven_covers(%{"safe_because" => entries}, minimum) do
+    for entry <- entries,
+        is_map(entry["covers"]),
+        rank(entry["proof"]) >= minimum,
+        into: MapSet.new(),
+        do: entry["covers"]
+  end
+
+  defp proven_covers(_claims, _minimum), do: MapSet.new()
+
+  defp coverage_reasons(%{grading: grading, policy: policy, git_facts: %{document: document}}) do
+    unmapped_outcome = policy.effective["coverage"]["unmapped_areas"]
+    undriven_outcome = policy.effective["coverage"]["undriven_features"]
+
+    cond do
+      unmapped_outcome == "ignore" and undriven_outcome == "ignore" ->
+        []
+
+      grading.index == nil ->
+        [
+          reason(
+            "feature_index_missing",
+            "pending",
+            [],
+            "The project has no synced feature index"
+          )
+        ]
+
+      true ->
+        mapping = mapping(grading, policy, document)
+        driven = driven_features(grading.runs)
+
+        unmapped =
+          for path <- mapping.unmapped,
+              unmapped_outcome != "ignore",
+              do:
+                reason(
+                  "unmapped_area",
+                  unmapped_outcome,
+                  [path],
+                  "A changed file matches no feature"
+                )
+
+        undriven =
+          for id <- mapping.features,
+              undriven_outcome != "ignore",
+              not MapSet.member?(driven, id),
+              do:
+                reason(
+                  "undriven_feature",
+                  undriven_outcome,
+                  [id],
+                  "No counted verify run drove a changed feature"
+                )
+
+        unmapped ++ undriven
+    end
+  end
+
+  defp mapping(grading, policy, document) do
+    FeatureIndex.map_files(
+      document["diff"]["files"],
+      grading.index.features,
+      Map.get(policy, :ignore, [])
+    )
+  end
+
+  defp driven_features(runs) do
+    for run <- runs,
+        feature <- run.features,
+        feature["result"] == "passed",
+        into: MapSet.new(),
+        do: feature["id"]
+  end
+
+  defp scenarios_view(%{grading: grading}) do
+    Map.new([{"intent", grading.intent}, {"diff", grading.diff}], fn
+      {source, nil} ->
+        {source, nil}
+
+      {source, set} ->
+        run = if set.graded, do: newest_run(grading.runs, source, set.digest)
+
+        {source,
+         %{
+           "version" => set.version,
+           "digest" => set.digest,
+           "approved" => set.approved,
+           "graded" => set.graded,
+           "scenarios" =>
+             Enum.map(set.scenarios, fn scenario ->
+               %{
+                 "id" => scenario.id,
+                 "priority" => scenario.priority,
+                 "result" => run && run.results[scenario.id],
+                 "run_id" => run && run.run_id
+               }
+             end)
+         }}
+    end)
+  end
+
+  defp coverage_view(%{grading: %{index: nil}}),
+    do: %{"version" => nil, "unmapped_areas" => [], "features" => []}
+
+  defp coverage_view(%{git_facts: nil, grading: grading}),
+    do: %{"version" => grading.index.version, "unmapped_areas" => [], "features" => []}
+
+  defp coverage_view(
+         %{grading: grading, policy: policy, git_facts: %{document: document}} = inputs
+       ) do
+    if inputs.head == nil do
+      %{"version" => grading.index.version, "unmapped_areas" => [], "features" => []}
+    else
+      mapping = mapping(grading, policy, document)
+      driven = driven_features(grading.runs)
+
+      %{
+        "version" => grading.index.version,
+        "unmapped_areas" => mapping.unmapped,
+        "features" =>
+          Enum.map(mapping.features, &%{"id" => &1, "driven" => MapSet.member?(driven, &1)})
+      }
+    end
   end
 
   defp state([]), do: "mergeable"
@@ -235,12 +538,16 @@ defmodule GoodFlows.ChangeRequests.Rules do
   defp reason(rule, outcome, subject, message),
     do: %{"rule" => rule, "outcome" => outcome, "subject" => subject, "message" => message}
 
-  defp digests(inputs) do
+  defp digests(%{grading: grading} = inputs) do
     %{
       "git_facts" => hex(inputs[:git_facts]),
       "claims" => hex(inputs[:claims]),
       "required_workflows" =>
-        Map.new(inputs.workflows, fn {name, result} -> {name, result && result.run_id} end)
+        Map.new(inputs.workflows, fn {name, result} -> {name, result && result.run_id} end),
+      "approved_intent_digest" =>
+        if(grading.intent && grading.intent.approved, do: grading.intent.digest),
+      "counted_runs" => grading.runs |> Enum.map(& &1.run_id) |> Enum.sort(),
+      "feature_index_version" => grading.index && grading.index.version
     }
   end
 

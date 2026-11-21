@@ -37,8 +37,9 @@ defmodule GoodFlows.Caches.ObjectStore.S3 do
   @max_part_number 10_000
 
   @impl ObjectStore
-  def presign_put(object_key, %{size: size, sha256: sha256, expires_in: expires_in}) do
-    headers = ObjectStore.upload_headers(size, sha256)
+  def presign_put(object_key, %{size: size, sha256: sha256, expires_in: expires_in} = opts) do
+    headers =
+      ObjectStore.upload_headers(size, sha256, Map.get(opts, :content_type, "application/gzip"))
 
     url =
       presign(object_key,

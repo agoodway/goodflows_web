@@ -44,8 +44,8 @@ defmodule GoodFlowsWeb.ApiSpec do
            starting with a letter or digit; unique in the account). Recipes
            live under `/api/v1/projects/{project}`; a slug with no project
            is `404` and is never created implicitly. A project that still
-           has recipes, stored test reports, stored workflow runs or change
-           requests cannot be deleted (`409`).
+           has recipes, stored test reports, stored workflow runs, change
+           requests or verify runs cannot be deleted (`409`).
         2. **Set the Sprites credential** with `PUT /api/v1/sprites-credential`
            (a private key of an account owner or admin). The token is stored
            encrypted and is never returned; every VM operation for the account
@@ -305,6 +305,32 @@ defmodule GoodFlowsWeb.ApiSpec do
         file lists and reason subjects and messages redacted to null.
         Write bodies are strict JSON (claims: Markdown) read after
         authentication: `413`, `415`, `400` and `422` as for workflow runs.
+
+        ## Scenario sets, verify runs and the feature index
+
+        `…/change-requests/{number}/scenario-sets` holds the `qa-scenarios/2`
+        intent and diff sets a change request is graded against, uploaded
+        as the raw Markdown file (`content`) with one section digest per
+        scenario. Every version is kept; the set digest is the SHA-256 of
+        `content`, so any edit needs a new approval. `…/intent/approvals` and
+        `…/intent/rejections` record decisions on the current intent digest
+        under the policy's `scenarios.approver`; `…/compare` lists changes
+        by scenario ID, weakening changes first.
+
+        `/api/v1/projects/{project}/verify-runs` stores `verify-run/1`
+        documents: one agent grading one commit against one stored set.
+        Artifacts are uploaded like cache entries: presigned PUTs, then
+        `…/verify-runs/{run_id}/commit`. Only final, clean runs count, on the
+        head or on an earlier commit followed only by `evidence.ignore_paths`
+        changes.
+
+        `/api/v1/projects/{project}/feature-index` holds the synced features
+        and their path globs; the verdict maps changed files to features and
+        reports unmapped areas and features no counted run drove.
+
+        Public keys see scenario IDs, priorities, results, counts and
+        approval state, but no set content, failure reasons, entry points,
+        changed paths, thread links or artifact URLs.
 
         ## Caches
 

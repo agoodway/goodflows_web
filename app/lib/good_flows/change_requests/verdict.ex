@@ -3,7 +3,9 @@ defmodule GoodFlows.ChangeRequests.Verdict do
   The stored verdict of a change request (one row each): `state`, the
   `head` it was computed for (or nil), the `policy_version`, the `reasons`
   (a JSON array of `rule`, `outcome`, `subject` and `message`), the
-  `inputs` digests and `computed_at`. It is replaced by every recompute.
+  `inputs` digests, the grading `scenarios`, `coverage` and
+  `counted_runs` (verify run IDs), and `computed_at`. It is replaced by
+  every recompute.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -24,6 +26,9 @@ defmodule GoodFlows.ChangeRequests.Verdict do
     field :policy_version, :integer
     field :reasons, GoodFlows.JsonValue
     field :inputs, :map
+    field :scenarios, :map
+    field :coverage, :map
+    field :counted_runs, {:array, :string}, default: []
     field :computed_at, :utc_datetime_usec
   end
 

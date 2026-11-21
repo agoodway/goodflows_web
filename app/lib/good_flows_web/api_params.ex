@@ -23,6 +23,19 @@ defmodule GoodFlowsWeb.ApiParams do
     ]
   end
 
+  @doc "The `limit` (1 to 200, default 50) and `cursor` query parameters of a version list."
+  @spec version_page() :: keyword()
+  def version_page do
+    [
+      limit: [
+        in: :query,
+        schema: %OpenApiSpex.Schema{type: :integer, minimum: 1, maximum: 200, default: 50},
+        required: false
+      ],
+      cursor: [in: :query, type: :string, description: "`next_cursor`", required: false]
+    ]
+  end
+
   @doc "The `:project` and recipe `:id` path parameters."
   @spec recipe() :: keyword()
   def recipe do

@@ -46,6 +46,36 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "The project has change requests and cannot be deleted"}})
   end
 
+  def call(conn, {:error, :has_verify_runs}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "The project has verify runs and cannot be deleted"}})
+  end
+
+  def call(conn, {:error, :stale_digest}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "digest is not the current intent scenario set's digest"}})
+  end
+
+  def call(conn, {:error, :verify_run_conflict}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "A different verify run is already stored under this run id"}})
+  end
+
+  def call(conn, {:error, :artifact_too_large}) do
+    conn
+    |> put_status(413)
+    |> json(%{errors: %{detail: "An artifact is larger than 50 MB"}})
+  end
+
+  def call(conn, {:error, :object_store_unconfigured}) do
+    conn
+    |> put_status(:service_unavailable)
+    |> json(%{errors: %{detail: "Artifacts need object storage, which is not configured"}})
+  end
+
   def call(conn, {:error, {:invalid_body, errors}}) when is_map(errors) do
     conn
     |> put_status(:unprocessable_entity)
