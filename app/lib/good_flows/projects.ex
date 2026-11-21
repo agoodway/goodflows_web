@@ -49,18 +49,26 @@ defmodule GoodFlows.Projects do
   def update_project(%Account{}, %Project{}, _attrs), do: {:error, :not_found}
 
   @doc """
-  Deletes a project that has no recipes, test reports, or workflow runs.
-  Its cache entries and cache keys never block the delete: the database
-  deletes them with the project and queues their objects for deletion.
+  Deletes a project that has no recipes, test reports, workflow runs, or
+  change requests. Its cache entries, cache keys, and review policy
+  versions never block the delete: the database deletes them with the
+  project and queues cache objects for deletion.
   Returns `{:error, :has_recipes}` while any recipe belongs to it,
-  `{:error, :has_test_reports}` while any test report does, and
-  `{:error, :has_workflow_runs}` while any workflow run does, including
-  rows committed concurrently (the foreign key violation maps through
-  `no_assoc_constraint/3`). Recipes are reported before test reports, and
-  test reports before workflow runs. The project and its rows are kept.
+  `{:error, :has_test_reports}` while any test report does,
+  `{:error, :has_workflow_runs}` while any workflow run does, and
+  `{:error, :has_change_requests}` while any change request in any state
+  does, including rows committed concurrently (the foreign key violation
+  maps through `no_assoc_constraint/3`). They are reported in that order.
+  The project and its rows are kept.
   """
   @spec delete_project(Account.t(), Project.t()) ::
-          :ok | {:error, :not_found | :has_recipes | :has_test_reports | :has_workflow_runs}
+          :ok
+          | {:error,
+             :not_found
+             | :has_recipes
+             | :has_test_reports
+             | :has_workflow_runs
+             | :has_change_requests}
   def delete_project(%Account{id: account_id}, %Project{account_id: account_id} = project) do
     case project |> Project.delete_changeset() |> Repo.delete(stale_error_field: :id) do
       {:ok, _project} ->
@@ -71,6 +79,7 @@ defmodule GoodFlows.Projects do
           Keyword.has_key?(errors, :recipes) -> {:error, :has_recipes}
           Keyword.has_key?(errors, :test_reports) -> {:error, :has_test_reports}
           Keyword.has_key?(errors, :workflow_runs) -> {:error, :has_workflow_runs}
+          Keyword.has_key?(errors, :change_requests) -> {:error, :has_change_requests}
           true -> {:error, :not_found}
         end
     end

@@ -1,6 +1,8 @@
 defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
   use GoodFlowsWeb.ConnCase, async: true
 
+  import Ecto.Query
+  import GoodFlows.ChangeRequestFixtures
   import GoodFlows.SpryFixtures
   import GoodFlows.WorkflowRunFixtures
   import OpenApiSpex.TestAssertions
@@ -143,6 +145,41 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
       refute inspect(body) =~ id
       assert ctx.sk_conn |> get(~p"/api/v1/projects/#{project.slug}") |> json_response(200)
       assert Repo.get(Run, id)
+    end
+
+    test "a project whose only content is a closed change request is 409", ctx do
+      project = project_fixture(ctx.account)
+      _ = create_cr(ctx.sk_conn, project.slug)
+      _ = ctx.sk_conn |> post(cr_path(project.slug, 1, "/close")) |> json_response(200)
+
+      body = ctx.sk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> json_response(409)
+      assert_schema(body, "ConflictResponse", ApiSpec.spec())
+      assert body["errors"]["detail"] == "The project has change requests and cannot be deleted"
+      assert ctx.sk_conn |> get(cr_path(project.slug, 1)) |> json_response(200)
+    end
+
+    test "a project whose only content is review policy versions is deleted with them", ctx do
+      project = project_fixture(ctx.account)
+
+      for previous <- [0, 1] do
+        body = %{
+          "previous_version" => previous,
+          "policy" => %{"format" => "review-policy/1"},
+          "note" => "v#{previous}"
+        }
+
+        assert ctx.sk_conn
+               |> put_json("/api/v1/projects/#{project.slug}/review-policy", body)
+               |> json_response(201)
+      end
+
+      assert ctx.sk_conn |> delete(~p"/api/v1/projects/#{project.slug}") |> response(204)
+      assert ctx.sk_conn |> get(~p"/api/v1/projects/#{project.slug}") |> json_response(404)
+
+      assert Repo.aggregate(
+               from(v in GoodFlows.ReviewPolicies.Version, where: v.project_id == ^project.id),
+               :count
+             ) == 0
     end
 
     test "public keys cannot delete", ctx do

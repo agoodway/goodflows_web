@@ -4,6 +4,8 @@ defmodule GoodFlows.KeysetCursor do
 
   Replaces a string `cursor` change with the caller's decoded position.
   Spry run lists and workflow-run lists each keep their own cursor grammar.
+  Lists keyed on one positive integer (review policy versions, change
+  request numbers) share `encode_integer/1` and `decode_integer/1`.
   """
 
   @doc """
@@ -26,4 +28,19 @@ defmodule GoodFlows.KeysetCursor do
 
   defp store_cursor(changeset, :error),
     do: Ecto.Changeset.add_error(changeset, :cursor, "is invalid")
+
+  @doc "Encodes a positive integer keyset position as an opaque cursor."
+  @spec encode_integer(pos_integer()) :: String.t()
+  def encode_integer(position), do: Base.url_encode64("v1:#{position}", padding: false)
+
+  @doc "Decodes a cursor from `encode_integer/1`."
+  @spec decode_integer(String.t()) :: {:ok, pos_integer()} | :error
+  def decode_integer(cursor) do
+    with {:ok, "v1:" <> digits} <- Base.url_decode64(cursor, padding: false),
+         true <- Regex.match?(~r/\A[1-9][0-9]{0,15}\z/, digits) do
+      {:ok, String.to_integer(digits)}
+    else
+      _other -> :error
+    end
+  end
 end

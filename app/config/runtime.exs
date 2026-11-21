@@ -88,7 +88,8 @@ if config_env() != :test do
     jobs: [
       GoodFlows.Spry.RunJob,
       GoodFlows.Spry.ReapRunsJob,
-      GoodFlows.Caches.SweepJob
+      GoodFlows.Caches.SweepJob,
+      GoodFlows.ChangeRequests.RecomputeJob
     ],
     flows: [],
     max_concurrency: 10,
@@ -100,7 +101,8 @@ if config_env() != :test do
         max_concurrency: String.to_integer(System.get_env("SPRY_RUN_MAX_CONCURRENCY", "10"))
       ],
       GoodFlows.Spry.ReapRunsJob => [max_concurrency: 1],
-      GoodFlows.Caches.SweepJob => [max_concurrency: 1]
+      GoodFlows.Caches.SweepJob => [max_concurrency: 1],
+      GoodFlows.ChangeRequests.RecomputeJob => [max_concurrency: 2]
     },
     signal_strategy: :notify
 end

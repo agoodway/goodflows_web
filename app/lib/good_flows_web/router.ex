@@ -99,6 +99,14 @@ defmodule GoodFlowsWeb.Router do
     # Any valid key. The project is resolved before the action runs.
     get "/workflow-runs", WorkflowRunController, :index
     get "/workflow-runs/:run_id", WorkflowRunController, :show
+    get "/review-policy", ReviewPolicyController, :show
+    get "/review-policy/versions", ReviewPolicyController, :index
+    get "/review-policy/versions/:version", ReviewPolicyController, :show_version
+    get "/change-requests", ChangeRequestController, :index
+    get "/change-requests/:number", ChangeRequestController, :show
+    get "/change-requests/:number/git-facts/:head", ChangeRequestController, :show_git_facts
+    get "/change-requests/:number/claims/:head", ChangeRequestController, :show_claims
+    get "/change-requests/:number/verdict", ChangeRequestController, :verdict
   end
 
   # Cache lookup, reserve and commit: `sk_` and `ck_` keys. The per-scope
@@ -134,6 +142,17 @@ defmodule GoodFlowsWeb.Router do
     post "/test-reports", TestReportController, :create
     # Private keys only. Auth and LoadProject run before WorkflowRunBody.
     post "/workflow-runs", WorkflowRunController, :create
+    # Owner or admin only, checked before the body is read.
+    put "/review-policy", ReviewPolicyController, :update
+    # Any private key. The number and body are resolved in the controller.
+    post "/change-requests", ChangeRequestController, :create
+    post "/change-requests/:number/ready", ChangeRequestController, :ready
+    post "/change-requests/:number/draft", ChangeRequestController, :draft
+    post "/change-requests/:number/close", ChangeRequestController, :close
+    post "/change-requests/:number/reopen", ChangeRequestController, :reopen
+    post "/change-requests/:number/merged", ChangeRequestController, :merged
+    post "/change-requests/:number/git-facts", ChangeRequestController, :report_git_facts
+    post "/change-requests/:number/claims", ChangeRequestController, :upload_claims
   end
 
   # Cache listing and purging: private (sk_) keys only, and `503` while no

@@ -388,8 +388,9 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
     end
 
     test "a lost commit is 503 and the exact retry is 200", ctx do
-      expect(Store, :insert_all, fn schema, rows, opts ->
-        _committed = call_original(Store, :insert_all, [schema, rows, opts])
+      # The insert commits with its transaction; the reply to COMMIT is lost.
+      expect(Store, :transaction, fn fun, opts ->
+        _committed = call_original(Store, :transaction, [fun, opts])
         raise DBConnection.ConnectionError, "connection closed before the reply"
       end)
 

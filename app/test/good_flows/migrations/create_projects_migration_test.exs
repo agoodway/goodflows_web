@@ -25,7 +25,24 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
   # Cache entries and cache-key columns also reference `projects`, so they
   # are rolled back (newest first) before `projects` and migrated up after.
+  # Change request tables and the review policy versions reference
+  # `projects` too (and the last index is on `workflow_runs`), so they come
+  # first.
   @cache_migrations [
+    {20_261_121_100_600, GoodFlows.Repo.Migrations.AddRequiredWorkflowIndexToWorkflowRuns,
+     "add_required_workflow_index_to_workflow_runs"},
+    {20_261_121_100_500, GoodFlows.Repo.Migrations.CreateChangeRequestVerdicts,
+     "create_change_request_verdicts"},
+    {20_261_121_100_400, GoodFlows.Repo.Migrations.CreateReviewPolicyVersions,
+     "create_review_policy_versions"},
+    {20_261_121_100_300, GoodFlows.Repo.Migrations.CreateChangeRequestClaims,
+     "create_change_request_claims"},
+    {20_261_121_100_200, GoodFlows.Repo.Migrations.CreateChangeRequestGitFacts,
+     "create_change_request_git_facts"},
+    {20_261_121_100_100, GoodFlows.Repo.Migrations.CreateChangeRequestEvents,
+     "create_change_request_events"},
+    {20_261_121_100_000, GoodFlows.Repo.Migrations.CreateChangeRequests,
+     "create_change_requests"},
     {20_261_118_100_200, GoodFlows.Repo.Migrations.CreateCacheEntries, "create_cache_entries"},
     {20_261_118_100_100, GoodFlows.Repo.Migrations.AddCacheColumnsToApiKeys,
      "add_cache_columns_to_api_keys"},

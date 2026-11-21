@@ -1,9 +1,9 @@
 defmodule GoodFlows.Projects.Project do
   @moduledoc """
   An account-owned project addressed by its `slug`. A project groups the
-  account's Spry recipes, uploaded test reports, and stored workflow runs;
-  recipe names are unique within a project, and its cache entries and cache
-  keys are deleted with it.
+  account's Spry recipes, uploaded test reports, stored workflow runs, and
+  change requests; recipe names are unique within a project, and its cache
+  entries, cache keys, and review policy versions are deleted with it.
 
   `default_branch` names the project's fallback cache scope: the scope whose
   string equals it. It follows the cache scope rule
@@ -18,6 +18,7 @@ defmodule GoodFlows.Projects.Project do
 
   alias GoodFlows.Accounts.Account
   alias GoodFlows.Caches.Rules
+  alias GoodFlows.ChangeRequests.ChangeRequest
   alias GoodFlows.Spry.Recipe
   alias GoodFlows.TestReports.Report
   alias GoodFlows.WorkflowRuns.Run
@@ -33,11 +34,14 @@ defmodule GoodFlows.Projects.Project do
   schema "projects" do
     field :slug, :string
     field :default_branch, :string, default: "main"
+    # Last change request number handed out; see `GoodFlows.ChangeRequests`.
+    field :change_request_seq, :integer, default: 0
 
     belongs_to :account, Account
     has_many :recipes, Recipe
     has_many :test_reports, Report
     has_many :workflow_runs, Run
+    has_many :change_requests, ChangeRequest
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -94,8 +98,8 @@ defmodule GoodFlows.Projects.Project do
   end
 
   @doc """
-  Builds the delete changeset; refuses while any recipe, test report, or
-  workflow run belongs to the project.
+  Builds the delete changeset; refuses while any recipe, test report,
+  workflow run, or change request belongs to the project.
   """
   @spec delete_changeset(t()) :: Ecto.Changeset.t()
   def delete_changeset(project) do
@@ -104,5 +108,6 @@ defmodule GoodFlows.Projects.Project do
     |> no_assoc_constraint(:recipes, name: :recipes_project_id_fkey)
     |> no_assoc_constraint(:test_reports, name: :test_reports_project_id_fkey)
     |> no_assoc_constraint(:workflow_runs, name: :workflow_runs_project_id_fkey)
+    |> no_assoc_constraint(:change_requests, name: :change_requests_project_id_fkey)
   end
 end

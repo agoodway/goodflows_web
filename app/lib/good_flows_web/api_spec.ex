@@ -44,8 +44,8 @@ defmodule GoodFlowsWeb.ApiSpec do
            starting with a letter or digit; unique in the account). Recipes
            live under `/api/v1/projects/{project}`; a slug with no project
            is `404` and is never created implicitly. A project that still
-           has recipes, stored test reports or stored workflow runs cannot
-           be deleted (`409`).
+           has recipes, stored test reports, stored workflow runs or change
+           requests cannot be deleted (`409`).
         2. **Set the Sprites credential** with `PUT /api/v1/sprites-credential`
            (a private key of an account owner or admin). The token is stored
            encrypted and is never returned; every VM operation for the account
@@ -275,6 +275,36 @@ defmodule GoodFlowsWeb.ApiSpec do
         then `report_id`, without report contents. There is no foreign key
         either way: reports often arrive before the run, and either side may
         be absent.
+
+        ## Change requests
+
+        `/api/v1/projects/{project}/change-requests` replaces pull requests.
+        The server never talks to a Git host: clients report facts, the
+        server applies the project's review policy and holds the verdict,
+        and clients act on it, including the merge.
+
+        A change request is opened as `draft` with the project's next
+        `number` and moves through `draft`, `open`, `closed` and `merged`
+        (terminal). For each head a client reports one `git-facts/1`
+        document (`POST …/git-facts`) and uploads one `change-claims/2`
+        Markdown file with YAML front matter (`POST …/claims`,
+        `text/markdown`). The verdict (`GET …/verdict`) is `pending`,
+        `blocked`, `needs_review` or `mergeable`, with one reason per rule
+        that fired, the `head` and the `policy_version`; act on it only
+        while both are current. `POST …/merged` records the merge and the
+        verdict at the head, flagging a merge without a `mergeable`
+        verdict rather than rejecting it.
+
+        `/api/v1/projects/{project}/review-policy` holds the versioned
+        `review-policy/1` document. Version 0 is the default. Any `sk_…` or
+        `pk_…` key reads it; only private keys of owners and admins write a
+        new version, naming the version they replace.
+
+        Private keys of any role write change requests. Public keys read
+        them with user ids, thread links, descriptions, claims documents,
+        file lists and reason subjects and messages redacted to null.
+        Write bodies are strict JSON (claims: Markdown) read after
+        authentication: `413`, `415`, `400` and `422` as for workflow runs.
 
         ## Caches
 
