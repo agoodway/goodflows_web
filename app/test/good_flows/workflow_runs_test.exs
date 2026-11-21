@@ -237,6 +237,65 @@ defmodule GoodFlows.WorkflowRunsTest do
     end
   end
 
+  describe "links" do
+    @links %{
+      "threads" => ["https://ampcode.com/threads/T-1", "https://ampcode.com/threads/a%7Eb"],
+      "tickets" => ["GOO-291", "Goo-300"]
+    }
+
+    test "tickets are copied lowercased, threads as sent, and the document keeps both", ctx do
+      document = Map.put(full(), "links", @links)
+      assert {:ok, %{id: id}} = WorkflowRuns.ingest(ctx.account, ctx.project, nil, document)
+
+      run = Repo.get!(Run, id)
+      assert run.link_tickets == ["goo-291", "goo-300"]
+      assert run.link_threads == @links["threads"]
+      assert run.payload == document
+      assert run.payload["links"] == @links
+    end
+
+    test "a document without links stores as before, with empty link columns", ctx do
+      assert {:ok, first} = WorkflowRuns.ingest(ctx.account, ctx.project, nil, minimal())
+
+      run = Repo.get!(Run, first.id)
+      assert run.link_tickets == []
+      assert run.link_threads == []
+      assert run.payload == minimal()
+      refute Map.has_key?(run.payload, "links")
+      assert run.payload_digest == JsonDocument.digest(minimal())
+
+      assert {:ok, retry} = WorkflowRuns.ingest(ctx.account, ctx.project, nil, minimal())
+      assert retry == %{first | duplicate: true}
+    end
+
+    test "an exact retry with reordered links keys is a duplicate", ctx do
+      document = Map.put(minimal(), "links", @links)
+      {:ok, first} = WorkflowRuns.ingest(ctx.account, ctx.project, nil, document)
+
+      reordered = reorder_keys(document)
+      assert %Jason.OrderedObject{values: [{"tickets", _}, {"threads", _}]} = reordered["links"]
+
+      assert {:ok, retry} = WorkflowRuns.ingest(ctx.account, ctx.project, nil, reordered)
+      assert retry == %{first | duplicate: true}
+      assert count(project_id: ctx.project.id) == 1
+    end
+
+    test "a retry with a different ticket spelling conflicts and leaves the row unchanged",
+         ctx do
+      document = Map.put(minimal(), "links", %{"tickets" => ["GOO-291"]})
+      {:ok, first} = WorkflowRuns.ingest(ctx.account, ctx.project, nil, document)
+      stored = Repo.get!(Run, first.id)
+
+      respelled = put_in(document, ["links", "tickets"], ["goo-291"])
+
+      assert WorkflowRuns.ingest(ctx.account, ctx.project, nil, respelled) ==
+               {:error, :workflow_run_conflict}
+
+      assert Repo.get!(Run, first.id) == stored
+      assert stored.payload["links"]["tickets"] == ["GOO-291"]
+    end
+  end
+
   describe "storage failures" do
     test "a dropped connection is unavailable and stores nothing", ctx do
       expect(Store, :insert_all, fn _schema, _rows, _opts ->

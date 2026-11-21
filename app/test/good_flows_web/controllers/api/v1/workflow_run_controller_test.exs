@@ -64,6 +64,18 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
     }
   end
 
+  @thread "https://ampcode.com/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"
+  @threads "https://ampcode.com/threads/"
+
+  defp with_links(links, attrs \\ %{}),
+    do: minimal() |> Map.merge(attrs) |> Map.put("links", links)
+
+  defp run_ids(conn, slug, query) do
+    page = conn |> list(slug, query) |> json_response(200)
+    assert_schema(page, "WorkflowRunListResponse", spec())
+    Enum.map(page["data"], & &1["run_id"])
+  end
+
   defp user_of(api_key) do
     api_key |> Repo.preload(account_user: :user) |> then(& &1.account_user.user)
   end
@@ -748,6 +760,165 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
 
       other_show = ctx.sk_conn |> show(elsewhere.slug, run_id) |> json_response(404)
       assert other_show
+    end
+  end
+
+  describe "links" do
+    test "an upload with links is 201 and an sk_ show returns it as written", ctx do
+      document =
+        with_links(%{
+          "threads" => [@thread, @threads <> "a%7Eb", @threads <> "a%2fb"],
+          "tickets" => ["goo-291", "GOO-300"]
+        })
+
+      assert_schema(document, "WorkflowRunRequest", spec())
+      ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(201)
+
+      shown = ctx.sk_conn |> show(ctx.project.slug, document["run_id"]) |> json_response(200)
+      assert_schema(shown, "WorkflowRunResponse", spec())
+      assert shown["data"]["document"] == document
+      assert shown["data"]["document"]["links"]["tickets"] == ["goo-291", "GOO-300"]
+
+      assert shown["data"]["document"]["links"]["threads"] ==
+               [@thread, @threads <> "a%7Eb", @threads <> "a%2fb"]
+
+      tickets_only =
+        with_links(%{"tickets" => ["GOO-291"]}, %{
+          "run_id" => "22222222-2222-4222-8222-222222222222"
+        })
+
+      ctx.sk_conn
+      |> upload(ctx.project.slug, Jason.encode!(tickets_only))
+      |> json_response(201)
+    end
+
+    test "each invalid links value is 422 on its path, does not echo it, and stores nothing",
+         ctx do
+      oversized = @threads <> String.duplicate("a", 2049 - byte_size(@threads))
+      many = for i <- 1..33, do: @threads <> "T-#{i}"
+
+      threads = fn url -> %{"threads" => [url]} end
+      tickets = fn ticket -> %{"tickets" => [ticket]} end
+
+      cases = [
+        {%{}, "links", nil},
+        {%{"tickets" => ["GOO-291"], "prs" => [1]}, "links", "prs"},
+        {%{"threads" => nil, "tickets" => ["GOO-291"]}, "links.threads", nil},
+        {%{"tickets" => []}, "links.tickets", nil},
+        {%{"threads" => many}, "links.threads", nil},
+        {threads.(@threads <> "T-1?token=secret"), "links.threads[0]", "secret"},
+        {threads.(@threads <> "T-1?"), "links.threads[0]", nil},
+        {threads.(@threads <> "T-1#"), "links.threads[0]", nil},
+        {threads.("http://ampcode.com/threads/T-1"), "links.threads[0]", nil},
+        {threads.("HTTPS://ampcode.com/threads/T-1"), "links.threads[0]", nil},
+        {threads.("https://user:pw@ampcode.com/threads/T-1"), "links.threads[0]", "user:pw"},
+        {threads.(oversized), "links.threads[0]", "aaaa"},
+        {%{"threads" => [@thread, @thread]}, "links.threads[1]", "ampcode"},
+        {threads.(@threads <> "T-1[x]"), "links.threads[0]", nil},
+        {threads.(@threads <> "T|1"), "links.threads[0]", nil},
+        {threads.(@threads <> "T-1%zz"), "links.threads[0]", nil},
+        {threads.(@threads <> "T-1%"), "links.threads[0]", nil},
+        {threads.("https://AmpCode.com/threads/T-1"), "links.threads[0]", "AmpCode"},
+        {threads.("https://ampcode.com:443/threads/T-1"), "links.threads[0]", nil},
+        {threads.("https://ampcode.com:0443/threads/T-1"), "links.threads[0]", nil},
+        {threads.("https://ampcode.com"), "links.threads[0]", nil},
+        {threads.("https://ampcode.com/a/../threads/T-1"), "links.threads[0]", nil},
+        {threads.("https://ampcode.com/a/%2E%2e/threads/T-1"), "links.threads[0]", nil},
+        {threads.("https://ex%61mple.com/threads/T-1"), "links.threads[0]", "ex%61mple"},
+        {threads.("https://0x7f.1/threads/T-1"), "links.threads[0]", "0x7f"},
+        {threads.("https://[0:0:0:0:0:0:0:1]/threads/T-1"), "links.threads[0]", nil},
+        {%{"tickets" => ["GOO-1", "GOO-2", "goo-1"]}, "links.tickets[2]", "GOO"},
+        {tickets.("GOO 1"), "links.tickets[0]", "GOO 1"},
+        {tickets.("GOO-1,GOO-2"), "links.tickets[0]", "GOO-1,GOO-2"},
+        {tickets.(""), "links.tickets[0]", nil},
+        {tickets.(String.duplicate("T", 65)), "links.tickets[0]", "TTTT"},
+        {tickets.("GOÖ-1"), "links.tickets[0]", "GOÖ"}
+      ]
+
+      for {links, path, value} <- cases do
+        body = ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(with_links(links)))
+        response = json_response(body, 422)
+        assert_schema(response, "ValidationErrorResponse", spec())
+        errors = response["errors"]
+        assert Map.has_key?(errors, path), "expected #{path}, got #{inspect(errors)}"
+        if value, do: refute(body.resp_body =~ value, "#{path} echoed #{value}")
+      end
+
+      normalized =
+        ctx.sk_conn
+        |> upload(ctx.project.slug, Jason.encode!(with_links(threads.("https://ampcode.com"))))
+        |> json_response(422)
+
+      assert normalized == %{"errors" => %{"links.threads[0]" => ["must be normalized"]}}
+      assert run_count() == 0
+    end
+
+    test "sk_ and pk_ keys list by ticket and thread_url, and summaries gain no links", ctx do
+      pr_run = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      main_run = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      bare_run = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+
+      for document <- [
+            with_links(%{"threads" => [@thread], "tickets" => ["GOO-291"]}, %{
+              "run_id" => pr_run,
+              "started_at" => "2026-11-05T12:00:00Z"
+            }),
+            with_links(%{"tickets" => ["goo-291"]}, %{
+              "run_id" => main_run,
+              "started_at" => "2026-11-06T12:00:00Z",
+              "source" => %{"commit" => String.duplicate("a", 40), "branch" => "main"}
+            }),
+            Map.merge(minimal(), %{"run_id" => bare_run, "started_at" => "2026-11-07T12:00:00Z"})
+          ] do
+        ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(201)
+      end
+
+      respelled =
+        URI.encode_www_form(
+          "HTTPS://AmpCode.com:443/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"
+        )
+
+      for conn <- [ctx.sk_conn, ctx.pk_conn] do
+        assert run_ids(conn, ctx.project.slug, "?ticket=GOO-291") == [main_run, pr_run]
+        assert run_ids(conn, ctx.project.slug, "?ticket=goo-291&branch=main") == [main_run]
+        assert run_ids(conn, ctx.project.slug, "?thread_url=#{respelled}") == [pr_run]
+        assert run_ids(conn, ctx.project.slug, "?ticket=GOO-300") == []
+
+        page = conn |> list(ctx.project.slug) |> json_response(200)
+        assert length(page["data"]) == 3
+        refute inspect(page) =~ "ampcode"
+        refute inspect(page) =~ ~r/goo-291/i
+
+        for summary <- page["data"] do
+          assert Map.keys(summary) |> Enum.sort() ==
+                   ~w(ci duration_ms environment graph_sha256 host id inserted_at max_in_flight
+                      outcome parallelism run_id source started_at workflow)
+        end
+      end
+    end
+
+    test "invalid link filters are 422 on that parameter without echoing the value", ctx do
+      for {query, field, value} <- [
+            {"?ticket=GOO%20SECRET1", "ticket", "SECRET1"},
+            {"?ticket=GOO-1%2CSECRET2", "ticket", "SECRET2"},
+            {"?ticket=" <> String.duplicate("S", 65), "ticket", "SSSS"},
+            {"?ticket=", "ticket", nil},
+            {"?thread_url=" <> URI.encode_www_form(@thread <> "?token=secret"), "thread_url",
+             "secret"},
+            {"?thread_url=" <> URI.encode_www_form("http://secrethost.example/a"), "thread_url",
+             "secrethost"},
+            {"?thread_url=" <> URI.encode_www_form("https://ampcode.com/a/../SECRET3"),
+             "thread_url", "SECRET3"},
+            {"?thread_url=" <> URI.encode_www_form(@threads <> "SECRET4%zz"), "thread_url",
+             "SECRET4"}
+          ] do
+        for conn <- [ctx.sk_conn, ctx.pk_conn] do
+          response = conn |> list(ctx.project.slug, query)
+          body = json_response(response, 422)
+          assert body["errors"][field] == ["is invalid"], query
+          if value, do: refute(response.resp_body =~ value, query)
+        end
+      end
     end
   end
 

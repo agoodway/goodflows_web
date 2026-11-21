@@ -36,6 +36,8 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
     "is out of range",
     "must be a JSON object",
     "must not have more than 1024 entries",
+    "must not have more than 32 entries",
+    "must be normalized",
     "must be unique",
     "must name a graph job",
     "must not form a cycle"
@@ -46,6 +48,8 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
   @uuid "fb7d2711-6b67-4f5a-9104-492032a9e1e5"
   @child "0e54fb55-a115-4ac7-80fe-8fde26e76afb"
   @sha String.duplicate("ab", 32)
+  @thread "https://ampcode.com/threads/T-3bb6cad7-8c04-413a-b23c-5fca67cd4f7b"
+  @threads "https://ampcode.com/threads/"
 
   describe "fixtures" do
     test "a workflow run is at most 8 objects or arrays deep" do
@@ -819,6 +823,251 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
       refute sentinel?(errors, "SENTINEL")
     end
   end
+
+  describe "links" do
+    test "threads only, tickets only, or both are accepted and copied into columns" do
+      columns = assert_accepted(links(%{"threads" => [@thread]}))
+      assert columns.link_threads == [@thread]
+      assert columns.link_tickets == []
+
+      columns = assert_accepted(links(%{"tickets" => ["GOO-291", "Abc!~"]}))
+      assert columns.link_tickets == ["goo-291", "abc!~"]
+      assert columns.link_threads == []
+
+      both = %{"threads" => [@thread, @threads <> "T-2"], "tickets" => ["GOO-291"]}
+      columns = assert_accepted(Map.put(full(), "links", both))
+      assert columns.link_threads == both["threads"]
+      assert columns.link_tickets == ["goo-291"]
+
+      columns = assert_accepted(minimal())
+      assert columns.link_tickets == []
+      assert columns.link_threads == []
+    end
+
+    test "links is a nonempty object of nonnull lists with no other key" do
+      errors = assert_error(links(%{}), "links", "must not be empty")
+      assert map_size(errors) == 1
+
+      assert_error(Map.put(minimal(), "links", nil), "links", "is invalid")
+      assert_error(Map.put(minimal(), "links", []), "links", "must be an object")
+
+      errors =
+        assert_error(
+          links(%{"threads" => nil, "tickets" => ["GOO-291"]}),
+          "links.threads",
+          "is invalid"
+        )
+
+      assert map_size(errors) == 1
+
+      assert_error(links(%{"tickets" => nil}), "links.tickets", "is invalid")
+      assert_error(links(%{"tickets" => []}), "links.tickets", "must not be empty")
+      assert_error(links(%{"threads" => []}), "links.threads", "must not be empty")
+      assert_error(links(%{"tickets" => "GOO-1"}), "links.tickets", "must be an array")
+
+      errors =
+        assert_error(
+          links(%{"tickets" => ["GOO-1"], "prs" => [1]}),
+          "links",
+          "has an unknown field"
+        )
+
+      refute sentinel?(errors, "prs")
+
+      assert errors(links(%{"prs" => [1]})) == %{
+               "links" => ["has an unknown field", "must not be empty"]
+             }
+    end
+
+    test "each list holds 1 to 32 entries" do
+      threads = for i <- 1..33, do: @threads <> "T-#{i}"
+      tickets = for i <- 1..33, do: "GOO-#{i}"
+
+      assert_accepted(
+        links(%{"threads" => Enum.take(threads, 32), "tickets" => Enum.take(tickets, 32)})
+      )
+
+      for {key, list} <- [{"threads", threads}, {"tickets", tickets}] do
+        errors =
+          assert_error(
+            links(%{key => list}),
+            "links.#{key}",
+            "must not have more than 32 entries"
+          )
+
+        assert map_size(errors) == 1
+      end
+    end
+
+    test "a ticket is 1 to 64 bytes of printable ASCII other than a comma" do
+      assert_accepted(links(%{"tickets" => [String.duplicate("T", 64)]}))
+      assert_accepted(links(%{"tickets" => ["!\"#$%&'()*+-./09:;<=>?@AZ[\\]^_`az{|}~"]}))
+
+      for {ticket, message} <- [
+            {String.duplicate("T", 65), "is too long"},
+            {"", "can't be blank"},
+            {"GOO 1", "has invalid format"},
+            {"GOO\t1", "has invalid format"},
+            {"GOO-1,GOO-2", "has invalid format"},
+            {"GOÖ-1", "has invalid format"},
+            {7, "must be a string"}
+          ] do
+        assert_error(links(%{"tickets" => [ticket]}), "links.tickets[0]", message)
+      end
+    end
+
+    test "repeats are not unique on their own path: tickets ignoring ASCII case, threads exactly" do
+      errors =
+        assert_error(
+          links(%{"tickets" => ["GOO-1", "GOO-2", "goo-1"]}),
+          "links.tickets[2]",
+          "must be unique"
+        )
+
+      assert map_size(errors) == 1
+
+      errors =
+        assert_error(
+          links(%{"threads" => [@thread, @thread]}),
+          "links.threads[1]",
+          "must be unique"
+        )
+
+      assert map_size(errors) == 1
+
+      # Percent triplets are compared as written, so these are two threads.
+      assert_accepted(links(%{"threads" => [@threads <> "a%7Eb", @threads <> "a%7eb"]}))
+
+      # A structural error is not reported again as a repeat.
+      assert errors(links(%{"tickets" => ["GOO 1", "goo 1"]})) == %{
+               "links.tickets[0]" => ["has invalid format"],
+               "links.tickets[1]" => ["has invalid format"]
+             }
+
+      assert errors(links(%{"tickets" => List.duplicate("GOO-1", 33)})) == %{
+               "links.tickets" => ["must not have more than 32 entries"]
+             }
+
+      assert errors(links(%{"threads" => [@thread <> "?x", @thread <> "?x"]})) == %{
+               "links.threads[0]" => ["is invalid"],
+               "links.threads[1]" => ["is invalid"]
+             }
+    end
+
+    test "thread URLs already in normalized form are accepted as written" do
+      for url <- [
+            @thread,
+            "https://ampcode.com/",
+            "https://ampcode.com:8443/threads/T-1",
+            "https://ampcode.com:80/threads/T-1",
+            "https://ampcode.com:65535/threads/T-1",
+            @threads <> "a%7Eb",
+            @threads <> "a%7eb",
+            @threads <> "a%2fb",
+            @threads <> "a:b@c!$&'()*+,;=-._~",
+            @threads <> "a.b/..c/.d",
+            "https://127.0.0.1/threads/T-1",
+            "https://[::1]/threads/T-1",
+            "https://[1:0:0:1::1]/threads/T-1",
+            long_url(2048)
+          ] do
+        columns = assert_accepted(links(%{"threads" => [url]}))
+        assert columns.link_threads == [url], url
+      end
+    end
+
+    test "a thread URL is an https URL with a host and only pchar in its path" do
+      for url <- [
+            @threads <> "T-1?",
+            @threads <> "T-1#",
+            @threads <> "T-1?token=secret",
+            @threads <> "T-1#frag",
+            "http://ampcode.com/threads/T-1",
+            "HTTPS://ampcode.com/threads/T-1",
+            "https://user:pw@ampcode.com/threads/T-1",
+            "https://@ampcode.com/threads/T-1",
+            "https:///threads/T-1",
+            "https://ampcode.com:65536/threads/T-1",
+            "ampcode.com/threads/T-1",
+            @threads <> "T-1[x]",
+            @threads <> "T-1]",
+            @threads <> "T|1",
+            @threads <> "T^1",
+            @threads <> "T-1%zz",
+            @threads <> "T-1%z",
+            @threads <> "T-1%"
+          ] do
+        assert_error(links(%{"threads" => [url]}), "links.threads[0]", "is invalid")
+      end
+
+      assert_error(links(%{"threads" => [long_url(2049)]}), "links.threads[0]", "is too long")
+      assert_error(links(%{"threads" => [7]}), "links.threads[0]", "must be a string")
+    end
+
+    test "a thread URL not in reqwest::Url form must be normalized" do
+      for url <- [
+            "https://AmpCode.com/threads/T-1",
+            "https://ampcode.com:443/threads/T-1",
+            "https://ampcode.com:0443/threads/T-1",
+            "https://ampcode.com:/threads/T-1",
+            "https://ampcode.com:080/threads/T-1",
+            "https://ampcode.com",
+            "https://ampcode.com/a/../threads/T-1",
+            "https://ampcode.com/a/./threads/T-1",
+            "https://ampcode.com/threads/T-1/.",
+            "https://ampcode.com/a/%2E%2e/threads/T-1",
+            "https://ampcode.com/a/%2e/threads/T-1",
+            "https://ampcode.com/a/.%2e/threads/T-1",
+            "https://ampcode.com/a/%2e./threads/T-1",
+            "https://ex%61mple.com/threads/T-1",
+            "https://127.1/threads/T-1",
+            "https://0x7f.1/threads/T-1",
+            "https://0x7f.0.0.1/threads/T-1",
+            "https://127.0.0.1./threads/T-1",
+            "https://127.000.0.1/threads/T-1",
+            "https://[0:0:0:0:0:0:0:1]/threads/T-1",
+            "https://[::FFFF:1.2.3.4]/threads/T-1",
+            "https://[::1]:443/threads/T-1"
+          ] do
+        errors =
+          assert_error(links(%{"threads" => [url]}), "links.threads[0]", "must be normalized")
+
+        assert errors == %{"links.threads[0]" => ["must be normalized"]}, url
+      end
+    end
+
+    test "link errors never echo a submitted value" do
+      document =
+        links(%{
+          "threads" => [
+            @threads <> "T-1?token=SENTINEL_TOKEN_9c4",
+            "https://SENTINEL-HOST.com/a",
+            "http://SENTINEL-http/a",
+            "https://h/SENTINEL" <> String.duplicate("s", 2048)
+          ],
+          "tickets" => ["SENTINEL TICKET", String.duplicate("SENTINEL", 9)],
+          "SENTINEL_KEY_9c4" => []
+        })
+
+      errors = errors(document)
+      assert map_size(errors) == 7
+      refute sentinel?(errors, "SENTINEL")
+
+      duplicates =
+        links(%{
+          "threads" => [@threads <> "SENTINEL", @threads <> "SENTINEL"],
+          "tickets" => ["SENTINEL-1", "sentinel-1"]
+        })
+
+      errors = errors(duplicates)
+      assert Map.keys(errors) |> Enum.sort() == ["links.threads[1]", "links.tickets[1]"]
+      refute errors |> inspect() |> String.downcase() |> String.contains?("sentinel")
+    end
+  end
+
+  defp links(links), do: Map.put(minimal(), "links", links)
+
+  defp long_url(bytes), do: @threads <> String.duplicate("a", bytes - byte_size(@threads))
 
   defp full, do: goodflows("full")
 

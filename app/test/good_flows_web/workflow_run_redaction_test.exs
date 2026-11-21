@@ -8,10 +8,13 @@ defmodule GoodFlowsWeb.WorkflowRunRedactionTest do
   import ExUnit.CaptureLog
   import GoodFlows.SpryFixtures
   import GoodFlows.WorkflowRunFixtures
+  import OpenApiSpex.TestAssertions
 
   alias GoodFlows.WorkflowRuns.Store
+  alias GoodFlowsWeb.ApiSpec
 
   @sentinel "SENTINEL-payload-do-not-log-4e7b"
+  @thread_sentinel "https://ampcode.com/threads/SENTINEL-thread-3a9f"
 
   setup :api_setup
 
@@ -114,6 +117,63 @@ defmodule GoodFlowsWeb.WorkflowRunRedactionTest do
     {context, events} = sentry_probe()
     refute_leaks(context, ctx)
     refute_leaks(events, ctx)
+  end
+
+  test "a pk_ show nulls links.threads and keeps tickets; an sk_ show returns links as stored",
+       ctx do
+    links = %{"threads" => [@thread_sentinel], "tickets" => ["GOO-291"]}
+    document = Map.put(full(), "links", links)
+    path = "/api/v1/projects/#{ctx.project.slug}/workflow-runs/#{document["run_id"]}"
+
+    log =
+      capture_log([level: :debug], fn ->
+        ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(201)
+
+        redacted = ctx.pk_conn |> get(path) |> json_response(200)
+        assert_schema(redacted, "WorkflowRunResponse", ApiSpec.spec())
+
+        assert redacted["data"]["document"]["links"] == %{
+                 "threads" => nil,
+                 "tickets" => ["GOO-291"]
+               }
+
+        refute inspect(redacted) =~ "SENTINEL-thread"
+
+        revealed = ctx.sk_conn |> get(path) |> json_response(200)
+        assert revealed["data"]["document"]["links"] == links
+        assert revealed["data"]["document"] == document
+      end)
+
+    refute log =~ "SENTINEL-thread"
+  end
+
+  test "a pk_ show of tickets-only links adds no threads key, and no links stays absent", ctx do
+    document = Map.put(full(), "links", %{"tickets" => ["GOO-291"]})
+
+    log =
+      capture_log([level: :debug], fn ->
+        ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(201)
+
+        shown =
+          ctx.pk_conn
+          |> get("/api/v1/projects/#{ctx.project.slug}/workflow-runs/#{document["run_id"]}")
+          |> json_response(200)
+
+        assert shown["data"]["document"]["links"] == %{"tickets" => ["GOO-291"]}
+
+        ctx.sk_conn |> upload(ctx.project.slug, json("minimal")) |> json_response(201)
+
+        for conn <- [ctx.pk_conn, ctx.sk_conn] do
+          shown =
+            conn
+            |> get("/api/v1/projects/#{ctx.project.slug}/workflow-runs/#{minimal()["run_id"]}")
+            |> json_response(200)
+
+          refute Map.has_key?(shown["data"]["document"], "links")
+        end
+      end)
+
+    refute log =~ "GOO-291"
   end
 
   test "validation, parser and storage errors do not reveal command text", ctx do

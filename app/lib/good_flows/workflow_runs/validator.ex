@@ -7,7 +7,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   `caller_job` together or not at all, and a result's `workflow` with an
   optional `child_run_id`. It also accepts the CLI upload envelope
   (goodflows `src/reporting/run_contract.rs`): an optional `source.branch`,
-  an optional top-level `ci`, and an optional top-level `graph`. Optional
+  an optional top-level `ci`, and an optional top-level `graph`. It also
+  accepts an optional top-level `links` (goodflows `add-run-links`): an
+  object with only `threads` and `tickets`, at least one of them. Optional
   keys are omit-only. Nullable keys are always present and may be null:
   a result's `command`, `exit_code` and `error`, a graph job's `command`,
   `partitions`, `timeout_secs` and `condition`, and a graph step's `shell`
@@ -19,6 +21,16 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   `call.graph_sha256` and never inlined: `call` has exactly `workflow` and
   `graph_sha256`.
 
+  `links.threads` entries are unique `https` URLs that must already be in
+  the form `reqwest::Url` (WHATWG) serializes: no userinfo, query or
+  fragment, only RFC 3986 `pchar` and `/` in the path, a lowercase host
+  without `%`, a canonical IP host, no empty, zero-padded or 443 port, a
+  nonempty path and no dot segment (including `%2e` spellings). Percent
+  triplets are compared as written, never decoded or recased. A URL that
+  is not in that form is `must be normalized`; it is never rewritten.
+  `links.tickets` entries are printable ASCII other than `,` and unique
+  ignoring ASCII case.
+
   `validate/1` takes a decoded document (`JsonDocument.decode/1`, or a
   plain map). It normalizes first, so duplicate keys, NUL characters and
   integers outside `±(2^53 - 1)` are fixed errors whose paths are cut back
@@ -26,10 +38,12 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   bounds. Outcome consistency runs only when every result status is valid.
 
   Instance caps live here: names are at most 64 bytes, `source.branch` and
-  `ci.run_id` at most 256, `ci.url` at most 2,048, `command`, `error` and
-  graph command and condition text at most 1,024 bytes, `requested_jobs`,
-  `commands` and `graph.jobs` 1 to 1,024 entries, `depends_on` and `steps`
-  at most 1,024 entries, and a partition count at most 64. Nesting deeper than
+  `ci.run_id` at most 256, `ci.url` and each thread URL at most 2,048,
+  tickets 1 to 64, `command`, `error` and graph command and condition text
+  at most 1,024 bytes, `requested_jobs`, `commands` and `graph.jobs` 1 to
+  1,024 entries, `links.threads` and `links.tickets` 1 to 32 entries,
+  `depends_on` and `steps` at most 1,024 entries, and a partition count at
+  most 64. Nesting deeper than
   `max_depth/0` (8) is rejected by the body plug's `JsonDocument.check_depth/2`
   before decode, not by this module. The same is true of the byte-size cap.
 
@@ -52,6 +66,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @max_ci_run_id_bytes 256
   @max_url_bytes 2_048
   @max_partitions 64
+  @max_links 32
+  @max_ticket_bytes 64
+  @max_port 65_535
   @max_rendered_errors 50
   @min_exit_code -2_147_483_648
   @max_exit_code 2_147_483_647
@@ -67,6 +84,14 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @sha256 ~r/\A[0-9a-f]{64}\z/
   @commit ~r/\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/
   @started_at ~r/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z/
+  @ticket ~r/\A[!-+\--~]+\z/
+  # Every byte an RFC 3986 `pchar` or `/`, every `%` a full triplet.
+  @url_path ~r/\A(?:[A-Za-z0-9\-._~!$&'()*+,;=:@\/]|%[0-9A-Fa-f]{2})*\z/
+  @dot_segments ~w(. %2e .. .%2e %2e. %2e%2e)
+  # WHATWG "ends in a number": the last label is digits, or `0x` and hex.
+  @numeric_label ~r/\A(?:[0-9]+|0[xX][0-9A-Fa-f]*)\z/
+  @ipv4_octet "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
+  @ipv4 Regex.compile!("\\A#{@ipv4_octet}(?:\\.#{@ipv4_octet}){3}\\z")
 
   @typedoc "Validation errors keyed by rendered JSON path."
   @type errors :: %{String.t() => [String.t()]}
@@ -74,7 +99,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   @typedoc """
   Values copied into `workflow_runs` columns. Absent omit-only fields are
   `nil`. `source_dirty` is `false` when the document sent `false`. `ci` is
-  the document's `ci` object.
+  the document's `ci` object. `link_tickets` holds `links.tickets`
+  ASCII-lowercased and `link_threads` holds `links.threads` as sent; both
+  are `[]` when absent.
   """
   @type columns :: %{
           run_id: String.t(),
@@ -90,7 +117,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
           source_dirty: boolean() | nil,
           source_branch: String.t() | nil,
           ci: map() | nil,
-          host: map()
+          host: map(),
+          link_tickets: [String.t()],
+          link_threads: [String.t()]
         }
 
   @doc "Maximum object and array nesting of a workflow-run body."
@@ -159,6 +188,21 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   def valid_graph_sha256?(_value), do: false
 
   @doc """
+  Whether `value` follows the ticket rule: 1 to 64 bytes of printable
+  ASCII (`!` to `~`) other than `,`.
+  """
+  @spec valid_ticket?(term()) :: boolean()
+  def valid_ticket?(value) when is_binary(value), do: Shape.check(value, ticket(), []) == []
+  def valid_ticket?(_value), do: false
+
+  @doc """
+  Whether `value` is a thread URL already in normalized form (see the
+  module documentation). It is checked as written, never rewritten.
+  """
+  @spec valid_thread_url?(term()) :: boolean()
+  def valid_thread_url?(value), do: thread_url_errors(value, []) == []
+
+  @doc """
   Renders `{path, message}` errors (as from `GoodFlows.JsonDocument.normalize/1`)
   against the document spec.
 
@@ -197,6 +241,7 @@ defmodule GoodFlows.WorkflowRuns.Validator do
        "host" => host_spec(),
        "source" => {:omit, source_spec()},
        "ci" => {:omit, ci_spec()},
+       "links" => {:omit, links_spec()},
        "results" => {:list, result_spec()},
        "graph" => {:omit, graph_spec()}
      }}
@@ -299,9 +344,14 @@ defmodule GoodFlows.WorkflowRuns.Validator do
       source_dirty: source_value(source, "dirty"),
       source_branch: source_value(source, "branch"),
       ci: Map.get(document, "ci"),
-      host: document["host"]
+      host: document["host"],
+      link_tickets: document |> link_list("tickets") |> Enum.map(&String.downcase(&1, :ascii)),
+      link_threads: link_list(document, "threads")
     }
   end
+
+  defp link_list(%{"links" => links}, key), do: Map.get(links, key, [])
+  defp link_list(_document, _key), do: []
 
   defp source_value(source, key) when is_map(source), do: Map.get(source, key)
   defp source_value(_source, _key), do: nil
@@ -315,7 +365,8 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   # orphan must not make the walk grow with the result count. The kept
   # set matches merging the full lists and then taking 50.
   defp cross_field_errors(document) do
-    pair_errors(document) ++ outcome_errors(document) ++ graph_errors(document)
+    pair_errors(document) ++
+      outcome_errors(document) ++ graph_errors(document) ++ links_errors(document)
   end
 
   defp merge_errors(structural, extra, spec) do
@@ -542,6 +593,46 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   defp continue_visit({:ok, _colors} = ok), do: {:cont, ok}
   defp continue_visit(cycle), do: {:halt, cycle}
 
+  # An object with neither list is empty. Repeats are looked for only in
+  # a list within bounds whose entries are all valid, so a structural
+  # error is not reported twice. Tickets compare ignoring ASCII case;
+  # thread URLs are already normalized and compare exactly.
+  defp links_errors(%{"links" => links}) when is_map(links) do
+    empty =
+      if Map.has_key?(links, "threads") or Map.has_key?(links, "tickets"),
+        do: [],
+        else: [{["links"], "must not be empty"}]
+
+    empty ++
+      repeats(links, "threads", &valid_thread_url?/1, & &1) ++
+      repeats(links, "tickets", &valid_ticket?/1, &String.downcase(&1, :ascii))
+  end
+
+  defp links_errors(_document), do: []
+
+  defp repeats(links, key, valid?, compare_as) do
+    with {:ok, list} when is_list(list) and list != [] and length(list) <= @max_links <-
+           Map.fetch(links, key),
+         true <- Enum.all?(list, valid?) do
+      list |> Enum.map(compare_as) |> repeat_errors(key)
+    else
+      _other -> []
+    end
+  end
+
+  defp repeat_errors(values, key) do
+    {errors, _seen} =
+      values
+      |> Enum.with_index()
+      |> Enum.reduce({[], MapSet.new()}, fn {value, i}, {errors, seen} ->
+        if MapSet.member?(seen, value),
+          do: {[{["links", key, i], "must be unique"} | errors], seen},
+          else: {errors, MapSet.put(seen, value)}
+      end)
+
+    Enum.reverse(errors)
+  end
+
   defp name, do: {:string, min: 1, max: @max_name_bytes, no_control: true, non_blank: true}
   defp uuid, do: {:string, format: @uuid}
   defp nonneg, do: {:int, 0}
@@ -582,6 +673,17 @@ defmodule GoodFlows.WorkflowRuns.Validator do
        "url" => {:omit, {:fun, &ci_url_errors/2, :ci_url}}
      }}
   end
+
+  defp links_spec do
+    {:object,
+     %{
+       "threads" =>
+         {:omit, {:list, {:fun, &thread_url_errors/2, :thread_url}, min: 1, max: @max_links}},
+       "tickets" => {:omit, {:list, ticket(), min: 1, max: @max_links}}
+     }}
+  end
+
+  defp ticket, do: {:string, min: 1, max: @max_ticket_bytes, format: @ticket}
 
   defp graph_spec do
     {:object, %{"jobs" => {:list, graph_job_spec(), min: 1, max: @max_list_entries}}}
@@ -705,6 +807,106 @@ defmodule GoodFlows.WorkflowRuns.Validator do
     case URI.new(value) do
       {:ok, %URI{scheme: "https", host: host}} when is_binary(host) and host != "" -> true
       _other -> false
+    end
+  end
+
+  # Design D2: the URL must already equal its `reqwest::Url` (WHATWG)
+  # serialization. It is checked as written and never rewritten, and
+  # percent triplets are never decoded or recased. `URI.new/1` accepts
+  # `%zz` and a trailing `%` in a path, so the path rule is checked here.
+  defp thread_url_errors(value, path) when is_binary(value) do
+    if byte_size(value) > @max_url_bytes,
+      do: [{path, "is too long"}],
+      else: thread_url_form_errors(value, path)
+  end
+
+  defp thread_url_errors(_value, path), do: [{path, "must be a string"}]
+
+  defp thread_url_form_errors(value, path) do
+    case parse_thread_url(value) do
+      {:ok, uri} ->
+        if normalized_url?(value, uri), do: [], else: [{path, "must be normalized"}]
+
+      :error ->
+        [{path, "is invalid"}]
+    end
+  end
+
+  defp parse_thread_url("https://" <> _rest = value) do
+    with {:ok, %URI{host: host, port: port, userinfo: nil, query: nil, fragment: nil} = uri}
+         when is_binary(host) and host != "" and is_integer(port) and port <= @max_port <-
+           URI.new(value),
+         true <- Regex.match?(@url_path, uri.path || "") do
+      {:ok, uri}
+    else
+      _other -> :error
+    end
+  end
+
+  defp parse_thread_url(_value), do: :error
+
+  # `URI.to_string/1` drops an empty or 443 port and unpads a port, so a
+  # round trip catches `:`, `:443`, `:0443` and `:080`.
+  defp normalized_url?(value, %URI{host: host, path: path} = uri) do
+    URI.to_string(uri) == value and is_binary(path) and path != "" and
+      not Enum.any?(String.split(path, "/"), &dot_segment?/1) and
+      not Regex.match?(~r/[A-Z%]/, host) and canonical_ip_host?(host)
+  end
+
+  defp dot_segment?(segment), do: String.downcase(segment, :ascii) in @dot_segments
+
+  # `URI` strips the brackets of an IPv6 host, and a reg-name has no `:`.
+  defp canonical_ip_host?(host) do
+    cond do
+      String.contains?(host, ":") -> canonical_ipv6?(host)
+      ends_in_number?(host) -> Regex.match?(@ipv4, host)
+      true -> true
+    end
+  end
+
+  defp ends_in_number?(host) do
+    last =
+      case host |> String.split(".") |> Enum.reverse() do
+        ["", label | _rest] -> label
+        [label | _rest] -> label
+      end
+
+    Regex.match?(@numeric_label, last)
+  end
+
+  defp canonical_ipv6?(host) do
+    case :inet.parse_ipv6strict_address(String.to_charlist(host)) do
+      {:ok, address} -> ipv6_string(Tuple.to_list(address)) == host
+      {:error, _reason} -> false
+    end
+  end
+
+  # WHATWG IPv6 serialization: lowercase hex without leading zeros, the
+  # first longest run of two or more zero pieces as `::`, no dotted quad.
+  defp ipv6_string(pieces) do
+    case longest_zero_run(pieces) do
+      {start, length} when length >= 2 ->
+        hex_pieces(Enum.take(pieces, start)) <>
+          "::" <> hex_pieces(Enum.drop(pieces, start + length))
+
+      _shorter ->
+        hex_pieces(pieces)
+    end
+  end
+
+  defp hex_pieces(pieces),
+    do: Enum.map_join(pieces, ":", &(&1 |> Integer.to_string(16) |> String.downcase()))
+
+  # `Enum.max_by/3` keeps the first of equal runs.
+  defp longest_zero_run(pieces) do
+    pieces
+    |> Enum.with_index()
+    |> Enum.chunk_by(fn {piece, _i} -> piece == 0 end)
+    |> Enum.filter(&match?([{0, _i} | _rest], &1))
+    |> Enum.max_by(&length/1, fn -> [] end)
+    |> case do
+      [{0, start} | _rest] = run -> {start, length(run)}
+      [] -> {0, 0}
     end
   end
 

@@ -8,7 +8,9 @@ defmodule GoodFlows.WorkflowRuns.Run do
   validated run-history document as JSONB. It never contains a project slug.
   The extracted columns duplicate fields the list filters and summaries
   need, including `host`, `source_branch` and `ci`, so a list never reads
-  `payload`.
+  `payload`. `link_tickets` (ASCII-lowercased) and `link_threads` (as
+  sent) copy `links` for the link filters and are empty when the document
+  has none. They are not part of a summary.
   `payload_digest` is the SHA-256 of the payload's canonical JSON
   (`GoodFlows.JsonDocument.digest/1`), used to compare retries. Rows are
   inserted once and never updated.
@@ -41,6 +43,8 @@ defmodule GoodFlows.WorkflowRuns.Run do
     field :source_branch, :string
     field :ci, :map
     field :host, :map
+    field :link_tickets, {:array, :string}, default: []
+    field :link_threads, {:array, :string}, default: []
     field :payload, :map
     field :payload_digest, :binary
 

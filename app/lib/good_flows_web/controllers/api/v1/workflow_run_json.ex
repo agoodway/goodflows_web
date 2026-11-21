@@ -9,7 +9,15 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
 
   Public keys (`redact?: true`) see each `results` entry's `command` and
   `error` as null, and in `graph` each job's and step's `command` and each
-  condition's `text` as null. The stored row is never written here.
+  condition's `text` as null. They also see `links.threads` as null when
+  the document has it; a document without `links.threads` gains no such
+  key, and `links.tickets` is as stored. The stored row is never written
+  here.
+
+  The `links.threads` redaction stays in a code rollback of `links`
+  support (design D5 of `accept-run-links`): runs stored while `links` was
+  accepted keep it in `payload`, so it must stay hidden from public keys.
+  It depends only on the stored document, not on validation or filters.
   """
 
   alias GoodFlows.TestReports.Report
@@ -19,7 +27,8 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
   Renders an upload acknowledgement, or one stored run.
 
   The acknowledgement does not include the document. A show render redacts
-  command text, errors and graph condition text when `redact?` is true.
+  command text, errors, graph condition text and thread URLs when
+  `redact?` is true.
   """
   def show(%{ack: ack}), do: %{data: Map.take(ack, [:id, :run_id, :duplicate])}
 
@@ -76,7 +85,13 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
     payload
     |> update_list("results", &redact_result/1)
     |> redact_graph()
+    |> redact_threads()
   end
+
+  defp redact_threads(%{"links" => %{"threads" => _threads} = links} = payload),
+    do: %{payload | "links" => %{links | "threads" => nil}}
+
+  defp redact_threads(payload), do: payload
 
   defp redact_result(result) do
     result |> Map.put("command", nil) |> Map.put("error", nil)
