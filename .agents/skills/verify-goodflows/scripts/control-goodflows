@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# Launches, inspects, drives, and tears down one isolated GoodFlows Web
+# instance for verification. See ../SKILL.md. Every command except `launch`
+# needs RUN_ID, which `launch` prints.
+#
+#   eval "$(control-goodflows launch)"     # exports RUN_ID, GF_URL, GF_RUN_DIR
+#   control-goodflows doctor
+#   control-goodflows login
+#   control-goodflows browser <agent-browser args...>
+#   control-goodflows api <name> <METHOD> <path> [json-body]
+#   control-goodflows db <sql> [output-file]
+#   control-goodflows record <feature-id> <entry-point> <pass|fail> <artifact>...
+#   control-goodflows finish <pass|fail|partial> [note]
+#   control-goodflows cleanup
+set -euo pipefail
+
+repo=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
+app="$repo/app"
+evidence_root="$repo/.verify/goodflows"
+email=user@example.com
+password=password1234password1234
+
+[[ -f "$HOME/.local/share/goodflows/env" ]] && source "$HOME/.local/share/goodflows/env"
+export PGUSER=${PGUSER:-postgres} PGPASSWORD=${PGPASSWORD:-postgres} PGHOST=${PGHOST:-localhost}
+
+die() { echo "control-goodflows: $*" >&2; exit 1; }
+
+load_run() {
+  [[ -n ${RUN_ID:-} ]] || die "RUN_ID is not set; run: eval \"\$(control-goodflows launch)\""
+  run_dir="$evidence_root/$RUN_ID"
+  [[ -f "$run_dir/instance.env" ]] || die "no instance for RUN_ID=$RUN_ID ($run_dir/instance.env missing)"
+  # shellcheck source=/dev/null
+  source "$run_dir/instance.env"
+}
+
+port_free() { ! ss -ltn "sport = :$1" | grep -q LISTEN; }
+
+cmd_launch() {
+  command -v agent-browser >/dev/null || die "agent-browser is not installed"
+  command -v mix >/dev/null || die "mix is not on PATH; run .agents/setup"
+  if ! pg_isready -q -h localhost -p 5432; then
+    [[ -x "$repo/.agents/resume" ]] && "$repo/.agents/resume" >&2
+    pg_isready -q -h localhost -p 5432 || die "PostgreSQL is not accepting connections on localhost:5432"
+  fi
+
+  local port=${VERIFY_PORT:-}
+  if [[ -z $port ]]; then
+    for candidate in $(seq 4400 4499); do
+      if port_free "$candidate"; then port=$candidate; break; fi
+    done
+    [[ -n $port ]] || die "no free port in 4400-4499; set VERIFY_PORT"
+  fi
+  port_free "$port" || die "port $port is already in use; refusing to drive an instance this run did not start"
+
+  local stamp sha run_id branch_db
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  sha=$(git -C "$repo" rev-parse HEAD)
+  run_id="$stamp-${sha:0:7}"
+  branch_db="verify_$(date -u +%Y%m%d%H%M%S)"
+  run_dir="$evidence_root/$run_id"
+  mkdir -p "$run_dir"
+  grep -qxF '/.verify/' "$repo/.gitignore" 2>/dev/null || printf '/.verify/\n' >>"$repo/.gitignore"
+
+  local porcelain tree
+  porcelain=$(git -C "$repo" status --porcelain -- . ':!.verify' ':!.gitignore')
+  if [[ -z $porcelain ]]; then tree=clean; else tree=dirty; fi
+  {
+    echo "# GoodFlows verification run $run_id"
+    echo
+    echo "- Commit: \`$sha\`"
+    echo "- Branch: \`$(git -C "$repo" branch --show-current || true)\`"
+    echo "- Working tree: $tree"
+    if [[ $tree == dirty ]]; then
+      echo "- Changed files:"
+      printf '%s\n' "$porcelain" | sed 's/^/  - `/; s/$/`/'
+    fi
+    echo "- Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "- URL: http://127.0.0.1:$port"
+    echo "- Database: \`good_flows_${branch_db}_dev\` (created and dropped by this run)"
+    echo
+    echo "## Features"
+    echo
+    echo "| Feature | Entry point | Result | Artifacts |"
+    echo "| --- | --- | --- | --- |"
+  } >"$run_dir/run.md"
+
+  # A fresh database from nothing: create, migrate, seed. Explicit env vars
+  # beat the .env files, so the default good_flows_dev database is untouched.
+  echo "control-goodflows: creating, migrating, and seeding good_flows_${branch_db}_dev" >&2
+  (cd "$app" && env -u PHX_HOST BRANCH_DB="$branch_db" MIX_ENV=dev mix ecto.setup) \
+    >"$run_dir/ecto-setup.log" 2>&1 || { tail -30 "$run_dir/ecto-setup.log" >&2; die "mix ecto.setup failed"; }
+
+  (cd "$app" && exec env -u PHX_HOST BRANCH_DB="$branch_db" PORT="$port" MIX_ENV=dev \
+    setsid mix phx.server) >"$run_dir/server.log" 2>&1 &
+  local pid=$!
+  cat >"$run_dir/instance.env" <<ENV
+GF_PORT=$port
+GF_URL=http://127.0.0.1:$port
+GF_PID=$pid
+GF_BRANCH_DB=$branch_db
+GF_DB=good_flows_${branch_db}_dev
+GF_SHA=$sha
+GF_BROWSER_SESSION=verify-goodflows-$run_id
+ENV
+
+  for _ in $(seq 180); do
+    kill -0 "$pid" 2>/dev/null || { tail -30 "$run_dir/server.log" >&2; die "server exited during startup"; }
+    if grep -q 'Running GoodFlowsWeb.Endpoint' "$run_dir/server.log" &&
+      [[ $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/users/log-in") == 200 ]]; then
+      echo "export RUN_ID=$run_id GF_URL=http://127.0.0.1:$port GF_RUN_DIR=$run_dir"
+      echo "control-goodflows: ready at http://127.0.0.1:$port (pid $pid)" >&2
+      return 0
+    fi
+    sleep 1
+  done
+  die "server not ready after 180s; see $run_dir/server.log"
+}
+
+cmd_doctor() {
+  load_run
+  local ok=0
+  check() { if "${@:2}"; then echo "ok    $1"; else echo "FAIL  $1"; ok=1; fi; }
+  check "server process $GF_PID is alive" kill -0 "$GF_PID"
+  check "port $GF_PORT is owned by this run's server" \
+    bash -c "ss -ltnpH 'sport = :$GF_PORT' | grep -q 'pid=' && \
+      for p in \$(ss -ltnpH 'sport = :$GF_PORT' | grep -o 'pid=[0-9]*' | cut -d= -f2); do \
+        [[ \$(ps -o sid= -p \$p | tr -d ' ') == $GF_PID ]] || exit 1; done"
+  check "GET /users/log-in returns 200" \
+    bash -c "[[ \$(curl -s -o /dev/null -w '%{http_code}' $GF_URL/users/log-in) == 200 ]]"
+  check "database $GF_DB has the seeded $email in Acme Corp and Globex Industries" \
+    bash -c "[[ \$(psql -d $GF_DB -tAc \"select count(*) from accounts a join account_users au on au.account_id = a.id join users u on u.id = au.user_id where u.email = '$email' and a.name in ('Acme Corp', 'Globex Industries')\") == 2 ]]"
+  check "checkout is still at the launched commit ${GF_SHA:0:7}" \
+    bash -c "[[ \$(git -C $repo rev-parse HEAD) == $GF_SHA ]]"
+  return $ok
+}
+
+ab() { agent-browser --session "$GF_BROWSER_SESSION" "$@"; }
+
+cmd_browser() {
+  load_run
+  ab "$@"
+}
+
+cmd_login() {
+  load_run
+  ab open "$GF_URL/users/log-in" >/dev/null
+  ab set viewport 1280 800 2 >/dev/null
+  ab fill '#login_form_password input[type=email]' "$email" >/dev/null
+  ab fill '#login_form_password input[type=password]' "$password" >/dev/null
+  ab find role button click --name "Log in only this time" >/dev/null
+  # Login goes to the page that bounced the user to log in, else `/`. Every
+  # signed-in layout links to /users/log-out (`Log out` or `Sign out`).
+  ab wait --fn "location.pathname !== '/users/log-in' && !!document.querySelector('a[href=\"/users/log-out\"]')" >/dev/null
+  ab get url
+}
+
+cmd_api() {
+  load_run
+  [[ $# -ge 3 ]] || die "usage: api <name> <METHOD> <path> [json-body]"
+  [[ -n ${GF_API_KEY:-} ]] || die "GF_API_KEY is not set; create a key through the API Keys page first"
+  local name=$1 method=$2 path=$3 body=${4:-}
+  local out="$run_dir/api/$name"
+  mkdir -p "$run_dir/api"
+  local args=(-sS -X "$method" -H "Authorization: Bearer $GF_API_KEY" -H 'accept: application/json'
+    -o "$out.json" -w '%{http_code}' "$GF_URL$path")
+  [[ -n $body ]] && args+=(-H 'content-type: application/json' --data "$body")
+  printf '%s %s\n%s\n' "$method" "$path" "$body" >"$out.request"
+  curl "${args[@]}" >"$out.status"
+  echo "HTTP $(cat "$out.status")  ($out.json)"
+  jq -c . "$out.json" 2>/dev/null || cat "$out.json"
+}
+
+cmd_db() {
+  load_run
+  [[ $# -ge 1 ]] || die "usage: db <sql> [output-file]"
+  # Read-only: a side-effect check must not change what it checks.
+  local out
+  out=$(psql -X -q -v ON_ERROR_STOP=1 -d "$GF_DB" -tA -c "set default_transaction_read_only = on; $1")
+  if [[ -n ${2:-} ]]; then
+    mkdir -p "$(dirname "$run_dir/$2")"
+    printf '%s\n%s\n' "-- $1" "$out" >"$run_dir/$2"
+  fi
+  printf '%s\n' "$out"
+}
+
+cmd_record() {
+  load_run
+  [[ $# -ge 3 ]] || die "usage: record <feature-id> <entry-point> <pass|fail> <artifact>..."
+  local feature=$1 entry=$2 result=$3
+  shift 3
+  local artifacts
+  artifacts=$(printf '`%s` ' "$@")
+  echo "| \`$feature\` | $entry | $result | $artifacts|" >>"$run_dir/run.md"
+}
+
+cmd_finish() {
+  load_run
+  { echo; echo "## Outcome"; echo; echo "- Finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "- Outcome: ${1:?pass, fail, or partial}${2:+ — $2}"; } >>"$run_dir/run.md"
+}
+
+cmd_cleanup() {
+  load_run
+  ab close >/dev/null 2>&1 || true
+  if kill -0 "$GF_PID" 2>/dev/null; then
+    # setsid made the server a session and group leader: this kills only what launch started.
+    kill -TERM -- "-$GF_PID" 2>/dev/null || true
+    for _ in $(seq 20); do kill -0 "$GF_PID" 2>/dev/null || break; sleep 0.5; done
+    kill -KILL -- "-$GF_PID" 2>/dev/null || true
+  fi
+  dropdb --if-exists --force "$GF_DB"
+  echo "- Cleaned up: $(date -u +%Y-%m-%dT%H:%M:%SZ) (server stopped, $GF_DB dropped, browser session closed)" >>"$run_dir/run.md"
+  echo "control-goodflows: cleaned up; evidence kept in $run_dir" >&2
+}
+
+command=${1:-}
+shift || true
+case $command in
+  launch | doctor | login | browser | api | db | record | finish | cleanup) "cmd_$command" "$@" ;;
+  *) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
