@@ -54,7 +54,8 @@ defmodule GoodFlows.ReviewPolicies do
 
   @doc """
   The current version compiled for verdicts: its number, the effective
-  document and each `paths` glob with its outcome and regex.
+  document, each `paths` glob with its outcome and regex, and the
+  `evidence.ignore_paths` regexes.
   """
   @spec compiled(Ecto.UUID.t()) :: GoodFlows.ChangeRequests.Rules.policy()
   def compiled(project_id) do
@@ -70,7 +71,8 @@ defmodule GoodFlows.ReviewPolicies do
     %{
       version: number,
       effective: effective,
-      globs: Enum.map(effective["paths"], &{&1["glob"], &1["outcome"], Glob.compile(&1["glob"])})
+      globs: Enum.map(effective["paths"], &{&1["glob"], &1["outcome"], Glob.compile(&1["glob"])}),
+      ignore: Enum.map(effective["evidence"]["ignore_paths"], &Glob.compile/1)
     }
   end
 
@@ -117,16 +119,8 @@ defmodule GoodFlows.ReviewPolicies do
   defp before_cursor(query, nil), do: query
   defp before_cursor(query, version), do: where(query, [v], v.version < ^version)
 
-  defp list_params(params) do
-    {%{limit: @default_page_size, cursor: nil}, %{limit: :integer, cursor: :string}}
-    |> Ecto.Changeset.cast(params, [:limit, :cursor], empty_values: [])
-    |> Ecto.Changeset.validate_number(:limit,
-      greater_than_or_equal_to: 1,
-      less_than_or_equal_to: @max_page_size
-    )
-    |> KeysetCursor.put_cursor(&KeysetCursor.decode_integer/1)
-    |> Ecto.Changeset.apply_action(:list)
-  end
+  defp list_params(params),
+    do: KeysetCursor.integer_page_params(params, @default_page_size, @max_page_size)
 
   @doc """
   Writes a new version from a normalized body. Returns `{:ok, :created,

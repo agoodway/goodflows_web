@@ -107,6 +107,18 @@ defmodule GoodFlowsWeb.Router do
     get "/change-requests/:number/git-facts/:head", ChangeRequestController, :show_git_facts
     get "/change-requests/:number/claims/:head", ChangeRequestController, :show_claims
     get "/change-requests/:number/verdict", ChangeRequestController, :verdict
+    get "/change-requests/:number/scenario-sets", ScenarioSetController, :index
+
+    get "/change-requests/:number/scenario-sets/:source/versions/:version",
+        ScenarioSetController,
+        :show
+
+    get "/change-requests/:number/scenario-sets/:source/compare", ScenarioSetController, :compare
+    get "/verify-runs", VerifyRunController, :index
+    get "/verify-runs/:run_id", VerifyRunController, :show
+    get "/feature-index", FeatureIndexController, :show
+    get "/feature-index/versions", FeatureIndexController, :index
+    get "/feature-index/versions/:version", FeatureIndexController, :show_version
   end
 
   # Cache lookup, reserve and commit: `sk_` and `ck_` keys. The per-scope
@@ -153,6 +165,19 @@ defmodule GoodFlowsWeb.Router do
     post "/change-requests/:number/merged", ChangeRequestController, :merged
     post "/change-requests/:number/git-facts", ChangeRequestController, :report_git_facts
     post "/change-requests/:number/claims", ChangeRequestController, :upload_claims
+    post "/change-requests/:number/scenario-sets", ScenarioSetController, :create
+
+    post "/change-requests/:number/scenario-sets/:source/approvals",
+         ScenarioSetController,
+         :approve
+
+    post "/change-requests/:number/scenario-sets/:source/rejections",
+         ScenarioSetController,
+         :reject
+
+    post "/verify-runs", VerifyRunController, :create
+    post "/verify-runs/:run_id/commit", VerifyRunController, :commit
+    post "/feature-index", FeatureIndexController, :create
   end
 
   # Cache listing and purging: private (sk_) keys only, and `503` while no

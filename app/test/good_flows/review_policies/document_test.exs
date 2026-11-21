@@ -39,15 +39,21 @@ defmodule GoodFlows.ReviewPolicies.DocumentTest do
     end
   end
 
-  test "active settings cover phase 1 only" do
+  test "active settings cover phases 1 and 2, not merge" do
     active = Document.active_settings()
     assert "claims.one_way_door" in active
     assert "evidence.required_workflows" in active
     assert "paths" in active
     assert "size.max_changed_lines" in active
 
-    refute Enum.any?(active, &String.starts_with?(&1, ["scenarios.", "coverage.", "merge."]))
-    refute "evidence.ignore_paths" in active
+    for setting <-
+          ~w(scenarios.require_approved_intent scenarios.should_failures scenarios.spec_gaps
+          scenarios.approver evidence.ignore_paths coverage.unmapped_areas
+          coverage.undriven_features) do
+      assert setting in active
+    end
+
+    refute Enum.any?(active, &String.starts_with?(&1, "merge."))
   end
 
   describe "validate_write/1" do

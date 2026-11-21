@@ -88,7 +88,24 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/change-requests/{number}/git-facts/{head}", "get"},
     {"/api/v1/projects/{project}/change-requests/{number}/claims", "post"},
     {"/api/v1/projects/{project}/change-requests/{number}/claims/{head}", "get"},
-    {"/api/v1/projects/{project}/change-requests/{number}/verdict", "get"}
+    {"/api/v1/projects/{project}/change-requests/{number}/verdict", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/scenario-sets", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/scenario-sets", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/scenario-sets/{source}/versions/{version}",
+     "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/scenario-sets/{source}/compare", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/scenario-sets/{source}/approvals",
+     "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/scenario-sets/{source}/rejections",
+     "post"},
+    {"/api/v1/projects/{project}/verify-runs", "get"},
+    {"/api/v1/projects/{project}/verify-runs", "post"},
+    {"/api/v1/projects/{project}/verify-runs/{run_id}", "get"},
+    {"/api/v1/projects/{project}/verify-runs/{run_id}/commit", "post"},
+    {"/api/v1/projects/{project}/feature-index", "get"},
+    {"/api/v1/projects/{project}/feature-index", "post"},
+    {"/api/v1/projects/{project}/feature-index/versions", "get"},
+    {"/api/v1/projects/{project}/feature-index/versions/{version}", "get"}
   ]
 
   test "documents the project slug rule on every project path parameter", %{conn: conn} do
@@ -576,6 +593,8 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
     @cr "/api/v1/projects/{project}/change-requests"
     @rp "/api/v1/projects/{project}/review-policy"
+    @vr "/api/v1/projects/{project}/verify-runs"
+    @fi "/api/v1/projects/{project}/feature-index"
 
     @statuses [
       {@cr, "get", ~w(200 401 403 404 406 422)},
@@ -594,7 +613,24 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       {@rp, "get", ~w(200 401 403 404 406 422)},
       {@rp, "put", ~w(200 201 400 401 403 404 406 409 413 415 422)},
       {@rp <> "/versions", "get", ~w(200 401 403 404 406 422)},
-      {@rp <> "/versions/{version}", "get", ~w(200 401 403 404 406 422)}
+      {@rp <> "/versions/{version}", "get", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/scenario-sets", "get", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/scenario-sets", "post", ~w(200 201 400 401 403 404 406 409 413 415 422)},
+      {@cr <> "/{number}/scenario-sets/{source}/versions/{version}", "get",
+       ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/scenario-sets/{source}/compare", "get", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/scenario-sets/{source}/approvals", "post",
+       ~w(200 201 400 401 403 404 406 409 413 415 422)},
+      {@cr <> "/{number}/scenario-sets/{source}/rejections", "post",
+       ~w(200 201 400 401 403 404 406 409 413 415 422)},
+      {@vr, "get", ~w(200 401 403 404 406 422)},
+      {@vr, "post", ~w(200 201 400 401 403 404 406 409 413 415 422 503)},
+      {@vr <> "/{run_id}", "get", ~w(200 401 403 404 406 422)},
+      {@vr <> "/{run_id}/commit", "post", ~w(200 401 403 404 406 422 503)},
+      {@fi, "get", ~w(200 401 403 404 406 422)},
+      {@fi, "post", ~w(200 201 400 401 403 404 406 413 415 422)},
+      {@fi <> "/versions", "get", ~w(200 401 403 404 406 422)},
+      {@fi <> "/versions/{version}", "get", ~w(200 401 403 404 406 422)}
     ]
 
     test "every operation lists its statuses", %{paths: paths} do
@@ -610,7 +646,12 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
             {@cr, "post", "ChangeRequestCreateRequest"},
             {@cr <> "/{number}/merged", "post", "ChangeRequestMergeRequest"},
             {@cr <> "/{number}/git-facts", "post", "GitFactsDocument"},
-            {@rp, "put", "ReviewPolicyWriteRequest"}
+            {@rp, "put", "ReviewPolicyWriteRequest"},
+            {@cr <> "/{number}/scenario-sets", "post", "ScenarioSetUploadRequest"},
+            {@cr <> "/{number}/scenario-sets/{source}/approvals", "post",
+             "ScenarioSetDecisionRequest"},
+            {@vr, "post", "VerifyRunRequest"},
+            {@fi, "post", "FeatureIndexSyncRequest"}
           ] do
         assert get_in(paths, [
                  path,
@@ -626,6 +667,13 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
       claims = get_in(paths, [@cr <> "/{number}/claims", "post", "requestBody", "content"])
       assert Map.keys(claims) == ["text/markdown"]
+    end
+
+    test "the project delete 409 names change requests and verify runs", %{conn: conn} do
+      doc = conn |> get(~p"/api/v1/openapi") |> json_response(200)
+      conflict = doc["paths"]["/api/v1/projects/{project}"]["delete"]["responses"]["409"]
+      assert conflict["description"] =~ "change requests"
+      assert conflict["description"] =~ "verify runs"
     end
   end
 end

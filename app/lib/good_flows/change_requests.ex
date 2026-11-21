@@ -30,7 +30,16 @@ defmodule GoodFlows.ChangeRequests do
 
   alias GoodFlows.Accounts.{Account, ApiKey}
   alias GoodFlows.ChangeRequests.{ChangeRequest, Claims, ClaimsDocument, Event}
-  alias GoodFlows.ChangeRequests.{GitFacts, GitFactsValidator, Params, RecomputeJob, Rules}
+
+  alias GoodFlows.ChangeRequests.{
+    GitFacts,
+    GitFactsValidator,
+    Grading,
+    Params,
+    RecomputeJob,
+    Rules
+  }
+
   alias GoodFlows.ChangeRequests.Verdict
   alias GoodFlows.JsonDocument
   alias GoodFlows.KeysetCursor
@@ -337,11 +346,22 @@ defmodule GoodFlows.ChangeRequests do
     {status, updated}
   end
 
-  defp lock_active(change_request) do
+  @doc """
+  Locks the change request row (`FOR UPDATE`) inside the caller's
+  transaction and returns it fresh, rolling back with `:not_active` when it
+  is not `draft` or `open`.
+  """
+  @spec lock_active(ChangeRequest.t()) :: ChangeRequest.t()
+  def lock_active(change_request) do
     change_request = lock(change_request)
     if require_active(change_request) != :ok, do: Repo.rollback(:not_active)
     change_request
   end
+
+  @doc "`:ok` for a `draft` or `open` change request, else `{:error, :not_active}`."
+  @spec require_active(ChangeRequest.t()) :: :ok | {:error, :not_active}
+  def require_active(%ChangeRequest{state: state}) when state in @active_states, do: :ok
+  def require_active(%ChangeRequest{}), do: {:error, :not_active}
 
   defp store_git_facts(change_request, api_key, document) do
     digest = JsonDocument.digest(document)
@@ -469,9 +489,6 @@ defmodule GoodFlows.ChangeRequests do
     end
   end
 
-  defp require_active(%ChangeRequest{state: state}) when state in @active_states, do: :ok
-  defp require_active(%ChangeRequest{}), do: {:error, :not_active}
-
   defp unwrap_status({:ok, {status, change_request}}), do: {:ok, status, change_request}
   defp unwrap_status({:error, reason}), do: {:error, reason}
 
@@ -535,13 +552,16 @@ defmodule GoodFlows.ChangeRequests do
     policy = policy || ReviewPolicies.compiled(change_request.project_id)
     facts = current_facts(change_request)
 
+    grading = Grading.load(change_request, facts && facts.document, policy)
+
     verdict =
       Rules.evaluate(%{
         head: change_request.head,
         git_facts: facts && %{document: facts.document, digest: facts.digest},
         claims: facts && current_claims(change_request),
         workflows: required_workflows(change_request, policy),
-        policy: policy
+        policy: policy,
+        grading: grading
       })
 
     Repo.insert!(
@@ -552,16 +572,40 @@ defmodule GoodFlows.ChangeRequests do
         policy_version: verdict.policy_version,
         reasons: verdict.reasons,
         inputs: verdict.inputs,
+        scenarios: verdict.scenarios,
+        coverage: verdict.coverage,
+        counted_runs: verdict.counted_runs,
         computed_at: DateTime.utc_now()
       },
       on_conflict: {:replace_all_except, [:change_request_id]},
       conflict_target: :change_request_id
     )
 
+    record_counted_runs(change_request, grading.runs)
     :ok
   end
 
   def recompute(%ChangeRequest{}, _policy), do: :skipped
+
+  defp record_counted_runs(_change_request, []), do: :ok
+
+  defp record_counted_runs(change_request, runs) do
+    now = DateTime.utc_now()
+
+    Repo.insert_all(
+      "verify_run_counts",
+      Enum.map(runs, fn run ->
+        %{
+          change_request_id: Ecto.UUID.dump!(change_request.id),
+          verify_run_id: Ecto.UUID.dump!(run.id),
+          inserted_at: now
+        }
+      end),
+      on_conflict: :nothing
+    )
+
+    :ok
+  end
 
   defp current_claims(%ChangeRequest{id: id, head: head}) do
     Repo.one(
@@ -644,7 +688,38 @@ defmodule GoodFlows.ChangeRequests do
   end
 
   @doc """
-  After a new policy version: recomputes every `draft` and `open` change
+  Recomputes every `draft` or `open` change request of the project that
+  has a scenario set version with `digest`. Called in the transaction that
+  makes a verify run on that digest `final`, after
+  `GoodFlows.ScenarioSets.lock_digest/2`.
+  """
+  @spec recompute_for_scenario_digest(Ecto.UUID.t(), String.t()) :: :ok
+  def recompute_for_scenario_digest(project_id, digest) do
+    with_set =
+      from v in GoodFlows.ScenarioSets.Version,
+        where: v.project_id == ^project_id and v.digest == ^digest,
+        select: v.change_request_id
+
+    change_requests =
+      Repo.all(
+        from c in ChangeRequest,
+          where:
+            c.project_id == ^project_id and c.state in @active_states and
+              c.id in subquery(with_set),
+          order_by: c.id,
+          lock: "FOR UPDATE"
+      )
+
+    if change_requests != [] do
+      policy = ReviewPolicies.compiled(project_id)
+      Enum.each(change_requests, &recompute(&1, policy))
+    end
+
+    :ok
+  end
+
+  @doc """
+  After a new policy or feature index version: recomputes every `draft` and `open` change
   request of `project` in the caller's transaction when there are at most
   `config :good_flows, :change_request_inline_recompute_limit` (default
   #{@default_inline_recompute_limit}), otherwise enqueues

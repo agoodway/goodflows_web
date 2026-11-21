@@ -193,11 +193,11 @@ A policy version response MUST include under `data` the `version`, `previous_ver
 With `add-change-request-core`, `active_settings` SHALL hold every setting except `scenarios.*`, `evidence.ignore_paths`, `coverage.*` and `merge.*`. `add-change-request-grading` MUST add `scenarios.*`, `evidence.ignore_paths` and `coverage.*`, and `add-change-request-merge` MUST add `merge.*`. A setting missing from `active_settings` MUST NOT change any verdict.
 
 #### Scenario: Later-phase settings are inactive
-- **WHEN** a server that implements only `add-change-request-core` serves a version that sets `coverage.undriven_features` `blocked`
-- **THEN** `active_settings` contains `claims.one_way_door` and `evidence.required_workflows` and does not contain `coverage.undriven_features`
+- **WHEN** a server that implements `add-change-request-core` and `add-change-request-grading` but not `add-change-request-merge` serves a version that sets `merge.regrade_merge_result` true
+- **THEN** `active_settings` contains `claims.one_way_door`, `evidence.required_workflows` and `coverage.undriven_features` and does not contain `merge.regrade_merge_result`
 
 #### Scenario: Inactive settings do not change verdicts
-- **WHEN** an admin writes a version that only changes `scenarios.approver` to `admin`
+- **WHEN** an admin writes a version that only changes `merge.lease_ttl` to `10m`
 - **THEN** every recomputed verdict has the same `state` and `reasons` as before, with the new `policy_version`
 
 ### Requirement: List policy versions

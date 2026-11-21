@@ -1,9 +1,10 @@
 defmodule GoodFlows.Projects.Project do
   @moduledoc """
   An account-owned project addressed by its `slug`. A project groups the
-  account's Spry recipes, uploaded test reports, stored workflow runs, and
-  change requests; recipe names are unique within a project, and its cache
-  entries, cache keys, and review policy versions are deleted with it.
+  account's Spry recipes, uploaded test reports, stored workflow runs,
+  change requests and verify runs; recipe names are unique within a
+  project, and its cache entries, cache keys, review policy versions and
+  feature index versions are deleted with it.
 
   `default_branch` names the project's fallback cache scope: the scope whose
   string equals it. It follows the cache scope rule
@@ -21,6 +22,7 @@ defmodule GoodFlows.Projects.Project do
   alias GoodFlows.ChangeRequests.ChangeRequest
   alias GoodFlows.Spry.Recipe
   alias GoodFlows.TestReports.Report
+  alias GoodFlows.VerifyRuns.Run, as: VerifyRun
   alias GoodFlows.WorkflowRuns.Run
 
   @type t :: %__MODULE__{}
@@ -42,6 +44,7 @@ defmodule GoodFlows.Projects.Project do
     has_many :test_reports, Report
     has_many :workflow_runs, Run
     has_many :change_requests, ChangeRequest
+    has_many :verify_runs, VerifyRun
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -99,7 +102,7 @@ defmodule GoodFlows.Projects.Project do
 
   @doc """
   Builds the delete changeset; refuses while any recipe, test report,
-  workflow run, or change request belongs to the project.
+  workflow run, change request, or verify run belongs to the project.
   """
   @spec delete_changeset(t()) :: Ecto.Changeset.t()
   def delete_changeset(project) do
@@ -109,5 +112,6 @@ defmodule GoodFlows.Projects.Project do
     |> no_assoc_constraint(:test_reports, name: :test_reports_project_id_fkey)
     |> no_assoc_constraint(:workflow_runs, name: :workflow_runs_project_id_fkey)
     |> no_assoc_constraint(:change_requests, name: :change_requests_project_id_fkey)
+    |> no_assoc_constraint(:verify_runs, name: :verify_runs_project_id_fkey)
   end
 end

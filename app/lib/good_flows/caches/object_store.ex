@@ -31,8 +31,9 @@ defmodule GoodFlows.Caches.ObjectStore do
   @type part :: %{number: pos_integer(), etag: String.t(), size: non_neg_integer()}
 
   @doc """
-  Presigns a PUT of `object_key` for an archive of `:size` bytes whose
-  digest is `:sha256` (64 lowercase hex), valid for `:expires_in` seconds.
+  Presigns a PUT of `object_key` for an object of `:size` bytes whose
+  digest is `:sha256` (64 lowercase hex), valid for `:expires_in` seconds,
+  with `:content_type` (default `application/gzip`).
   Returns the URL and the headers signed into it.
   """
   @callback presign_put(object_key :: String.t(), opts :: map()) ::
@@ -103,14 +104,14 @@ defmodule GoodFlows.Caches.ObjectStore do
 
   @doc """
   The headers a PUT of `size` bytes with digest `sha256` must send:
-  `content-length`, `content-type: application/gzip`, and
+  `content-length`, `content-type` (`application/gzip` unless given), and
   `x-amz-checksum-sha256` (the base64 of the digest).
   """
-  @spec upload_headers(pos_integer(), String.t()) :: upload_headers()
-  def upload_headers(size, sha256) do
+  @spec upload_headers(pos_integer(), String.t(), String.t()) :: upload_headers()
+  def upload_headers(size, sha256, content_type \\ "application/gzip") do
     %{
       "content-length" => Integer.to_string(size),
-      "content-type" => "application/gzip",
+      "content-type" => content_type,
       "x-amz-checksum-sha256" => sha256 |> Base.decode16!(case: :lower) |> Base.encode64()
     }
   end

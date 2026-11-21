@@ -7,7 +7,10 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
   present) as null; `description` as null; claims with `document` null and
   only `format`, `cr`, `head` and `door` in `front_matter`; Git facts with
   every commit's `changed_files` and `diff.files` null (`totals` stay); and
-  every verdict and merge reason with `subject` and `message` null.
+  every verdict and merge reason with `subject` and `message` null; the
+  verdict's `coverage.unmapped_areas` null and each mapped feature's `id`
+  null (`driven` stays). Verdict `scenarios` (IDs, priorities, results and
+  run IDs) and `counted_runs` are shown to every key.
   """
 
   alias GoodFlows.Accounts.AccountUser
@@ -121,7 +124,21 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
       policy_version: verdict.policy_version,
       reasons: reasons(verdict.reasons, redact?),
       inputs: verdict.inputs,
+      scenarios: verdict.scenarios || %{"intent" => nil, "diff" => nil},
+      coverage: coverage(verdict.coverage, redact?),
+      counted_runs: verdict.counted_runs,
       computed_at: DateTime.to_iso8601(verdict.computed_at)
+    }
+  end
+
+  defp coverage(nil, _redact?), do: %{"version" => nil, "unmapped_areas" => [], "features" => []}
+  defp coverage(coverage, false), do: coverage
+
+  defp coverage(coverage, true) do
+    %{
+      coverage
+      | "unmapped_areas" => nil,
+        "features" => Enum.map(coverage["features"], &%{&1 | "id" => nil})
     }
   end
 

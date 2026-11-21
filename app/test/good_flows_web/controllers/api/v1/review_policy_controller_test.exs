@@ -69,7 +69,10 @@ defmodule GoodFlowsWeb.Api.V1.ReviewPolicyControllerTest do
 
     assert user_id == au.user_id
     assert "claims.one_way_door" in active
-    refute "coverage.undriven_features" in active
+    assert "coverage.undriven_features" in active
+    assert "evidence.ignore_paths" in active
+    assert "scenarios.approver" in active
+    refute "merge.regrade_merge_result" in active
 
     assert %{"data" => %{"version" => 1}} =
              conn |> put_json(rp_path(ctx.project.slug), body()) |> json_response(200)

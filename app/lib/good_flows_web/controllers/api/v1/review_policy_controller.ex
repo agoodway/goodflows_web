@@ -26,8 +26,6 @@ defmodule GoodFlowsWeb.Api.V1.ReviewPolicyController do
     ValidationErrorResponse
   }
 
-  alias OpenApiSpex.Schema
-
   plug :require_admin when action in [:update]
   plug JsonBody, [limit: :review_policy_max_body_bytes, default: 262_144] when action in [:update]
 
@@ -65,16 +63,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewPolicyController do
   operation(:index,
     summary: "List review policy versions",
     description: "Stored versions newest first (version 0 is never listed), keyset-paged.",
-    parameters:
-      ApiParams.project() ++
-        [
-          limit: [
-            in: :query,
-            schema: %Schema{type: :integer, minimum: 1, maximum: 200, default: 50},
-            required: false
-          ],
-          cursor: [in: :query, type: :string, description: "`next_cursor`", required: false]
-        ],
+    parameters: ApiParams.project() ++ ApiParams.version_page(),
     responses:
       [
         ok: {"One page of versions", "application/json", ReviewPolicyVersionListResponse},

@@ -29,6 +29,25 @@ defmodule GoodFlows.KeysetCursor do
   defp store_cursor(changeset, :error),
     do: Ecto.Changeset.add_error(changeset, :cursor, "is invalid")
 
+  @doc """
+  Casts `"limit"` (1 to `max`, default `default`) and an `encode_integer/1`
+  `"cursor"` from list params, as `{:ok, %{limit: _, cursor: _}}` or a
+  changeset error.
+  """
+  @spec integer_page_params(map(), pos_integer(), pos_integer()) ::
+          {:ok, %{limit: pos_integer(), cursor: pos_integer() | nil}}
+          | {:error, Ecto.Changeset.t()}
+  def integer_page_params(params, default, max) do
+    {%{limit: default, cursor: nil}, %{limit: :integer, cursor: :string}}
+    |> Ecto.Changeset.cast(params, [:limit, :cursor], empty_values: [])
+    |> Ecto.Changeset.validate_number(:limit,
+      greater_than_or_equal_to: 1,
+      less_than_or_equal_to: max
+    )
+    |> put_cursor(&decode_integer/1)
+    |> Ecto.Changeset.apply_action(:list)
+  end
+
   @doc "Encodes a positive integer keyset position as an opaque cursor."
   @spec encode_integer(pos_integer()) :: String.t()
   def encode_integer(position), do: Base.url_encode64("v1:#{position}", padding: false)
