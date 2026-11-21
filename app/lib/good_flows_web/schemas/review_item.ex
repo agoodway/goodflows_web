@@ -14,6 +14,11 @@ defmodule GoodFlowsWeb.Schemas.ReviewItem do
     - `scenario_set_approval`: `digest`, `version`, `approved_digest` (last approved, or
       null), `changes` (weakening first)
     - `diff_only_set`: `digest`, `revision`, `scenarios` (`id`, `priority`, `result`, `run_id`)
+    - `diff_set_weakened`: `id`, `change` (`removed` or `demoted`), `from_priority`,
+      `to_priority`, `version` and `digest` (the current diff version), `baseline`
+      (`version`, `digest`), `edited_musts` (IDs that are `must` in both versions with a
+      different section digest). Answers are `approve` or `reject` under
+      `scenarios.approver`; approving every one accepts the diff digest
     - `failed_scenario`: `id`, `priority`, `digest`, `run_id`, `commit`, `failed_step`,
       `reason`, `artifacts`
     - `not_run`: `id`, `priority`, `digest`, `run_id`, `reason`
@@ -41,9 +46,9 @@ defmodule GoodFlowsWeb.Schemas.ReviewItem do
       id: %Schema{type: :string},
       kind: %Schema{
         type: :string,
-        enum: ~w(scenario_set_approval diff_only_set failed_scenario not_run spec_gap
-          one_way_door unproven_claim open_item question sensitive_path size unmapped_area
-          undriven_feature)
+        enum: ~w(scenario_set_approval diff_only_set diff_set_weakened failed_scenario not_run
+          spec_gap one_way_door unproven_claim open_item question sensitive_path size
+          unmapped_area undriven_feature)
       },
       rule: %Schema{type: :string},
       subject: %Schema{type: :array, items: %Schema{type: :string}},

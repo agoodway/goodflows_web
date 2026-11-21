@@ -22,6 +22,7 @@ defmodule GoodFlows.Review.Items do
 
   @kinds %{
     "diff_only_set" => "diff_only_set",
+    "diff_set_weakened" => "diff_set_weakened",
     "spec_gap" => "spec_gap",
     "one_way_door" => "one_way_door",
     "unmapped_area" => "unmapped_area",
@@ -34,8 +35,8 @@ defmodule GoodFlows.Review.Items do
     "max_changed_lines" => "size"
   }
 
-  @item_kinds ~w(scenario_set_approval diff_only_set failed_scenario not_run spec_gap
-                 one_way_door unproven_claim open_item question sensitive_path size
+  @item_kinds ~w(scenario_set_approval diff_only_set diff_set_weakened failed_scenario not_run
+                 spec_gap one_way_door unproven_claim open_item question sensitive_path size
                  unmapped_area undriven_feature)
 
   @clearing ~w(approve choose)
@@ -57,6 +58,7 @@ defmodule GoodFlows.Review.Items do
   @doc "The answer kinds an item of `kind` allows."
   @spec answers(String.t()) :: [String.t()]
   def answers("scenario_set_approval"), do: ["approve", "reject"]
+  def answers("diff_set_weakened"), do: ["approve", "reject"]
   def answers("question"), do: ["choose", "request_change"]
   def answers(_kind), do: ["approve", "request_change"]
 

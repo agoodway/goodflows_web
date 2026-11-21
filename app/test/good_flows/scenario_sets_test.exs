@@ -224,6 +224,53 @@ defmodule GoodFlows.ScenarioSetsTest do
     end
   end
 
+  describe "diff baseline and accepted" do
+    setup ctx do
+      {:ok, unlinked} =
+        ChangeRequests.create(ctx.account, ctx.project, ctx.key, %{
+          "title" => "Diff",
+          "source_branch" => "feat/diff"
+        })
+
+      versions =
+        for n <- 1..3 do
+          {:created, v} = upload!(ctx, set_body(diff_fm(sha(n), [scenario("D1")])), unlinked)
+          v
+        end
+
+      %{unlinked: unlinked, versions: versions}
+    end
+
+    defp insert_decision!(ctx, digest, decision) do
+      Repo.insert!(%Decision{
+        change_request_id: ctx.unlinked.id,
+        digest: digest,
+        decision: decision,
+        note: if(decision == "reject", do: "S3 must stay a Must"),
+        channel: "cli",
+        account_user_id: ctx.owner.id,
+        api_key_id: ctx.key.id
+      })
+    end
+
+    defp baseline_version(ctx),
+      do: ScenarioSets.baseline(ctx.unlinked, ScenarioSets.approved_digests(ctx.unlinked)).version
+
+    test "no decision: version 1", ctx do
+      assert baseline_version(ctx) == 1
+      assert ScenarioSets.baseline(ctx.cr, ScenarioSets.approved_digests(ctx.cr)) == nil
+    end
+
+    test "approve then reject: the latest decision decides", ctx do
+      [_v1, v2, _v3] = ctx.versions
+      insert_decision!(ctx, v2.digest, "approve")
+      insert_decision!(ctx, v2.digest, "reject")
+
+      assert baseline_version(ctx) == 1
+      refute ScenarioSets.accepted?(v2, ScenarioSets.approved_digests(ctx.unlinked))
+    end
+  end
+
   describe "compare" do
     defp v(scenarios, salts \\ %{}),
       do: set_body(intent_fm("add-export", scenarios), salts: salts)

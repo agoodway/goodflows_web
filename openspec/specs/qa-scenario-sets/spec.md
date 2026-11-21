@@ -246,7 +246,7 @@ Each accepted upload with a digest different from the current version's SHALL cr
 - **THEN** the API responds `201` with `version` 3 and `digest` `d1`
 
 ### Requirement: Read scenario set versions
-`GET …/scenario-sets` SHALL return, for `intent` and `diff`, the current version and a list of versions with `version`, `digest`, `inserted_at` and `approved`. `GET …/scenario-sets/:source/versions/:version` SHALL return that version with `content`, the parsed front matter, `sections`, `digest` and the decisions on its digest. An unknown version MUST get `404`.
+`GET …/scenario-sets` SHALL return, for `intent` and `diff`, the current version and a list of versions with `version`, `digest`, `inserted_at`, `approved` and `accepted`. `GET …/scenario-sets/:source/versions/:version` SHALL return that version with `content`, the parsed front matter, `sections`, `digest`, `approved`, `accepted` and the decisions on its digest. An unknown version MUST get `404`.
 
 #### Scenario: Read a version
 - **WHEN** a client reads `/scenario-sets/intent/versions/2`
@@ -256,8 +256,12 @@ Each accepted upload with a digest different from the current version's SHALL cr
 - **WHEN** the diff set has one version and a client reads `/scenario-sets/diff/versions/2`
 - **THEN** the API responds `404`
 
+#### Scenario: Accepted diff version
+- **WHEN** diff version 2's digest has a latest decision of `approve` and a client reads `/scenario-sets/diff/versions/2`
+- **THEN** the version has `accepted` true, `approved` false, and that decision
+
 ### Requirement: Public keys see scenario sets without content
-For a `pk_` key, every scenario set read SHALL return `content`, `front_matter` and `sections` null. `source`, `version`, `digest`, `inserted_at`, `approved`, and each scenario's `id` and `priority` MUST be as stored; decisions follow their own redaction. A field absent from a response MUST NOT be added, and stored versions MUST NOT change.
+For a `pk_` key, every scenario set read SHALL return `content`, `front_matter` and `sections` null. `source`, `version`, `digest`, `inserted_at`, `approved`, `accepted`, and each scenario's `id` and `priority` MUST be as stored; decisions follow their own redaction. A field absent from a response MUST NOT be added, and stored versions MUST NOT change.
 
 #### Scenario: Public key reads a version
 - **WHEN** a client with a `pk_` key reads `/scenario-sets/intent/versions/2`
@@ -265,10 +269,10 @@ For a `pk_` key, every scenario set read SHALL return `content`, `front_matter` 
 
 #### Scenario: Public key lists sets
 - **WHEN** a client with a `pk_` key lists the scenario sets of change request 42
-- **THEN** each version has its `version`, `digest` and `approved` as stored
+- **THEN** each version has its `version`, `digest`, `approved` and `accepted` as stored
 
 ### Requirement: Approve or reject an intent set digest
-`POST …/scenario-sets/intent/approvals` with `{"digest": "<sha256>"}` SHALL record an `approve` decision, and `POST …/scenario-sets/intent/rejections` with `{"digest": "<sha256>", "note": "<1 to 10,000 bytes>"}` a `reject` decision, on that digest when it is the current intent version's digest, responding `201`. A digest of an older version, or of no version, MUST get `409`. Diff sets take no decisions: both routes under `…/scenario-sets/diff/` MUST get `404`.
+`POST …/scenario-sets/intent/approvals` with `{"digest": "<sha256>"}` SHALL record an `approve` decision, and `POST …/scenario-sets/intent/rejections` with `{"digest": "<sha256>", "note": "<1 to 10,000 bytes>"}` a `reject` decision, on that digest when it is the current intent version's digest, responding `201`. A digest of an older version, or of no version, MUST get `409`. Both routes under `…/scenario-sets/diff/` MUST get `404`; diff digests take decisions only through `diff_set_weakened` answers.
 
 #### Scenario: Approve the current version
 - **WHEN** the current intent version has digest `d2` and a client approves `d2`
@@ -344,7 +348,7 @@ The approval and rejection routes SHALL apply `scenarios.approver` from the proj
 - **THEN** the API responds `201`, because version 0 has `approver = "any"`
 
 ### Requirement: An approval binds to the digest, not the head
-A digest's decisions SHALL apply to every intent version of that change request with that digest, whatever the head. A new head MUST NOT clear them. A version with a different digest MUST read as `approved` false until that digest is approved.
+A digest's decisions SHALL apply to every intent or diff version of that change request with that digest, whatever the head. A new head MUST NOT clear them. A version with a different digest MUST read as `approved` false, or for a diff version `accepted` false, until that digest is approved or accepted.
 
 #### Scenario: Push after approval
 - **WHEN** digest `d1` is approved and the client reports `git-facts` for a new head
@@ -357,6 +361,10 @@ A digest's decisions SHALL apply to every intent version of that change request 
 #### Scenario: Revert to the approved file
 - **WHEN** `d1` was approved, version 2 has `d2`, and version 3 is uploaded with `d1`
 - **THEN** version 3 reads as `approved` true without a new approval
+
+#### Scenario: Push after diff acceptance
+- **WHEN** diff digest `d2` is accepted and the client reports `git-facts` for a docs-only new head
+- **THEN** the diff version with `d2` still reads as `accepted` true
 
 ### Requirement: Compare set versions by scenario ID
 `GET …/scenario-sets/:source/compare` SHALL compare version `to` (default current) with version `from` (default: for `intent`, the newest approved version; for `diff`, the previous version) and return `changes` entries of `id`, `change` (`removed`, `demoted`, `changed`, `added`), `weakening`, `from_priority` and `to_priority`. It MUST compare only section digests and priorities.
@@ -398,3 +406,18 @@ Every scenario set route SHALL be described in the OpenAPI document with its req
 #### Scenario: OpenAPI lists the routes
 - **WHEN** a client fetches the OpenAPI document
 - **THEN** it describes upload, list, show version, approve, reject and compare under `/api/v1/projects/{project}/change-requests/{number}/scenario-sets`
+
+### Requirement: Diff digests take decisions only through review answers
+A diff digest's decisions SHALL be recorded only by `diff_set_weakened` answers, under the decision rules of intent digests: kept oldest first, one equal to the same membership's latest decision on the digest adds no row, and the digest's latest decision decides. A diff version is `accepted` when its digest's latest decision is `approve`; its `approved` MUST stay false. An intent version's `accepted` MUST equal its `approved`.
+
+#### Scenario: Diff routes stay closed
+- **WHEN** a client posts `{"digest": "<current diff digest>"}` to `/scenario-sets/diff/approvals`
+- **THEN** the API responds `404` and records no decision
+
+#### Scenario: Acceptance recorded through an answer
+- **WHEN** an allowed member's answer accepts the weakened diff digest `d2`
+- **THEN** reading the diff version with `d2` shows `accepted` true and a decision `approve` with `channel` `cli`
+
+#### Scenario: Intent version accepted
+- **WHEN** an intent version's digest is approved
+- **THEN** that version reads `approved` true and `accepted` true

@@ -677,6 +677,66 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
            }
   end
 
+  test "weakened diff set item: data, and the author is 403 under other_member", ctx do
+    slug = ctx.project.slug
+
+    policy!(ctx.sk_conn, slug, %{
+      "scenarios" => %{
+        "require_approved_intent" => true,
+        "diff_only" => "weakening",
+        "approver" => "other_member"
+      }
+    })
+
+    _ = create_cr(ctx.sk_conn, slug)
+    head = sha(1)
+    facts!(ctx.sk_conn, slug, 1, head)
+    claims!(ctx.sk_conn, slug, 1, head, %{"cr" => 1})
+
+    upload = fn scenarios, salts ->
+      ctx.sk_conn
+      |> post_json(
+        cr_path(slug, 1, "/scenario-sets"),
+        set_body(diff_fm(head, scenarios), salts: salts)
+      )
+      |> json_response(201)
+      |> get_in(["data", "digest"])
+    end
+
+    d1 = upload.([scenario("S1"), scenario("S3")], %{})
+    d2 = upload.([scenario("S1"), scenario("S3", "should")], %{"S1" => "edited"})
+
+    doc = run_doc(d2, "diff", head, [result("S1"), result("S3")])
+
+    _ =
+      ctx.sk_conn |> post_json("/api/v1/projects/#{slug}/verify-runs", doc) |> json_response(201)
+
+    packet = packet(ctx.sk_conn, slug, 1)
+    assert_schema(%{"data" => packet}, "ReviewPacketResponse", ApiSpec.spec())
+    item = item!(packet, "diff_set_weakened")
+
+    assert item["subject"] == ["diff", "S3"]
+    assert item["answers"] == ["approve", "reject"]
+
+    assert item["data"] == %{
+             "id" => "S3",
+             "change" => "demoted",
+             "from_priority" => "must",
+             "to_priority" => "should",
+             "version" => 2,
+             "digest" => d2,
+             "baseline" => %{"version" => 1, "digest" => d1},
+             "edited_musts" => ["S1"]
+           }
+
+    body = %{"head" => head, "answer" => "approve"}
+    assert ctx.sk_conn |> answer(slug, 1, item["id"], body) |> json_response(403)
+    assert count(Answer) == 0
+    assert count(Decision) == 0
+
+    assert ctx.member_sk_conn |> answer(slug, 1, item["id"], body) |> json_response(201)
+  end
+
   describe "answers" do
     setup ctx do
       _ = create_cr(ctx.sk_conn, ctx.project.slug)

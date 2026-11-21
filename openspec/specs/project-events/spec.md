@@ -61,11 +61,19 @@ The `data` of each event type SHALL hold the fields in this requirement's scenar
 
 #### Scenario: Scenario set approved
 - **WHEN** digest `5e1c…` of change request 42's intent set is approved
-- **THEN** a `scenario_set_approved` event has `data` with `digest` `5e1c…`
+- **THEN** a `scenario_set_approved` event has `data` with `source` `intent` and `digest` `5e1c…`
 
 #### Scenario: Scenario set rejected
 - **WHEN** digest `5e1c…` of change request 42's intent set is rejected with note `S2 tests the wrong path`, through the rejection call or a `reject` answer
-- **THEN** a `scenario_set_rejected` event has `data` with `digest` `5e1c…` and `note` `S2 tests the wrong path`
+- **THEN** a `scenario_set_rejected` event has `data` with `source` `intent`, `digest` `5e1c…` and `note` `S2 tests the wrong path`
+
+#### Scenario: Diff set accepted
+- **WHEN** digest `d2` of change request 43's diff set is accepted through `diff_set_weakened` answers
+- **THEN** a `scenario_set_approved` event has `data` with `source` `diff` and digest `d2`
+
+#### Scenario: Diff set weakening rejected
+- **WHEN** a `reject` answer with note `S3 must stay a Must` is given on a `diff_set_weakened` item of digest `d2`
+- **THEN** a `scenario_set_rejected` event has `data` with `source` `diff`, `digest` `d2` and that `note`
 
 #### Scenario: Merge report
 - **WHEN** change request 42 is reported merged from `open`

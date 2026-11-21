@@ -217,14 +217,57 @@ defmodule GoodFlowsWeb.Api.V1.EventControllerTest do
       assert [%{"data" => %{"source" => "intent", "digest" => ^digest, "version" => 1}}] =
                of_type(ctx.sk_conn, ctx, "scenario_set_uploaded")
 
-      assert [%{"data" => %{"digest" => ^digest}}] =
-               of_type(ctx.sk_conn, ctx, "scenario_set_approved")
+      assert [%{"data" => approved}] = of_type(ctx.sk_conn, ctx, "scenario_set_approved")
+      assert approved == %{"source" => "intent", "digest" => digest}
 
-      assert [%{"data" => %{"digest" => ^digest, "note" => "S2 tests the wrong path"}}] =
-               of_type(ctx.sk_conn, ctx, "scenario_set_rejected")
+      assert [%{"data" => rejected}] = of_type(ctx.sk_conn, ctx, "scenario_set_rejected")
+
+      assert rejected == %{
+               "source" => "intent",
+               "digest" => digest,
+               "note" => "S2 tests the wrong path"
+             }
 
       assert [%{"data" => %{"note" => nil}, "actor" => nil}] =
                of_type(ctx.pk_conn, ctx, "scenario_set_rejected")
+    end
+
+    test "diff set acceptance and weakening rejection carry source diff", ctx do
+      slug = ctx.project.slug
+
+      policy!(ctx.sk_conn, slug, %{
+        "scenarios" => %{"require_approved_intent" => true, "diff_only" => "weakening"}
+      })
+
+      _ = create_cr(ctx.sk_conn, slug)
+      facts!(ctx.sk_conn, slug, 1, sha(1))
+      claims!(ctx.sk_conn, slug, 1, sha(1), %{"cr" => 1})
+
+      upload = fn scenarios ->
+        digest =
+          ctx.sk_conn
+          |> post_json(cr_path(slug, 1, "/scenario-sets"), set_body(diff_fm(sha(1), scenarios)))
+          |> json_response(201)
+          |> get_in(["data", "digest"])
+
+        doc = run_doc(digest, "diff", sha(1), Enum.map(scenarios, &result(&1["id"])))
+        _ = ctx.sk_conn |> post_json("/api/v1/projects/#{slug}/verify-runs", doc)
+        digest
+      end
+
+      _ = upload.([scenario("S1"), scenario("S3")])
+      d2 = upload.([scenario("S1"), scenario("S3", "should")])
+      item = item!(packet(ctx.sk_conn, slug, 1), "diff_set_weakened")
+      reject = %{"head" => sha(1), "answer" => "reject", "note" => "S3 must stay a Must"}
+      _ = ctx.sk_conn |> answer(slug, 1, item["id"], reject) |> json_response(201)
+      approve = %{"head" => sha(1), "answer" => "approve"}
+      _ = ctx.sk_conn |> answer(slug, 1, item["id"], approve) |> json_response(201)
+
+      assert [%{"data" => rejected}] = of_type(ctx.sk_conn, ctx, "scenario_set_rejected")
+      assert rejected == %{"source" => "diff", "digest" => d2, "note" => "S3 must stay a Must"}
+
+      assert [%{"data" => approved}] = of_type(ctx.sk_conn, ctx, "scenario_set_approved")
+      assert approved == %{"source" => "diff", "digest" => d2}
     end
 
     test "policy_version_created has no number", ctx do

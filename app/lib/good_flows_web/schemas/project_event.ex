@@ -12,8 +12,9 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
     - `cr_state_changed`: `from`, `to`
     - `verdict_changed`: `from` (null for the first verdict), `to`, `head`, `policy_version`
     - `scenario_set_uploaded`: `source`, `digest`, `version`
-    - `scenario_set_approved`: `digest`
-    - `scenario_set_rejected`: `digest`, `note`
+    - `scenario_set_approved`: `source`, `digest` (`source` `diff` when `diff_set_weakened`
+      answers accept a diff digest)
+    - `scenario_set_rejected`: `source`, `digest`, `note`
     - `answer_recorded`: `item_id`, `kind`, `head`, `answer`, `option`, `note`
     - `task_created`: `task_id`, `item_id`, `head`, `note`
     - `policy_version_created`: `version`, `note` (`number` is null)

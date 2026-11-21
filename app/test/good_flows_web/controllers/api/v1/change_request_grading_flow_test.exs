@@ -109,6 +109,164 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestGradingFlowTest do
            }
   end
 
+  describe "diff-only weakening" do
+    setup ctx do
+      policy!(ctx, %{
+        "scenarios" => %{"require_approved_intent" => true, "diff_only" => "weakening"}
+      })
+
+      _ = create_cr(ctx.sk_conn, ctx.project.slug)
+      :ok
+    end
+
+    defp upload_diff!(ctx, scenarios, body \\ "# QA scenarios\n") do
+      ctx.sk_conn
+      |> post_json(
+        cr_path(ctx.project.slug, 1, "/scenario-sets"),
+        set_body(diff_fm(sha(1), scenarios), body: body)
+      )
+      |> json_response(201)
+      |> get_in(["data", "digest"])
+    end
+
+    test "the verdict reads the diff baseline and acceptance", ctx do
+      slug = ctx.project.slug
+      head = sha(1)
+
+      _ =
+        ctx.sk_conn
+        |> post_json(cr_path(slug, 1, "/git-facts"), git_facts(head))
+        |> json_response(201)
+
+      _ =
+        ctx.sk_conn
+        |> post_markdown(cr_path(slug, 1, "/claims"), claims(front_matter(head, %{"cr" => 1})))
+        |> json_response(201)
+
+      d1 = upload_diff!(ctx, [scenario("S1"), scenario("S3")])
+      d2 = upload_diff!(ctx, [scenario("S1"), scenario("S3", "should")])
+
+      sk = verdict(ctx.sk_conn, ctx)
+      assert_schema(sk, "VerdictResponse", ApiSpec.spec())
+      reasons = Enum.map(sk["data"]["reasons"], &{&1["rule"], &1["subject"]})
+      assert {"diff_set_weakened", ["diff", "S3"]} in reasons
+      refute Enum.any?(reasons, &match?({"diff_only_set", _}, &1))
+
+      assert %{"version" => 2, "accepted" => false, "baseline_version" => 1, "approved" => false} =
+               sk["data"]["scenarios"]["diff"]
+
+      assert sk["data"]["inputs"]["diff_baseline_digest"] == d1
+
+      cr =
+        GoodFlows.Repo.get_by!(GoodFlows.ChangeRequests.ChangeRequest, project_id: ctx.project.id)
+
+      GoodFlows.Repo.insert!(%GoodFlows.ScenarioSets.Decision{
+        change_request_id: cr.id,
+        digest: d2,
+        decision: "approve",
+        channel: "cli",
+        account_user_id: ctx.sk_key.account_user_id,
+        api_key_id: ctx.sk_key.id
+      })
+
+      _ = upload_diff!(ctx, [scenario("S1"), scenario("S3", "should")], "# v3\n")
+      _ = upload_diff!(ctx, [scenario("S1"), scenario("S3", "should")], "# v4\n")
+
+      sk = verdict(ctx.sk_conn, ctx)
+      assert_schema(sk, "VerdictResponse", ApiSpec.spec())
+
+      assert %{"version" => 4, "accepted" => false, "baseline_version" => 2} =
+               sk["data"]["scenarios"]["diff"]
+
+      assert sk["data"]["inputs"]["diff_baseline_digest"] == d2
+      refute Enum.any?(sk["data"]["reasons"], &(&1["rule"] == "diff_set_weakened"))
+    end
+
+    defp new_head!(ctx, head) do
+      slug = ctx.project.slug
+
+      _ =
+        ctx.sk_conn
+        |> post_json(cr_path(slug, 1, "/git-facts"), git_facts(head))
+        |> json_response(201)
+
+      _ =
+        ctx.sk_conn
+        |> post_markdown(cr_path(slug, 1, "/claims"), claims(front_matter(head, %{"cr" => 1})))
+        |> json_response(201)
+    end
+
+    defp diff_run!(ctx, revision, scenarios, commit) do
+      digest =
+        ctx.sk_conn
+        |> post_json(
+          cr_path(ctx.project.slug, 1, "/scenario-sets"),
+          set_body(diff_fm(revision, scenarios))
+        )
+        |> json_response(201)
+        |> get_in(["data", "digest"])
+
+      doc = run_doc(digest, "diff", commit, Enum.map(scenarios, &result(&1["id"])))
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{ctx.project.slug}/verify-runs", doc)
+        |> json_response(201)
+
+      {digest, doc["run_id"]}
+    end
+
+    test "end to end: pass, demote and accept, then push without new answers", ctx do
+      slug = ctx.project.slug
+
+      new_head!(ctx, sha(1))
+      {_d1, r1} = diff_run!(ctx, sha(1), [scenario("S1"), scenario("S3")], sha(1))
+      v1 = verdict(ctx.sk_conn, ctx)["data"]
+      assert v1["state"] == "mergeable"
+      assert v1["counted_runs"] == [r1]
+
+      new_head!(ctx, sha(2))
+      demoted = [scenario("S1"), scenario("S3", "should")]
+      {d2, _r2} = diff_run!(ctx, sha(2), demoted, sha(2))
+      v2 = verdict(ctx.sk_conn, ctx)["data"]
+      assert v2["state"] == "needs_review"
+      assert v2["scenarios"]["diff"]["baseline_version"] == 1
+
+      packet = ctx.sk_conn |> get(cr_path(slug, 1, "/review")) |> json_response(200)
+      assert [item] = packet["data"]["items"]
+      assert %{"kind" => "diff_set_weakened", "subject" => ["diff", "S3"]} = item
+      assert item["data"]["digest"] == d2
+
+      _ =
+        ctx.member_sk_conn
+        |> post_json(cr_path(slug, 1, "/review/items/#{item["id"]}/answers"), %{
+          "head" => sha(2),
+          "answer" => "approve"
+        })
+        |> json_response(201)
+
+      accepted = verdict(ctx.sk_conn, ctx)["data"]
+      assert accepted["state"] == "mergeable"
+      assert %{"accepted" => true, "baseline_version" => 2} = accepted["scenarios"]["diff"]
+
+      new_head!(ctx, sha(3))
+      assert verdict(ctx.sk_conn, ctx)["data"]["state"] == "pending"
+
+      {_d3, r3} = diff_run!(ctx, sha(3), demoted, sha(3))
+      v3 = verdict(ctx.sk_conn, ctx)
+      assert_schema(v3, "VerdictResponse", ApiSpec.spec())
+
+      assert %{"state" => "mergeable", "head" => head, "counted_runs" => [^r3]} = v3["data"]
+      assert head == sha(3)
+
+      assert %{"version" => 3, "accepted" => false, "baseline_version" => 2, "graded" => true} =
+               v3["data"]["scenarios"]["diff"]
+
+      assert v3["data"]["reasons"] == []
+      assert v3["data"]["review"] == %{"items" => 0, "cleared" => 0}
+    end
+  end
+
   describe "verdict response" do
     setup ctx do
       policy!(ctx, %{

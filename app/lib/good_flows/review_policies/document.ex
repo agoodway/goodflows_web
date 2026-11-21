@@ -23,6 +23,7 @@ defmodule GoodFlows.ReviewPolicies.Document do
   @format "review-policy/1"
   @outcomes ~w(needs_review blocked ignore)
   @review_outcomes ~w(needs_review ignore)
+  @diff_only_outcomes ~w(needs_review weakening ignore)
   @approvers ~w(any other_member admin)
   @proof_levels ~w(stated pointed walked ran)
   @max_required_workflows 32
@@ -38,7 +39,8 @@ defmodule GoodFlows.ReviewPolicies.Document do
       "require_approved_intent" => false,
       "should_failures" => "needs_review",
       "spec_gaps" => "ignore",
-      "approver" => "any"
+      "approver" => "any",
+      "diff_only" => "needs_review"
     },
     "evidence" => %{"required_workflows" => [], "ignore_paths" => ["docs/**", "**/*.md"]},
     "claims" => %{
@@ -57,6 +59,7 @@ defmodule GoodFlows.ReviewPolicies.Document do
     scenarios.should_failures
     scenarios.spec_gaps
     scenarios.approver
+    scenarios.diff_only
     evidence.required_workflows
     evidence.ignore_paths
     claims.one_way_door
@@ -140,7 +143,8 @@ defmodule GoodFlows.ReviewPolicies.Document do
            "require_approved_intent" => :boolean,
            "should_failures" => {:enum, @review_outcomes},
            "spec_gaps" => {:enum, @review_outcomes},
-           "approver" => {:enum, @approvers}
+           "approver" => {:enum, @approvers},
+           "diff_only" => {:enum, @diff_only_outcomes}
          }),
        "evidence" =>
          section(%{

@@ -26,6 +26,24 @@ defmodule GoodFlows.Review.ItemsTest do
     end
   end
 
+  test "diff_set_weakened is one item per weakened Must, answered approve or reject" do
+    reasons = [
+      reason("diff_set_weakened", "needs_review", ["diff", "S3"]),
+      reason("diff_set_weakened", "needs_review", ["diff", "S5"])
+    ]
+
+    assert [
+             %{
+               kind: "diff_set_weakened",
+               subject: ["diff", "S3"],
+               answers: ["approve", "reject"]
+             },
+             %{kind: "diff_set_weakened", subject: ["diff", "S5"], answers: ["approve", "reject"]}
+           ] = Items.build(reasons, nil)
+
+    assert "diff_set_weakened" in Items.kinds()
+  end
+
   test "scenario_set_approval is an item only with a digest; other context is never one" do
     with_digest = reason("scenario_set_approval", "pending", ["5e1c"])
     without = reason("scenario_set_approval", "pending", [])

@@ -13,6 +13,13 @@ defmodule GoodFlows.ScenarioSets do
   is approved when its latest decision is `approve` (`approved_digests/1`),
   so the approval follows the bytes, not the head.
 
+  Diff digests take decisions only through `diff_set_weakened` review
+  answers (`record_decision/5` with source `diff`); a diff version is
+  `accepted` (`accepted?/2`) when its digest's latest decision is
+  `approve`, and the newest accepted diff version, else version 1, is the
+  diff `baseline/2`. Storing a diff version supersedes every
+  `diff_set_weakened` answer of the change request.
+
   Uploads and decisions are accepted only while the change request is
   `draft` or `open`. They lock the change request row and recompute its
   verdict in the same transaction.
@@ -25,6 +32,7 @@ defmodule GoodFlows.ScenarioSets do
   alias GoodFlows.DocumentErrors
   alias GoodFlows.ProjectEvents
   alias GoodFlows.Repo
+  alias GoodFlows.Review
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ScenarioSets.{Decision, Document, Version}
   alias GoodFlows.TestReports.Shape
@@ -32,8 +40,8 @@ defmodule GoodFlows.ScenarioSets do
   @sha256 ~r/\A[0-9a-f]{64}\z/
   @max_note_bytes 10_000
 
-  @typedoc "One version with whether its digest is approved."
-  @type listed :: %{version: Version.t(), approved: boolean()}
+  @typedoc "One version with whether its digest is approved and accepted."
+  @type listed :: %{version: Version.t(), approved: boolean(), accepted: boolean()}
 
   @typedoc "One change of a comparison."
   @type change :: %{
@@ -110,6 +118,7 @@ defmodule GoodFlows.ScenarioSets do
             log: false
           )
 
+        if version.source == "diff", do: Review.supersede_diff_answers(change_request)
         ChangeRequests.recompute(change_request)
 
         ProjectEvents.record(
@@ -167,7 +176,7 @@ defmodule GoodFlows.ScenarioSets do
 
   @doc """
   Every version of the change request's intent and diff sets, newest
-  first, each with `approved`.
+  first, each with `approved` and `accepted`.
   """
   @spec list(ChangeRequest.t()) :: %{String.t() => [listed()]}
   def list(%ChangeRequest{id: id} = change_request) do
@@ -185,14 +194,16 @@ defmodule GoodFlows.ScenarioSets do
        for(
          v <- versions,
          v.source == source,
-         do: %{version: v, approved: approved?(v, approved)}
+         do: %{version: v, approved: approved?(v, approved), accepted: accepted?(v, approved)}
        )}
     end)
   end
 
   @doc """
-  The intent digests of the change request whose latest decision is
-  `approve`.
+  The digests of the change request whose latest decision is `approve`:
+  approved intent digests and accepted diff digests. The two cannot
+  collide, because `source` is part of the hashed bytes; `approved?/2`
+  reads only intent versions and `accepted?/2` both.
   """
   @spec approved_digests(ChangeRequest.t()) :: MapSet.t(String.t())
   def approved_digests(%ChangeRequest{id: id}) do
@@ -213,6 +224,29 @@ defmodule GoodFlows.ScenarioSets do
     do: MapSet.member?(approved, digest)
 
   def approved?(%Version{}, _approved), do: false
+
+  @doc """
+  Whether `version` is accepted given the approved digests: its digest's
+  latest decision is `approve`. An intent version's `accepted` equals its
+  `approved`; a diff version is accepted only through `diff_set_weakened`
+  answers, and its `approved` stays false.
+  """
+  @spec accepted?(Version.t(), MapSet.t(String.t())) :: boolean()
+  def accepted?(%Version{digest: digest}, approved), do: MapSet.member?(approved, digest)
+
+  @doc """
+  The change request's diff baseline given the approved digests: the
+  newest diff version whose digest is accepted, else version 1, or nil
+  when the change request has no diff set.
+  """
+  @spec baseline(ChangeRequest.t(), MapSet.t(String.t())) :: Version.t() | nil
+  def baseline(%ChangeRequest{id: id}, approved) do
+    diff = from v in Version, where: v.change_request_id == ^id and v.source == "diff"
+    accepted = MapSet.to_list(approved)
+
+    Repo.one(from v in diff, where: v.digest in ^accepted, order_by: [desc: v.version], limit: 1) ||
+      Repo.one(from v in diff, where: v.version == 1)
+  end
 
   @doc "The decisions on `digest` of the change request, oldest first, with memberships."
   @spec decisions(ChangeRequest.t() | Ecto.UUID.t(), String.t()) :: [Decision.t()]
@@ -316,18 +350,20 @@ defmodule GoodFlows.ScenarioSets do
 
   @doc """
   Records a decision (`attrs`: `decision`, `digest`, `note`) on the current
-  intent digest of a change request the caller has locked
-  (`GoodFlows.ChangeRequests.lock_active/1`), with its
-  `scenario_set_approved` or `scenario_set_rejected` event, in the caller's
-  transaction. Does not recompute the verdict. A decision equal to the
-  digest's latest one by the same membership is `{:retry, latest}` and
-  records nothing; a digest that is not current rolls back with
-  `:stale_digest`.
+  digest of the change request's `source` set (`intent` by default; `diff`
+  only from `diff_set_weakened` answers) for a change request the caller
+  has locked (`GoodFlows.ChangeRequests.lock_active/1`), with its
+  `scenario_set_approved` or `scenario_set_rejected` event carrying
+  `source`, in the caller's transaction. Does not recompute the verdict. A
+  decision equal to the digest's latest one by the same membership is
+  `{:retry, latest}` and records nothing; a digest that is not the
+  current version's of `source` rolls back with `:stale_digest`.
   """
-  @spec record_decision(ChangeRequest.t(), AccountUser.t(), ApiKey.t(), map()) ::
+  @spec record_decision(ChangeRequest.t(), AccountUser.t(), ApiKey.t(), map(), String.t()) ::
           {:created | :retry, Decision.t()}
-  def record_decision(change_request, account_user, api_key, attrs) do
-    case current(change_request, "intent") do
+  def record_decision(change_request, account_user, api_key, attrs, source \\ "intent")
+      when source in ["intent", "diff"] do
+    case current(change_request, source) do
       %Version{digest: digest} when digest == attrs.digest -> :ok
       _other -> Repo.rollback(:stale_digest)
     end
@@ -358,30 +394,29 @@ defmodule GoodFlows.ScenarioSets do
           log: false
         )
 
-      record_decision_event(change_request, decision, api_key)
+      record_decision_event(change_request, decision, source, api_key)
       {:created, decision}
     end
   end
 
-  defp record_decision_event(change_request, %Decision{decision: "approve"} = decision, api_key),
-    do:
-      ProjectEvents.record(
-        change_request.project_id,
-        change_request.number,
-        "scenario_set_approved",
-        %{"digest" => decision.digest},
-        api_key
-      )
+  defp record_decision_event(change_request, %Decision{} = decision, source, api_key) do
+    {type, data} =
+      case decision.decision do
+        "approve" ->
+          {"scenario_set_approved", %{"digest" => decision.digest}}
 
-  defp record_decision_event(change_request, %Decision{decision: "reject"} = decision, api_key),
-    do:
-      ProjectEvents.record(
-        change_request.project_id,
-        change_request.number,
-        "scenario_set_rejected",
-        %{"digest" => decision.digest, "note" => decision.note},
-        api_key
-      )
+        "reject" ->
+          {"scenario_set_rejected", %{"digest" => decision.digest, "note" => decision.note}}
+      end
+
+    ProjectEvents.record(
+      change_request.project_id,
+      change_request.number,
+      type,
+      Map.put(data, "source", source),
+      api_key
+    )
+  end
 
   @doc """
   Compares version `to` (default current) of the change request's

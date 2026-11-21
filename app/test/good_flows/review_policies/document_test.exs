@@ -48,7 +48,7 @@ defmodule GoodFlows.ReviewPolicies.DocumentTest do
 
     for setting <-
           ~w(scenarios.require_approved_intent scenarios.should_failures scenarios.spec_gaps
-          scenarios.approver evidence.ignore_paths coverage.unmapped_areas
+          scenarios.approver scenarios.diff_only evidence.ignore_paths coverage.unmapped_areas
           coverage.undriven_features) do
       assert setting in active
     end
