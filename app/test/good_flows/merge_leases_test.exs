@@ -172,6 +172,19 @@ defmodule GoodFlows.MergeLeasesTest do
       assert length(events("lease_expired")) == 1
     end
 
+    test "the holder of an expired lease on a moved base reacquires before the job runs", ctx do
+      number = mergeable!(ctx.sk_conn, ctx.slug, sha(1))
+      {:ok, :created, l1} = acquire_ctx(ctx, number, sha(1), sha(200))
+      assert verdict(ctx.sk_conn, ctx.slug, number)["state"] == "pending"
+      move_expiry!(l1.id, -5)
+
+      assert {:ok, :created, l2} = acquire_ctx(ctx, number, sha(1))
+      assert Repo.get!(Lease, l1.id).state == "expired"
+      assert Repo.get!(Lease, l2.id).state == "active"
+      assert [%Event{change_request_number: ^number}] = events("lease_expired")
+      assert verdict(ctx.sk_conn, ctx.slug, number)["state"] == "mergeable"
+    end
+
     test "a child acquiring over its parent's expired lease locks both and rolls back", ctx do
       parent = mergeable!(ctx.sk_conn, ctx.slug, sha(1))
       child = mergeable!(ctx.sk_conn, ctx.slug, sha(2))

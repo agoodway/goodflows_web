@@ -177,6 +177,11 @@ defmodule GoodFlows.MergeLeases do
   end
 
   defp create(change_request, api_key, attrs, now, expired) do
+    Enum.each(expired, fn lease ->
+      record(lease, "lease_expired", nil)
+      recompute_holder(lease)
+    end)
+
     verdict = Repo.get(Verdict, change_request.id)
 
     state =
@@ -202,9 +207,7 @@ defmodule GoodFlows.MergeLeases do
       |> Lease.acquire_changeset(attrs)
       |> Repo.insert!()
 
-    Enum.each(expired, &record(&1, "lease_expired", nil))
     record(lease, "lease_acquired", api_key)
-    Enum.each(expired, &recompute_holder/1)
     ChangeRequests.recompute(change_request)
     {:created, lease}
   end
