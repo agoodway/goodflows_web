@@ -339,6 +339,10 @@ defmodule GoodFlows.ChangeRequests.ClaimsDocumentTest do
 
       decision = %{"id" => "d1", "path" => "lib/other.ex", "hunk" => "@@", "note" => "n"}
       assert errors(%{"decisions" => [decision]})["decisions[0].path"]
+
+      assert %{"head" => _} =
+               errors(%{"decisions" => [decision]}, %{@context | head: nil, diff_paths: nil})
+
       assert valid?(%{"decisions" => [%{decision | "path" => "lib/old.ex"}]})
 
       entry = hd(front_matter(@head)["safe_because"])

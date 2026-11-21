@@ -377,6 +377,8 @@ defmodule GoodFlows.ChangeRequests.ClaimsDocument do
     end)
   end
 
+  defp decision_path_errors(_decisions, nil), do: []
+
   defp decision_path_errors(decisions, diff_paths) do
     indexed_errors(decisions, fn decision ->
       if not MapSet.member?(diff_paths, decision["path"]), do: :error
