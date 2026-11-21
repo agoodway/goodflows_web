@@ -128,6 +128,26 @@ defmodule GoodFlows.ProjectEventsTest do
     assert System.monotonic_time(:millisecond) - started < 10_000
   end
 
+  test "a waiting read whose unread events are swept before it reads again is 410", ctx do
+    seen = unboxed(fn -> record(ctx.project, 1) end)
+    reader = Task.async(fn -> read(ctx, %{"after" => seen.id, "wait" => 30}) end)
+    wait_for_waiters(ctx.account.id, 1)
+
+    # One commit: an unread event, a sweep that deletes it, then a newer
+    # event that wakes the reader.
+    {:ok, newest} =
+      unboxed(fn ->
+        Repo.transaction(fn ->
+          _swept = record(ctx.project, 2)
+          ProjectEvents.sweep(DateTime.add(DateTime.utc_now(), 91, :day))
+          record(ctx.project, 3)
+        end)
+      end)
+
+    assert {:error, {:gone, latest}} = Task.await(reader, 10_000)
+    assert latest == newest.id
+  end
+
   test "reads over the per-account waiter limit are answered at once", ctx do
     Application.put_env(:good_flows, :project_events_max_waiters_per_account, 1)
 

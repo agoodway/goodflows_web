@@ -108,9 +108,9 @@ defmodule GoodFlows.ProjectEvents do
           | {:error, Ecto.Changeset.t() | {:gone, non_neg_integer() | nil}}
   def read(%Project{id: project_id}, account_id, params) do
     with {:ok, params} <- read_params(params),
-         :ok <- check_retention(project_id, params.cursor) do
-      case fetch(project_id, params) do
-        %{events: []} when params.wait > 0 -> {:ok, wait(project_id, account_id, params)}
+         {:ok, page} <- fetch(project_id, params) do
+      case page do
+        %{events: []} when params.wait > 0 -> wait(project_id, account_id, params)
         page -> {:ok, page}
       end
     end
@@ -154,7 +154,16 @@ defmodule GoodFlows.ProjectEvents do
   defp latest_cursor(project_id),
     do: Repo.one(from e in Event, where: e.project_id == ^project_id, select: max(e.id))
 
+  # The retention check runs after the page query: the sweep deletes
+  # events and raises the watermark in one statement, so a page that
+  # missed swept events is always followed by a check that sees them gone.
   defp fetch(project_id, params) do
+    page = fetch_page(project_id, params)
+
+    with :ok <- check_retention(project_id, params.cursor), do: {:ok, page}
+  end
+
+  defp fetch_page(project_id, params) do
     events =
       Event
       |> where(project_id: ^project_id)
@@ -176,7 +185,7 @@ defmodule GoodFlows.ProjectEvents do
 
     try do
       case fetch(project_id, params) do
-        %{events: []} when waiter? ->
+        {:ok, %{events: []}} when waiter? ->
           receive do
             {:project_event, ^project_id} -> :ok
           after
@@ -185,8 +194,8 @@ defmodule GoodFlows.ProjectEvents do
 
           fetch(project_id, params)
 
-        page ->
-          page
+        result ->
+          result
       end
     after
       Phoenix.PubSub.unsubscribe(GoodFlows.PubSub, topic(project_id))

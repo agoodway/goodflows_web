@@ -844,6 +844,31 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
     end
   end
 
+  describe "packet consistency" do
+    setup ctx do
+      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"openspec_change" => "add-export"})
+      one_way!(ctx, sha(1))
+      :ok
+    end
+
+    test "a change request loaded before a new head gives the new head's packet", ctx do
+      loaded =
+        Repo.get_by!(GoodFlows.ChangeRequests.ChangeRequest,
+          project_id: ctx.project.id,
+          number: 1
+        )
+
+      assert loaded.head == sha(1)
+
+      one_way!(ctx, sha(2))
+
+      packet = GoodFlows.Review.packet(loaded)
+      verdict = Repo.get!(GoodFlows.ChangeRequests.Verdict, loaded.id)
+      assert packet.head == sha(2)
+      assert packet.head == verdict.head
+    end
+  end
+
   describe "verdict integration" do
     setup ctx do
       _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"openspec_change" => "add-export"})

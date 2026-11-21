@@ -36,11 +36,25 @@ defmodule GoodFlows.Review do
   @max_note_bytes 10_000
   @uuid ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/
 
-  @doc "The review packet at the change request's current head."
+  @doc """
+  The review packet at the change request's current head. It reloads the
+  change request `FOR SHARE` and builds the packet under that lock: every
+  write a packet reads (Git facts, claims, answers, scenario sets, verdict
+  recomputes) locks the row `FOR UPDATE` first, so the head and its inputs
+  cannot change mid-read.
+  """
   @spec packet(ChangeRequest.t()) :: Packet.t()
-  def packet(%ChangeRequest{} = change_request) do
-    verdict = Repo.get!(Verdict, change_request.id)
-    Packet.build(change_request, verdict, current_answer_rows(change_request))
+  def packet(%ChangeRequest{id: id}) do
+    {:ok, packet} =
+      Repo.transaction(fn ->
+        change_request =
+          Repo.one!(from c in ChangeRequest, where: c.id == ^id, lock: "FOR SHARE")
+
+        verdict = Repo.get!(Verdict, id)
+        Packet.build(change_request, verdict, current_answer_rows(change_request))
+      end)
+
+    packet
   end
 
   @doc """
