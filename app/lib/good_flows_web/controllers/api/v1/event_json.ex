@@ -1,9 +1,10 @@
 defmodule GoodFlowsWeb.Api.V1.EventJSON do
   @moduledoc """
-  Renders project events. Public keys (`redact?: true`) see `actor` null
-  and `note` null in `scenario_set_rejected`, `answer_recorded`,
-  `task_created` and `policy_version_created` events; a field absent from
-  an event is never added, and stored rows do not change.
+  Renders project events. Public keys (`redact?: true`) see `actor` null,
+  `note` null in `scenario_set_rejected`, `answer_recorded`,
+  `task_created` and `policy_version_created` events, and `ticket` null in
+  `defect_recorded` events; a field absent from an event is never added,
+  and stored rows do not change.
   """
 
   alias GoodFlows.Accounts.AccountUser
@@ -29,6 +30,9 @@ defmodule GoodFlowsWeb.Api.V1.EventJSON do
 
   defp data(%Event{type: type, data: %{"note" => _note} = data}, true) when type in @noted,
     do: %{data | "note" => nil}
+
+  defp data(%Event{type: "defect_recorded", data: %{"ticket" => _ticket} = data}, true),
+    do: %{data | "ticket" => nil}
 
   defp data(%Event{data: data}, _redact?), do: data
 

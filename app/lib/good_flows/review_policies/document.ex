@@ -52,8 +52,6 @@ defmodule GoodFlows.ReviewPolicies.Document do
     "merge" => %{"lease_ttl" => "10m", "regrade_merge_result" => true}
   }
 
-  # Phase 1 (`add-change-request-core`) and phase 2
-  # (`add-change-request-grading`): everything except `merge.*`.
   @active_settings ~w(
     scenarios.require_approved_intent
     scenarios.should_failures
@@ -69,6 +67,8 @@ defmodule GoodFlows.ReviewPolicies.Document do
     size.max_changed_lines
     coverage.unmapped_areas
     coverage.undriven_features
+    merge.lease_ttl
+    merge.regrade_merge_result
   )
 
   @typedoc "A validated write body."
@@ -223,6 +223,16 @@ defmodule GoodFlows.ReviewPolicies.Document do
   end
 
   defp lease_ttl_errors(_value, path), do: [{path, "must be a string"}]
+
+  @doc """
+  The seconds of a valid `merge.lease_ttl` (`<n>s`, `<n>m` or `<n>h`), such
+  as 600 for the default `10m`.
+  """
+  @spec lease_ttl_seconds(String.t()) :: pos_integer()
+  def lease_ttl_seconds(value) do
+    [_all, n, unit] = Regex.run(@lease_ttl, value)
+    String.to_integer(n) * unit_seconds(unit)
+  end
 
   defp unit_seconds("s"), do: 1
   defp unit_seconds("m"), do: 60

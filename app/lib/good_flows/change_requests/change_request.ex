@@ -8,6 +8,8 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
   to on reopen. `head` is the last reported Git facts head, or nil. The
   opener's membership and key are kept, and the `merged_*` fields hold the
   merge report and the verdict at the merged head, written once.
+  `parent_id` names the one parent change request of a stacked change
+  request (lower number, same project), or nil.
 
   Rows are written by `GoodFlows.ChangeRequests` only. `create_changeset/2`
   and the other changesets set values as given and never rewrite them.
@@ -47,8 +49,10 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
     field :merged_policy_version, :integer
     field :merged_reasons, GoodFlows.JsonValue
     field :merged_without_mergeable_verdict, :boolean
+    field :merged_without_lease, :boolean, default: false
 
     belongs_to :account, Account
+    belongs_to :parent, __MODULE__
     belongs_to :project, Project
     belongs_to :opened_by_account_user, AccountUser
     belongs_to :opened_by_api_key, ApiKey
@@ -100,8 +104,8 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
 
   @doc """
   Records the merge: `merge` holds `merged_commit`, `target_branch`,
-  `merged_at`, `head`, `verdict_state`, `policy_version`, `reasons` and
-  `merged_without_mergeable_verdict`.
+  `merged_at`, `head`, `verdict_state`, `policy_version`, `reasons`,
+  `merged_without_mergeable_verdict` and `merged_without_lease`.
   """
   @spec merge_changeset(t(), map()) :: Ecto.Changeset.t()
   def merge_changeset(change_request, merge) do
@@ -115,7 +119,18 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
       merged_verdict_state: merge.verdict_state,
       merged_policy_version: merge.policy_version,
       merged_reasons: merge.reasons,
-      merged_without_mergeable_verdict: merge.merged_without_mergeable_verdict
+      merged_without_mergeable_verdict: merge.merged_without_mergeable_verdict,
+      merged_without_lease: merge.merged_without_lease
     )
   end
+
+  @doc "Sets or clears the parent change request."
+  @spec parent_changeset(t(), Ecto.UUID.t() | nil) :: Ecto.Changeset.t()
+  def parent_changeset(change_request, parent_id),
+    do: change(change_request, parent_id: parent_id)
+
+  @doc "Changes the target branch."
+  @spec target_changeset(t(), String.t()) :: Ecto.Changeset.t()
+  def target_changeset(change_request, target_branch),
+    do: change(change_request, target_branch: target_branch)
 end

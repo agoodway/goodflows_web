@@ -14,6 +14,8 @@ defmodule GoodFlows.ChangeRequests.Grading do
   `merge_result`, grades a graded set's digest with that set's source, and
   its commit is H or appears in H's `git-facts.commits` with every later
   commit changing only files that match `evidence.ignore_paths`.
+  Merge-result runs (`merge_result_runs/3`) never count at the head; they
+  decide only the merge-result check of a leased change request.
   """
   import Ecto.Query
 
@@ -127,14 +129,17 @@ defmodule GoodFlows.ChangeRequests.Grading do
     end
   end
 
+  defp digest_match(graded) do
+    Enum.reduce(graded, dynamic(false), fn {source, digest}, acc ->
+      dynamic(
+        [r],
+        ^acc or (r.scenario_set_source == ^source and r.scenario_set_digest == ^digest)
+      )
+    end)
+  end
+
   defp final_clean_runs(project_id, shas, graded) do
-    digest_match =
-      Enum.reduce(graded, dynamic(false), fn {source, digest}, acc ->
-        dynamic(
-          [r],
-          ^acc or (r.scenario_set_source == ^source and r.scenario_set_digest == ^digest)
-        )
-      end)
+    digest_match = digest_match(graded)
 
     Repo.all(
       from r in Run,
@@ -153,6 +158,45 @@ defmodule GoodFlows.ChangeRequests.Grading do
           features: fragment("?->'features'", r.document)
         }
     )
+  end
+
+  @doc """
+  The verify runs that decide the merge-result check for a lease `base`:
+  `final`, clean runs with a `merge_result` whose `base` is `base`, on a
+  set the verdict grades at the head (`grading`'s graded intent and diff
+  sets), on any commit. Each has the run shape of `t:run/0`.
+  """
+  @spec merge_result_runs(Ecto.UUID.t(), String.t(), t()) :: [run()]
+  def merge_result_runs(project_id, base, grading) do
+    graded =
+      [{"intent", grading.intent}, {"diff", grading.diff}]
+      |> Enum.filter(fn {_source, set} -> set && set.graded end)
+      |> Enum.map(fn {source, set} -> {source, set.digest} end)
+
+    if graded == [] do
+      []
+    else
+      Repo.all(
+        from r in Run,
+          where:
+            r.project_id == ^project_id and r.status == "final" and r.dirty == false and
+              r.merge_result == true and
+              fragment("?->'merge_result'->>'base'", r.document) == ^base,
+          where: ^digest_match(graded),
+          select: %{
+            id: r.id,
+            run_id: type(r.run_id, :string),
+            source: r.scenario_set_source,
+            digest: r.scenario_set_digest,
+            finished_at: r.finished_at,
+            results: fragment("?->'results'", r.document),
+            features: fragment("?->'features'", r.document)
+          }
+      )
+      |> Enum.map(fn run ->
+        %{run | results: Map.new(run.results, &{SetDocument.id_string(&1["id"]), &1["result"]})}
+      end)
+    end
   end
 
   @doc """

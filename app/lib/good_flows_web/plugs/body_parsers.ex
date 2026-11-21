@@ -56,9 +56,10 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
   after authentication: creating a change request, reporting a merge, Git
   facts or claims, writing a review policy version, uploading, approving
   or rejecting a scenario set, uploading or committing a verify run,
-  syncing a feature index, and answering a review item. The state changes
-  (`ready`, `draft`, `close`, `reopen`) and marking a review task done
-  take no body and are left unparsed
+  syncing a feature index, answering a review item, setting a parent,
+  retargeting, acquiring a merge lease and recording a defect. The state
+  changes (`ready`, `draft`, `close`, `reopen`), marking a review task
+  done and a merge lease heartbeat take no body and are left unparsed
   too, so no body is read before authentication; whatever is sent is
   ignored.
   """
@@ -73,7 +74,19 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
         method: "POST",
         path_info: ["api", "v1", "projects", _project, "change-requests", _number, action]
       })
-      when action in ["ready", "draft", "close", "reopen", "merged", "git-facts", "claims"],
+      when action in ~w(ready draft close reopen merged git-facts claims retarget merge-lease),
+      do: true
+
+  def strict_json_route?(%Plug.Conn{
+        method: "PUT",
+        path_info: ["api", "v1", "projects", _project, "change-requests", _number, "parent"]
+      }),
+      do: true
+
+  def strict_json_route?(%Plug.Conn{
+        method: "POST",
+        path_info: ["api", "v1", "projects", _project, "merge-leases", _lease_id, "heartbeat"]
+      }),
       do: true
 
   def strict_json_route?(%Plug.Conn{
@@ -117,7 +130,7 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
         method: "POST",
         path_info: ["api", "v1", "projects", _project, resource]
       })
-      when resource in ["verify-runs", "feature-index"],
+      when resource in ["verify-runs", "feature-index", "defects"],
       do: true
 
   def strict_json_route?(%Plug.Conn{

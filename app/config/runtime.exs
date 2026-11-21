@@ -89,7 +89,8 @@ if config_env() != :test do
       GoodFlows.Spry.RunJob,
       GoodFlows.Spry.ReapRunsJob,
       GoodFlows.Caches.SweepJob,
-      GoodFlows.ChangeRequests.RecomputeJob
+      GoodFlows.ChangeRequests.RecomputeJob,
+      GoodFlows.MergeLeases.ExpiryJob
     ],
     flows: [],
     max_concurrency: 10,
@@ -102,7 +103,8 @@ if config_env() != :test do
       ],
       GoodFlows.Spry.ReapRunsJob => [max_concurrency: 1],
       GoodFlows.Caches.SweepJob => [max_concurrency: 1],
-      GoodFlows.ChangeRequests.RecomputeJob => [max_concurrency: 2]
+      GoodFlows.ChangeRequests.RecomputeJob => [max_concurrency: 2],
+      GoodFlows.MergeLeases.ExpiryJob => [max_concurrency: 1]
     },
     signal_strategy: :notify
 end

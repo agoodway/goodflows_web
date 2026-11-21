@@ -7,8 +7,9 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
   Writes are on the project write pipeline (`sk_` keys only, of any role).
   `ck_` keys are `403` everywhere. `GoodFlowsWeb.Plugs.LoadChangeRequest`
   resolves `:number` (`422` or `404`) before any body is read, and the
-  body plugs run last: `GoodFlowsWeb.Plugs.JsonBody` for create, merge
-  and Git facts, `GoodFlowsWeb.Plugs.MarkdownBody` for claims.
+  body plugs run last: `GoodFlowsWeb.Plugs.JsonBody` for create, merge,
+  parent, retarget and Git facts, `GoodFlowsWeb.Plugs.MarkdownBody` for
+  claims.
   """
   use GoodFlowsWeb, :controller
   use OpenApiSpex.ControllerSpecs
@@ -24,8 +25,11 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
     ChangeRequestCreateRequest,
     ChangeRequestListResponse,
     ChangeRequestMergeRequest,
+    ChangeRequestParentRequest,
     ChangeRequestResponse,
+    ChangeRequestRetargetRequest,
     ClaimsResponse,
+    CodedConflictResponse,
     ConflictResponse,
     ErrorResponse,
     GitFactsDocument,
@@ -40,7 +44,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
 
   plug JsonBody,
        [limit: :change_request_max_body_bytes, default: 65_536]
-       when action in [:create, :merged]
+       when action in [:create, :merged, :set_parent, :retarget]
 
   plug JsonBody,
        [limit: :change_request_git_facts_max_body_bytes, default: 16_777_216]
@@ -250,7 +254,10 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
     Accepted from `draft` or `open` whatever the verdict: the verdict state,
     policy version and reasons at the head are stored in `merge`, and
     `merge.merged_without_mergeable_verdict` is true when that state is not
-    `mergeable`. The stored verdict is recorded as it is, not recomputed:
+    `mergeable`. A held merge lease is released (`release_reason:
+    "merged"`) without recomputing the verdict, and
+    `merge.merged_without_lease` is true unless `lease_id` names the change
+    request's active, unexpired lease. The stored verdict is recorded as it is, not recomputed:
     after a policy write that recomputes in the background (more than the
     inline limit of active change requests, default 100), `merge.policy_version`
     can be older than the current policy until that job runs. The same report
@@ -281,6 +288,112 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
 
     with {:ok, change_request} <-
            ChangeRequests.report_merge(change_request, api_key, conn.private.json_body) do
+      render_one(conn, change_request)
+    end
+  end
+
+  @editable_conflict {"`not_editable`: the change request is not `draft` or `open`",
+                      "application/json", CodedConflictResponse}
+
+  operation(:set_parent,
+    summary: "Set the parent change request",
+    description: """
+    Stacks the change request on one parent: a change request of the same
+    project with a lower number (else `422` on `number`), replacing any
+    earlier parent. While the parent is `draft` or `open` the child's
+    verdict is `pending` with `parent_not_merged`; while it is `closed`,
+    with `parent_closed`. The child must be `draft` or `open`.
+    """,
+    parameters: ApiParams.project() ++ @number_param,
+    request_body: {"Parent", "application/json", ChangeRequestParentRequest, required: true},
+    responses:
+      [
+        ok: {"The change request", "application/json", ChangeRequestResponse},
+        unauthorized: @unauthorized,
+        forbidden: @write_forbidden,
+        not_found: @not_found,
+        not_acceptable: @not_acceptable,
+        conflict: @editable_conflict,
+        request_entity_too_large: {"Body exceeds 64 KiB", "application/json", ErrorResponse},
+        unprocessable_entity:
+          {"Invalid or unusable `number`, project slug or path number", "application/json",
+           ValidationErrorResponse}
+      ] ++ @json_errors
+  )
+
+  @doc "Sets the parent change request."
+  def set_parent(conn, _params) do
+    %{change_request: change_request, current_api_key: api_key} = conn.assigns
+
+    with {:ok, change_request} <-
+           ChangeRequests.set_parent(change_request, api_key, conn.private.json_body) do
+      render_one(conn, change_request)
+    end
+  end
+
+  operation(:clear_parent,
+    summary: "Clear the parent change request",
+    parameters: ApiParams.project() ++ @number_param,
+    responses: [
+      ok: {"The change request", "application/json", ChangeRequestResponse},
+      unauthorized: @unauthorized,
+      forbidden: @write_forbidden,
+      not_found: @not_found,
+      not_acceptable: @not_acceptable,
+      conflict: @editable_conflict,
+      unprocessable_entity: @invalid_path
+    ]
+  )
+
+  @doc "Clears the parent change request."
+  def clear_parent(conn, _params) do
+    %{change_request: change_request, current_api_key: api_key} = conn.assigns
+
+    with {:ok, change_request} <- ChangeRequests.clear_parent(change_request, api_key) do
+      render_one(conn, change_request)
+    end
+  end
+
+  operation(:retarget,
+    summary: "Change the target branch",
+    description: """
+    Changes the `target_branch` of a `draft` or `open` change request. This
+    is a record update: no Git ref and no head changes. With a parent, it is
+    allowed only after the parent is `merged` (else `409`
+    `parent_not_merged`) and only to the parent's target branch (else `422`
+    on `target_branch`); without one, any branch. A held merge lease is
+    `409` `lease_held`, and a parent link that keeps changing while the
+    retarget runs (three attempts) is `409` `not_editable`. The verdict
+    is recomputed: it is `pending` with
+    `git_facts_missing` until Git facts for the head and the new target
+    are reported, and answers at an unchanged head still count.
+    """,
+    parameters: ApiParams.project() ++ @number_param,
+    request_body:
+      {"Target branch", "application/json", ChangeRequestRetargetRequest, required: true},
+    responses:
+      [
+        ok: {"Retargeted", "application/json", ChangeRequestResponse},
+        unauthorized: @unauthorized,
+        forbidden: @write_forbidden,
+        not_found: @not_found,
+        not_acceptable: @not_acceptable,
+        conflict:
+          {"`not_editable`, `parent_not_merged` or `lease_held`", "application/json",
+           CodedConflictResponse},
+        request_entity_too_large: {"Body exceeds 64 KiB", "application/json", ErrorResponse},
+        unprocessable_entity:
+          {"Invalid or disallowed `target_branch`, project slug or number", "application/json",
+           ValidationErrorResponse}
+      ] ++ @json_errors
+  )
+
+  @doc "Changes the target branch."
+  def retarget(conn, _params) do
+    %{change_request: change_request, current_api_key: api_key} = conn.assigns
+
+    with {:ok, change_request} <-
+           ChangeRequests.retarget(change_request, api_key, conn.private.json_body) do
       render_one(conn, change_request)
     end
   end

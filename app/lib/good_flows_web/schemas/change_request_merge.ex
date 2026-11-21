@@ -18,7 +18,8 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequestMerge do
       :verdict_state,
       :policy_version,
       :reasons,
-      :merged_without_mergeable_verdict
+      :merged_without_mergeable_verdict,
+      :merged_without_lease
     ],
     properties: %{
       merged_commit: %Schema{type: :string},
@@ -28,7 +29,12 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequestMerge do
       verdict_state: %Schema{type: :string, enum: ~w(pending blocked needs_review mergeable)},
       policy_version: %Schema{type: :integer, minimum: 0},
       reasons: %Schema{type: :array, items: VerdictReason},
-      merged_without_mergeable_verdict: %Schema{type: :boolean}
+      merged_without_mergeable_verdict: %Schema{type: :boolean},
+      merged_without_lease: %Schema{
+        type: :boolean,
+        description:
+          "True unless the report named the change request's active, unexpired merge lease"
+      }
     }
   })
 end

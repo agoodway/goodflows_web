@@ -88,6 +88,12 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "head is not the change request's current head", head: head}})
   end
 
+  def call(conn, {:error, {:coded_conflict, error, extra}}) when is_map(extra) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: Map.merge(%{detail: conflict_detail(error), error: error}, extra)})
+  end
+
   def call(conn, {:error, :invalid_transition}) do
     conn
     |> put_status(:conflict)
@@ -244,4 +250,13 @@ defmodule GoodFlowsWeb.FallbackController do
     |> put_status(status)
     |> json(ErrorJSON.render("#{Status.code(status)}.json", %{}))
   end
+
+  defp conflict_detail("not_open"), do: "The change request is not open"
+  defp conflict_detail("stale_head"), do: "head is not the change request's current head"
+  defp conflict_detail("not_mergeable"), do: "The change request's verdict is not mergeable"
+  defp conflict_detail("slot_taken"), do: "Another lease holds the merge slot"
+  defp conflict_detail("lease_not_active"), do: "The lease is unknown, released or expired"
+  defp conflict_detail("not_editable"), do: "Only draft and open change requests can change"
+  defp conflict_detail("parent_not_merged"), do: "The parent change request is not merged"
+  defp conflict_detail("lease_held"), do: "The change request holds a merge lease"
 end

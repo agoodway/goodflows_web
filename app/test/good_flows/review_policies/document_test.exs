@@ -39,7 +39,7 @@ defmodule GoodFlows.ReviewPolicies.DocumentTest do
     end
   end
 
-  test "active settings cover phases 1 and 2, not merge" do
+  test "active settings cover every phase, including merge" do
     active = Document.active_settings()
     assert "claims.one_way_door" in active
     assert "evidence.required_workflows" in active
@@ -53,7 +53,14 @@ defmodule GoodFlows.ReviewPolicies.DocumentTest do
       assert setting in active
     end
 
-    refute Enum.any?(active, &String.starts_with?(&1, "merge."))
+    assert "merge.lease_ttl" in active
+    assert "merge.regrade_merge_result" in active
+  end
+
+  test "lease_ttl_seconds/1 reads seconds, minutes and hours" do
+    assert Document.lease_ttl_seconds("90s") == 90
+    assert Document.lease_ttl_seconds("3m") == 180
+    assert Document.lease_ttl_seconds("1h") == 3_600
   end
 
   describe "validate_write/1" do

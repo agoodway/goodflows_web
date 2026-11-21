@@ -113,7 +113,16 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/change-requests/{number}/review/items/{item_id}/answers",
      "post"},
     {"/api/v1/projects/{project}/change-requests/{number}/tasks", "get"},
-    {"/api/v1/projects/{project}/change-requests/{number}/tasks/{task_id}/done", "post"}
+    {"/api/v1/projects/{project}/change-requests/{number}/tasks/{task_id}/done", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/parent", "put"},
+    {"/api/v1/projects/{project}/change-requests/{number}/parent", "delete"},
+    {"/api/v1/projects/{project}/change-requests/{number}/retarget", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/merge-lease", "post"},
+    {"/api/v1/projects/{project}/merge-leases/{lease_id}/heartbeat", "post"},
+    {"/api/v1/projects/{project}/merge-leases/{lease_id}", "delete"},
+    {"/api/v1/projects/{project}/defects", "get"},
+    {"/api/v1/projects/{project}/defects", "post"},
+    {"/api/v1/projects/{project}/calibration", "get"}
   ]
 
   test "documents the project slug rule on every project path parameter", %{conn: conn} do
@@ -644,7 +653,18 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       {@cr <> "/{number}/review/items/{item_id}/answers", "post",
        ~w(201 400 401 403 404 406 409 413 415 422)},
       {@cr <> "/{number}/tasks", "get", ~w(200 401 403 404 406 422)},
-      {@cr <> "/{number}/tasks/{task_id}/done", "post", ~w(200 401 403 404 406 422)}
+      {@cr <> "/{number}/tasks/{task_id}/done", "post", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/parent", "put", ~w(200 400 401 403 404 406 409 413 415 422)},
+      {@cr <> "/{number}/parent", "delete", ~w(200 401 403 404 406 409 422)},
+      {@cr <> "/{number}/retarget", "post", ~w(200 400 401 403 404 406 409 413 415 422)},
+      {@cr <> "/{number}/merge-lease", "post", ~w(200 201 400 401 403 404 406 409 413 415 422)},
+      {"/api/v1/projects/{project}/merge-leases/{lease_id}/heartbeat", "post",
+       ~w(200 401 403 404 406 409 422)},
+      {"/api/v1/projects/{project}/merge-leases/{lease_id}", "delete",
+       ~w(204 401 403 404 406 409 422)},
+      {"/api/v1/projects/{project}/defects", "post", ~w(201 400 401 403 404 406 413 415 422)},
+      {"/api/v1/projects/{project}/defects", "get", ~w(200 401 403 404 406 422)},
+      {"/api/v1/projects/{project}/calibration", "get", ~w(200 401 403 404 406 422)}
     ]
 
     test "every operation lists its statuses", %{paths: paths} do
@@ -666,7 +686,11 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
              "ScenarioSetDecisionRequest"},
             {@vr, "post", "VerifyRunRequest"},
             {@fi, "post", "FeatureIndexSyncRequest"},
-            {@cr <> "/{number}/review/items/{item_id}/answers", "post", "ReviewAnswerRequest"}
+            {@cr <> "/{number}/review/items/{item_id}/answers", "post", "ReviewAnswerRequest"},
+            {@cr <> "/{number}/parent", "put", "ChangeRequestParentRequest"},
+            {@cr <> "/{number}/retarget", "post", "ChangeRequestRetargetRequest"},
+            {@cr <> "/{number}/merge-lease", "post", "MergeLeaseRequest"},
+            {"/api/v1/projects/{project}/defects", "post", "DefectRequest"}
           ] do
         assert get_in(paths, [
                  path,
@@ -720,6 +744,63 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
                ~w(approve reject request_change choose)
 
       assert Map.has_key?(schemas["Verdict"]["properties"], "review")
+    end
+
+    test "merge coordination and calibration schemas", %{conn: conn} do
+      doc = conn |> get(~p"/api/v1/openapi") |> json_response(200)
+      schemas = doc["components"]["schemas"]
+
+      conflict =
+        get_in(doc, [
+          "paths",
+          @cr <> "/{number}/merge-lease",
+          "post",
+          "responses",
+          "409",
+          "content",
+          "application/json",
+          "schema",
+          "$ref"
+        ])
+
+      assert conflict =~ "CodedConflictResponse"
+      errors = schemas["CodedConflictResponse"]["properties"]["errors"]
+
+      assert Enum.sort(errors["properties"]["error"]["enum"]) ==
+               Enum.sort(~w(not_open stale_head not_mergeable slot_taken lease_not_active
+                 not_editable parent_not_merged lease_held))
+
+      assert Map.keys(errors["properties"]["holder"]["properties"]) ==
+               ["change_request", "expires_at"]
+
+      assert Map.has_key?(schemas["ChangeRequestMergeRequest"]["properties"], "lease_id")
+      refute "lease_id" in schemas["ChangeRequestMergeRequest"]["required"]
+      assert "merged_without_lease" in schemas["ChangeRequestMerge"]["required"]
+      assert "parent" in schemas["ChangeRequest"]["required"]
+
+      assert schemas["DefectRequest"]["properties"]["severity"]["enum"] ==
+               ~w(low medium high critical)
+
+      assert schemas["Defect"]["properties"]["attribution"]["enum"] ==
+               ~w(change_request commit unattributed)
+
+      assert Enum.sort(Map.keys(schemas["CalibrationLanes"]["properties"])) ==
+               ~w(auto bypass reviewed)
+
+      assert "unmatched_defect_count" in get_in(schemas, [
+               "CalibrationResponse",
+               "properties",
+               "data",
+               "required"
+             ])
+
+      types = schemas["ProjectEvent"]["properties"]["type"]["enum"]
+      assert "lease_expired" in types and "defect_recorded" in types
+
+      rules = schemas["VerdictReason"]["properties"]["rule"]["enum"]
+
+      for rule <- ~w(parent_not_merged parent_closed merge_result_ungraded merge_result_failed),
+          do: assert(rule in rules)
     end
 
     test "the project delete 409 names change requests and verify runs", %{conn: conn} do

@@ -29,6 +29,20 @@ defmodule GoodFlows.ChangeRequests.Rules do
   `[source, scenario id]`; `spec_gap` has `[capability, requirement,
   scenario]`. The verdict also carries `scenarios`, `coverage` and the
   `counted_runs`.
+
+  Merge coordination (`add-change-request-merge`) reads `inputs.parent`
+  (the parent's number and state, or nil) and `inputs.merge_result` (the
+  held lease's `base` and its merge-result runs, or nil when the check
+  does not apply). A `draft` or `open` parent adds `parent_not_merged` and
+  a `closed` one `parent_closed` (both `pending`, `subject` `[<parent
+  number>]`), whatever the facts. With facts, the merge-result check uses
+  the newest merge-result run of each graded set (a run holds one result
+  per scenario of its set, so this is the newest result per Must): each
+  Must that is not `passed` adds `merge_result_failed` (`blocked`,
+  `[source, id]`), a Must without a result counting as `not_run`, and a
+  graded set without such a run, or no graded set, adds
+  `merge_result_ungraded` (`pending`, `[<lease base>]`). Merge-result runs
+  never grade the branch.
   """
 
   alias GoodFlows.ChangeRequests.Grading
@@ -60,7 +74,9 @@ defmodule GoodFlows.ChangeRequests.Rules do
           required(:claims) => %{front_matter: map(), digest: binary()} | nil,
           required(:workflows) => %{String.t() => workflow_result()},
           required(:policy) => policy(),
-          optional(:grading) => Grading.t()
+          optional(:grading) => Grading.t(),
+          optional(:parent) => %{number: pos_integer(), state: String.t()} | nil,
+          optional(:merge_result) => %{base: String.t(), runs: [Grading.run()]} | nil
         }
 
   @typedoc "One reason, as stored and rendered."
@@ -100,7 +116,71 @@ defmodule GoodFlows.ChangeRequests.Rules do
     facts? = inputs.head != nil and inputs.git_facts != nil
 
     reasons(inputs) ++
-      set_presence_reasons(inputs) ++ if(facts?, do: grading_reasons(inputs), else: [])
+      set_presence_reasons(inputs) ++
+      parent_reasons(inputs[:parent]) ++
+      if(facts?, do: grading_reasons(inputs) ++ merge_result_reasons(inputs), else: [])
+  end
+
+  defp parent_reasons(%{number: number, state: state}) when state in ~w(draft open),
+    do: [
+      reason(
+        "parent_not_merged",
+        "pending",
+        [Integer.to_string(number)],
+        "The parent change request #{number} is not merged"
+      )
+    ]
+
+  defp parent_reasons(%{number: number, state: "closed"}),
+    do: [
+      reason(
+        "parent_closed",
+        "pending",
+        [Integer.to_string(number)],
+        "The parent change request #{number} is closed"
+      )
+    ]
+
+  defp parent_reasons(_parent), do: []
+
+  defp merge_result_reasons(%{merge_result: %{base: base, runs: runs}, grading: grading}) do
+    ungraded =
+      reason(
+        "merge_result_ungraded",
+        "pending",
+        [base],
+        "No counted verify run grades the merge result on the lease's base"
+      )
+
+    case graded_sets(grading) do
+      [] ->
+        [ungraded]
+
+      sets ->
+        sets |> Enum.flat_map(&merge_result_set(&1, runs, ungraded)) |> Enum.uniq()
+    end
+  end
+
+  defp merge_result_reasons(_inputs), do: []
+
+  defp merge_result_set({source, set}, runs, ungraded) do
+    case newest_run(runs, source, set.digest) do
+      nil -> [ungraded]
+      run -> merge_result_failures(source, set, run)
+    end
+  end
+
+  defp merge_result_failures(source, set, run) do
+    for %{id: id, priority: "must"} <- set.scenarios,
+        result = Map.get(run.results, id) || "not_run",
+        result != "passed",
+        do:
+          reason(
+            "merge_result_failed",
+            "blocked",
+            [source, id],
+            "Must scenario #{id} of the #{source} set is #{result} on the merge result"
+          )
   end
 
   defp require?(policy), do: policy.effective["scenarios"]["require_approved_intent"]

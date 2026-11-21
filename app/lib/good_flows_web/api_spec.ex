@@ -352,6 +352,25 @@ defmodule GoodFlowsWeb.ApiSpec do
         90 days; an older cursor is `410` with `latest_cursor`. Public keys
         read it with notes and actors redacted to null.
 
+        ## Merge coordination and calibration
+
+        The server never merges; it coordinates clients that do.
+        `POST …/change-requests/{number}/merge-lease` takes the one merge slot
+        of the project and target branch for an `open`, `mergeable` change
+        request at its head, for `merge.lease_ttl` (default 10 minutes);
+        `POST …/merge-leases/{lease_id}/heartbeat` extends it and
+        `DELETE …/merge-leases/{lease_id}` releases it. A taken slot is `409`
+        `slot_taken` with the holder; there is no queue. Name the lease as
+        `lease_id` when reporting the merge, or the merge is flagged
+        `merge.merged_without_lease`. With `merge.regrade_merge_result` and a
+        base that moved since grading, the verdict also needs a passing verify
+        run whose `merge_result.base` is the lease's base.
+        `PUT …/change-requests/{number}/parent` stacks a change request on a
+        lower-numbered one, and `POST …/retarget` moves it to the parent's
+        target once the parent merged. `…/defects` records defects found after
+        a merge, and `…/calibration` reports merges and defects by lane, policy
+        version, rule and path glob, read-only.
+
         ## Caches
 
         `/api/v1/projects/{project}/caches` is a remote store for goodflows
