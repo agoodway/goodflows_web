@@ -71,7 +71,24 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/test-reports", "post"},
     {"/api/v1/projects/{project}/workflow-runs", "get"},
     {"/api/v1/projects/{project}/workflow-runs", "post"},
-    {"/api/v1/projects/{project}/workflow-runs/{run_id}", "get"}
+    {"/api/v1/projects/{project}/workflow-runs/{run_id}", "get"},
+    {"/api/v1/projects/{project}/review-policy", "get"},
+    {"/api/v1/projects/{project}/review-policy", "put"},
+    {"/api/v1/projects/{project}/review-policy/versions", "get"},
+    {"/api/v1/projects/{project}/review-policy/versions/{version}", "get"},
+    {"/api/v1/projects/{project}/change-requests", "get"},
+    {"/api/v1/projects/{project}/change-requests", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/ready", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/draft", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/close", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/reopen", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/merged", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/git-facts", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/git-facts/{head}", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/claims", "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/claims/{head}", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/verdict", "get"}
   ]
 
   test "documents the project slug rule on every project path parameter", %{conn: conn} do
@@ -549,6 +566,66 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
       assert mint["responses"]["201"]["content"]["application/json"]["schema"]["$ref"] =~
                "CacheKeyResponse"
+    end
+  end
+
+  describe "change requests and review policy" do
+    setup %{conn: conn} do
+      %{paths: conn |> get(~p"/api/v1/openapi") |> json_response(200) |> Map.fetch!("paths")}
+    end
+
+    @cr "/api/v1/projects/{project}/change-requests"
+    @rp "/api/v1/projects/{project}/review-policy"
+
+    @statuses [
+      {@cr, "get", ~w(200 401 403 404 406 422)},
+      {@cr, "post", ~w(201 400 401 403 404 406 413 415 422)},
+      {@cr <> "/{number}", "get", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/ready", "post", ~w(200 401 403 404 406 409 415 422)},
+      {@cr <> "/{number}/draft", "post", ~w(200 401 403 404 406 409 415 422)},
+      {@cr <> "/{number}/close", "post", ~w(200 401 403 404 406 409 415 422)},
+      {@cr <> "/{number}/reopen", "post", ~w(200 401 403 404 406 409 415 422)},
+      {@cr <> "/{number}/merged", "post", ~w(200 400 401 403 404 406 409 413 415 422)},
+      {@cr <> "/{number}/git-facts", "post", ~w(200 201 400 401 403 404 406 409 413 415 422)},
+      {@cr <> "/{number}/git-facts/{head}", "get", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/claims", "post", ~w(200 201 400 401 403 404 406 409 413 415 422)},
+      {@cr <> "/{number}/claims/{head}", "get", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/verdict", "get", ~w(200 401 403 404 406 422)},
+      {@rp, "get", ~w(200 401 403 404 406 422)},
+      {@rp, "put", ~w(200 201 400 401 403 404 406 409 413 415 422)},
+      {@rp <> "/versions", "get", ~w(200 401 403 404 406 422)},
+      {@rp <> "/versions/{version}", "get", ~w(200 401 403 404 406 422)}
+    ]
+
+    test "every operation lists its statuses", %{paths: paths} do
+      for {path, verb, statuses} <- @statuses do
+        responses = get_in(paths, [path, verb, "responses"])
+        assert responses, "#{verb} #{path} is missing"
+        assert Enum.sort(Map.keys(responses)) == Enum.sort(statuses), "#{verb} #{path}"
+      end
+    end
+
+    test "request bodies: JSON documents and Markdown claims", %{paths: paths} do
+      for {path, verb, schema} <- [
+            {@cr, "post", "ChangeRequestCreateRequest"},
+            {@cr <> "/{number}/merged", "post", "ChangeRequestMergeRequest"},
+            {@cr <> "/{number}/git-facts", "post", "GitFactsDocument"},
+            {@rp, "put", "ReviewPolicyWriteRequest"}
+          ] do
+        assert get_in(paths, [
+                 path,
+                 verb,
+                 "requestBody",
+                 "content",
+                 "application/json",
+                 "schema",
+                 "$ref"
+               ]) =~
+                 schema
+      end
+
+      claims = get_in(paths, [@cr <> "/{number}/claims", "post", "requestBody", "content"])
+      assert Map.keys(claims) == ["text/markdown"]
     end
   end
 end

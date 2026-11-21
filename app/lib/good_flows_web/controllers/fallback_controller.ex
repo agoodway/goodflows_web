@@ -40,6 +40,54 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "The project has stored workflow runs and cannot be deleted"}})
   end
 
+  def call(conn, {:error, :has_change_requests}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "The project has change requests and cannot be deleted"}})
+  end
+
+  def call(conn, {:error, {:invalid_body, errors}}) when is_map(errors) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{errors: errors})
+  end
+
+  def call(conn, {:error, :invalid_transition}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "The change request's state does not allow this"}})
+  end
+
+  def call(conn, {:error, :not_active}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "Only draft and open change requests accept reports"}})
+  end
+
+  def call(conn, {:error, :merge_conflict}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "The change request was merged with another commit or branch"}})
+  end
+
+  def call(conn, {:error, :git_facts_conflict}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "Different Git facts are stored for this head and target"}})
+  end
+
+  def call(conn, {:error, :claims_conflict}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "Different claims are stored for this head"}})
+  end
+
+  def call(conn, {:error, :policy_version_conflict}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "previous_version is not the current policy version"}})
+  end
+
   def call(conn, {:error, {:invalid_test_report, errors}}) when is_map(errors) do
     conn
     |> put_status(:unprocessable_entity)

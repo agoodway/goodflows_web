@@ -116,6 +116,25 @@ defmodule GoodFlows.ProjectsTest do
     assert Repo.get(WorkflowRun, id)
   end
 
+  test "delete_project/2 refuses a project whose only content is a closed change request", ctx do
+    project = project_fixture(ctx.account)
+    user = GoodFlows.AccountsFixtures.user_fixture()
+    au = GoodFlows.AccountsFixtures.account_user_fixture(ctx.account, user, :member)
+    {key, _token} = GoodFlows.AccountsFixtures.api_key_fixture(au, %{type: :private})
+
+    {:ok, cr} =
+      GoodFlows.ChangeRequests.create(ctx.account, project, key, %{
+        "title" => "t",
+        "source_branch" => "b"
+      })
+
+    {:ok, _closed} = GoodFlows.ChangeRequests.transition(cr, key, :close)
+
+    assert Projects.delete_project(ctx.account, project) == {:error, :has_change_requests}
+    assert {:ok, _} = Projects.get_project(ctx.account, project.slug)
+    assert Repo.get(GoodFlows.ChangeRequests.ChangeRequest, cr.id)
+  end
+
   test "delete_project/2 reports test reports when the project also has a workflow run", ctx do
     project = project_fixture(ctx.account)
     %{id: report_id} = stored_report_fixture(ctx.account, project)

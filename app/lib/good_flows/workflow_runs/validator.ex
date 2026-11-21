@@ -597,7 +597,14 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   # a list within bounds whose entries are all valid, so a structural
   # error is not reported twice. Tickets compare ignoring ASCII case;
   # thread URLs are already normalized and compare exactly.
-  defp links_errors(%{"links" => links}) when is_map(links) do
+  @doc """
+  Cross-entry `links` checks of a document that has `links`: an empty
+  object, and repeated thread URLs or tickets (ignoring ASCII case).
+  Errors have forward paths starting at `links`. Change request bodies
+  reuse it with `links_spec/0`.
+  """
+  @spec links_errors(map()) :: [JsonDocument.error()]
+  def links_errors(%{"links" => links}) when is_map(links) do
     empty =
       if Map.has_key?(links, "threads") or Map.has_key?(links, "tickets"),
         do: [],
@@ -608,7 +615,7 @@ defmodule GoodFlows.WorkflowRuns.Validator do
       repeats(links, "tickets", &valid_ticket?/1, &String.downcase(&1, :ascii))
   end
 
-  defp links_errors(_document), do: []
+  def links_errors(_document), do: []
 
   defp repeats(links, key, valid?, compare_as) do
     with {:ok, list} when is_list(list) and list != [] and length(list) <= @max_links <-
@@ -674,7 +681,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
      }}
   end
 
-  defp links_spec do
+  @doc "The `GoodFlows.TestReports.Shape` spec of a `links` object."
+  @spec links_spec() :: Shape.spec()
+  def links_spec do
     {:object,
      %{
        "threads" =>

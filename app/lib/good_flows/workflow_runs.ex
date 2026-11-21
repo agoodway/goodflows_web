@@ -31,6 +31,10 @@ defmodule GoodFlows.WorkflowRuns do
   error is logged by SQLSTATE and constraint name only and raised as
   `GoodFlows.WorkflowRuns.StorageError` (a 500), never with its message.
 
+  A first insert whose `source.commit` is the head of a `draft` or `open`
+  change request of the project recomputes that verdict in the same
+  transaction (`GoodFlows.ChangeRequests.recompute_for_commit/2`).
+
   Insert and comparison queries run with `log: false` so the document never
   reaches Ecto logs, and with the timeout
   `config :good_flows, :workflow_run_db_timeout_ms` (default 15_000).
@@ -38,6 +42,7 @@ defmodule GoodFlows.WorkflowRuns do
   import Ecto.Query
 
   alias GoodFlows.Accounts.{Account, ApiKey}
+  alias GoodFlows.ChangeRequests
   alias GoodFlows.JsonDocument
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
@@ -403,9 +408,18 @@ defmodule GoodFlows.WorkflowRuns do
     )
   end
 
+  # A new run on the head of a `draft` or `open` change request recomputes
+  # its verdict in the insert's transaction.
   defp store(project, api_key, payload, columns) do
     row = row(project, api_key, payload, columns)
 
+    {:ok, result} =
+      Store.transaction(fn -> insert_or_compare(row) end, timeout: db_timeout_ms())
+
+    result
+  end
+
+  defp insert_or_compare(row) do
     case Store.insert_all(Run, [row],
            on_conflict: :nothing,
            conflict_target: @identity,
@@ -413,8 +427,12 @@ defmodule GoodFlows.WorkflowRuns do
            log: false,
            timeout: db_timeout_ms()
          ) do
-      {1, [%Run{id: id}]} -> {:ok, ack(id, row.run_id, false)}
-      {0, []} -> compare(row)
+      {1, [%Run{id: id}]} ->
+        ChangeRequests.recompute_for_commit(row.project_id, row.source_commit)
+        {:ok, ack(id, row.run_id, false)}
+
+      {0, []} ->
+        compare(row)
     end
   end
 

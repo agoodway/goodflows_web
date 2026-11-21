@@ -11,6 +11,10 @@ defmodule GoodFlows.WorkflowRuns.Store do
   @spec insert_all(module(), [map()], keyword()) :: {non_neg_integer(), nil | [term()]}
   def insert_all(schema, rows, opts), do: Repo.insert_all(schema, rows, opts)
 
+  @doc "`Repo.transaction/2`; the commit point of an upload."
+  @spec transaction((-> term()), keyword()) :: {:ok, term()} | {:error, term()}
+  def transaction(fun, opts), do: Repo.transaction(fun, opts)
+
   @doc "`Repo.one/2`."
   @spec one(Ecto.Queryable.t(), keyword()) :: term()
   def one(query, opts), do: Repo.one(query, opts)

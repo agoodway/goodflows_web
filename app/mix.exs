@@ -104,6 +104,9 @@ defmodule GoodFlows.MixProject do
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
+      # YAML front matter of change request claims (anchors, aliases and tags
+      # are refused through yamerl's tokens before parsing)
+      {:yaml_elixir, "~> 2.12"},
       {:bandit, "~> 1.5"},
 
       # OpenAPI Documentation

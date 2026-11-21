@@ -3,7 +3,8 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
   The endpoint's `Plug.Parsers`, except for raw-body uploads
   (`raw_body_route?/1`).
 
-  Test report uploads and `POST /api/v1/projects/:project/workflow-runs`
+  Test report uploads, `POST /api/v1/projects/:project/workflow-runs`, and
+  the change request and review policy writes (`strict_json_route?/1`)
   are left unparsed (`body_params` stays `Plug.Conn.Unfetched`), so their
   body is not read before authentication and resource resolution.
   `GoodFlowsWeb.Plugs.TestReportBody` and
@@ -42,10 +43,43 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
       }),
       do: true
 
-  def raw_body_route?(%Plug.Conn{path_info: path_info}), do: raw_body_route?(path_info)
+  def raw_body_route?(%Plug.Conn{} = conn) do
+    strict_json_route?(conn) or raw_body_route?(conn.path_info)
+  end
 
   def raw_body_route?(path_info) when is_list(path_info),
     do: test_report_upload?(path_info)
+
+  @doc """
+  Whether `conn` is a change request or review policy write whose body
+  `GoodFlowsWeb.Plugs.JsonBody` or `GoodFlowsWeb.Plugs.MarkdownBody` reads
+  after authentication: creating a change request, reporting a merge, Git
+  facts or claims, and writing a review policy version. The state changes
+  (`ready`, `draft`, `close`, `reopen`) take no body and are left unparsed
+  too, so no body is read before authentication; whatever is sent is
+  ignored.
+  """
+  @spec strict_json_route?(Plug.Conn.t()) :: boolean()
+  def strict_json_route?(%Plug.Conn{
+        method: "POST",
+        path_info: ["api", "v1", "projects", _project, "change-requests"]
+      }),
+      do: true
+
+  def strict_json_route?(%Plug.Conn{
+        method: "POST",
+        path_info: ["api", "v1", "projects", _project, "change-requests", _number, action]
+      })
+      when action in ["ready", "draft", "close", "reopen", "merged", "git-facts", "claims"],
+      do: true
+
+  def strict_json_route?(%Plug.Conn{
+        method: "PUT",
+        path_info: ["api", "v1", "projects", _project, "review-policy"]
+      }),
+      do: true
+
+  def strict_json_route?(%Plug.Conn{}), do: false
 
   @doc "Whether `conn` (or a path) addresses the test report upload route."
   @spec test_report_upload?(Plug.Conn.t() | [String.t()]) :: boolean()
