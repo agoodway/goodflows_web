@@ -153,7 +153,7 @@ defmodule GoodFlows.ReviewPolicies do
   end
 
   defp write_locked(project, account_user, api_key, write) do
-    lock = from p in Project, where: p.id == ^project.id, lock: "FOR UPDATE", select: p.id
+    lock = from p in Project, where: p.id == ^project.id, lock: "FOR NO KEY UPDATE", select: p.id
     if Repo.one(lock) == nil, do: Repo.rollback(:not_found)
 
     current = current(project.id)

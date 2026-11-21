@@ -107,7 +107,7 @@ defmodule GoodFlows.FeatureIndex do
   end
 
   defp sync_locked(project, api_key, features) do
-    lock = from p in Project, where: p.id == ^project.id, lock: "FOR UPDATE", select: p.id
+    lock = from p in Project, where: p.id == ^project.id, lock: "FOR NO KEY UPDATE", select: p.id
     if Repo.one(lock) == nil, do: Repo.rollback(:not_found)
 
     digest = JsonDocument.digest(features)
