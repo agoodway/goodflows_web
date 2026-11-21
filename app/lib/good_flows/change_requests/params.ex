@@ -8,8 +8,11 @@ defmodule GoodFlows.ChangeRequests.Params do
   1 to 256 UTF-8 bytes without control characters, `openspec_change` is
   one 1 to 64 byte slug matching `[a-z0-9][a-z0-9-]*`, and `links` is the
   workflow-run `links` shape. Merge accepts only `merged_commit` (40 or 64
-  lowercase hex characters) and `target_branch`. Values are never
-  rewritten. Errors are rendered by `GoodFlows.DocumentErrors`.
+  lowercase hex characters), `target_branch` and an optional string
+  `lease_id`. A lease acquire accepts only `head` and `base` (SHAs), a
+  parent link only `number` (a positive integer) and a retarget only
+  `target_branch`. Values are never rewritten. Errors are rendered by
+  `GoodFlows.DocumentErrors`.
   """
 
   alias GoodFlows.DocumentErrors
@@ -59,15 +62,57 @@ defmodule GoodFlows.ChangeRequests.Params do
     end
   end
 
-  @doc "Validates a merge report body."
+  @doc "Validates a merge report body; `lease_id` is nil when not sent."
   @spec merge(term()) ::
-          {:ok, %{merged_commit: String.t(), target_branch: String.t()}}
+          {:ok,
+           %{merged_commit: String.t(), target_branch: String.t(), lease_id: String.t() | nil}}
           | {:error, {:invalid_body, DocumentErrors.errors()}}
   def merge(body) do
-    spec = {:object, %{"merged_commit" => {:string, format: @sha}, "target_branch" => text()}}
+    spec =
+      {:object,
+       %{
+         "merged_commit" => {:string, format: @sha},
+         "target_branch" => text(),
+         "lease_id" => {:omit, {:string, []}}
+       }}
 
+    with :ok <- check(body, spec) do
+      {:ok,
+       %{
+         merged_commit: body["merged_commit"],
+         target_branch: body["target_branch"],
+         lease_id: Map.get(body, "lease_id")
+       }}
+    end
+  end
+
+  @doc "Validates a merge lease acquire body."
+  @spec acquire(term()) ::
+          {:ok, %{head: String.t(), base: String.t()}}
+          | {:error, {:invalid_body, DocumentErrors.errors()}}
+  def acquire(body) do
+    with :ok <- check(body, {:object, %{"head" => sha_spec(), "base" => sha_spec()}}),
+         do: {:ok, %{head: body["head"], base: body["base"]}}
+  end
+
+  @doc "Validates a parent link body."
+  @spec parent(term()) ::
+          {:ok, pos_integer()} | {:error, {:invalid_body, DocumentErrors.errors()}}
+  def parent(body) do
+    with :ok <- check(body, {:object, %{"number" => {:int, 1}}}), do: {:ok, body["number"]}
+  end
+
+  @doc "Validates a retarget body."
+  @spec retarget(term()) ::
+          {:ok, String.t()} | {:error, {:invalid_body, DocumentErrors.errors()}}
+  def retarget(body) do
+    with :ok <- check(body, {:object, %{"target_branch" => text()}}),
+         do: {:ok, body["target_branch"]}
+  end
+
+  defp check(body, spec) do
     case Shape.check(body, spec, []) do
-      [] -> {:ok, %{merged_commit: body["merged_commit"], target_branch: body["target_branch"]}}
+      [] -> :ok
       errors -> {:error, {:invalid_body, DocumentErrors.render(errors)}}
     end
   end

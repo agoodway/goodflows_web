@@ -90,6 +90,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
       openspec_change: change_request.openspec_change,
       links: links(change_request.links, redact?),
       head: change_request.head,
+      parent: change_request.parent && change_request.parent.number,
       opened_by: %{user_id: user_id(change_request.opened_by_account_user, redact?)},
       merge: merge(change_request, redact?),
       inserted_at: DateTime.to_iso8601(change_request.inserted_at),
@@ -109,7 +110,8 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
       verdict_state: change_request.merged_verdict_state,
       policy_version: change_request.merged_policy_version,
       reasons: reasons(change_request.merged_reasons, redact?),
-      merged_without_mergeable_verdict: change_request.merged_without_mergeable_verdict
+      merged_without_mergeable_verdict: change_request.merged_without_mergeable_verdict,
+      merged_without_lease: change_request.merged_without_lease
     }
   end
 

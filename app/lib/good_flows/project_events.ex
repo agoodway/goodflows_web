@@ -33,7 +33,8 @@ defmodule GoodFlows.ProjectEvents do
   alias GoodFlows.Repo
 
   @types ~w(cr_state_changed verdict_changed scenario_set_uploaded scenario_set_approved
-            scenario_set_rejected answer_recorded task_created policy_version_created)
+            scenario_set_rejected answer_recorded task_created policy_version_created
+            lease_acquired lease_renewed lease_expired lease_released defect_recorded)
   @default_limit 100
   @max_limit 200
   @max_wait 30

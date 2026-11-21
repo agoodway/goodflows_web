@@ -72,7 +72,8 @@ defmodule GoodFlowsWeb.Api.V1.ReviewPolicyControllerTest do
     assert "coverage.undriven_features" in active
     assert "evidence.ignore_paths" in active
     assert "scenarios.approver" in active
-    refute "merge.regrade_merge_result" in active
+    assert "merge.lease_ttl" in active
+    assert "merge.regrade_merge_result" in active
 
     assert %{"data" => %{"version" => 1}} =
              conn |> put_json(rp_path(ctx.project.slug), body()) |> json_response(200)

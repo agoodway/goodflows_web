@@ -17,8 +17,15 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
     - `answer_recorded`: `item_id`, `kind`, `head`, `answer`, `option`, `note`
     - `task_created`: `task_id`, `item_id`, `head`, `note`
     - `policy_version_created`: `version`, `note` (`number` is null)
+    - `lease_acquired`, `lease_renewed`, `lease_expired`: `lease_id`, `target_branch`,
+      `expires_at` (the lease's expiry after the change; `actor` is null for expiry)
+    - `lease_released`: `lease_id`, `target_branch`, `expires_at`, `release_reason`
+      (`released`, `merged` or `closed`)
+    - `defect_recorded`: `defect_id`, `commit`, `attribution`, `severity`, `ticket`
+      (`number` is the attributed change request, or null)
 
-    Public keys see every `note` and `actor` as null. Later phases may add types.
+    Public keys see every `note`, the `ticket` of `defect_recorded` and `actor` as null.
+    Later phases may add types.
     """,
     type: :object,
     required: [:id, :type, :number, :data, :actor, :inserted_at],
@@ -27,7 +34,8 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
       type: %Schema{
         type: :string,
         enum: ~w(cr_state_changed verdict_changed scenario_set_uploaded scenario_set_approved
-          scenario_set_rejected answer_recorded task_created policy_version_created)
+          scenario_set_rejected answer_recorded task_created policy_version_created
+          lease_acquired lease_renewed lease_expired lease_released defect_recorded)
       },
       number: %Schema{type: :integer, nullable: true, description: "Change request number"},
       data: %Schema{type: :object},

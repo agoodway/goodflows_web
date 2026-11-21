@@ -18,7 +18,11 @@ defmodule GoodFlows.ChangeRequests do
   `{:error, :claims_conflict}`. The last reported head is current.
 
   Writes lock the change request row (`FOR UPDATE`) and recompute its
-  verdict (`recompute/2`) in the same transaction. A workflow run upload
+  verdict (`recompute/2`) in the same transaction. A transaction that
+  locks several change request rows locks them in `number` order. A
+  parent always has a lower number than its child, so this order is
+  parent-first, and paths that lock one row and then more (a parent, then
+  its children; a parent `FOR SHARE`, then the child) follow it too. A workflow run upload
   on a change request's head (`recompute_for_commit/3`) and a new policy
   version (`recompute_after_policy_write/1`) recompute too. A Git facts
   report and a workflow run upload on the same commit serialize on a
@@ -49,6 +53,8 @@ defmodule GoodFlows.ChangeRequests do
   alias GoodFlows.ChangeRequests.Verdict
   alias GoodFlows.JsonDocument
   alias GoodFlows.KeysetCursor
+  alias GoodFlows.MergeLeases
+  alias GoodFlows.MergeLeases.Lease
   alias GoodFlows.ProjectEvents
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
@@ -62,6 +68,7 @@ defmodule GoodFlows.ChangeRequests do
   @default_page_size 50
   @max_page_size 200
   @default_inline_recompute_limit 100
+  @retarget_attempts 3
 
   @typedoc "A change request with what a show response needs."
   @type loaded :: %{
@@ -145,7 +152,7 @@ defmodule GoodFlows.ChangeRequests do
         |> after_cursor(filters.cursor)
         |> order_by(desc: :number)
         |> limit(^(filters.limit + 1))
-        |> preload(:opened_by_account_user)
+        |> preload([:opened_by_account_user, :parent])
         |> Repo.all()
 
       {page, rest} = Enum.split(change_requests, filters.limit)
@@ -184,7 +191,8 @@ defmodule GoodFlows.ChangeRequests do
   """
   @spec load(ChangeRequest.t()) :: loaded()
   def load(%ChangeRequest{} = change_request) do
-    change_request = Repo.preload(change_request, :opened_by_account_user, force: true)
+    change_request =
+      Repo.preload(change_request, [:opened_by_account_user, :parent], force: true)
 
     history =
       Repo.all(
@@ -231,18 +239,32 @@ defmodule GoodFlows.ChangeRequests do
           change_request
 
         {:ok, to} ->
-          updated =
-            change_request |> ChangeRequest.state_changeset(to) |> Repo.update!()
-
-          record_event(change_request.state, to, change_request, api_key)
-          recompute(updated)
-          record_state_changed(change_request, to, api_key)
-          updated
+          move(change_request, api_key, to)
 
         :conflict ->
           Repo.rollback(:invalid_transition)
       end
     end)
+  end
+
+  # Locks the children after the change request, ends a held lease on
+  # close, then records events and recomputes the change request and its
+  # children.
+  defp move(change_request, api_key, to) do
+    children = lock_children(change_request)
+
+    ended =
+      if to == "closed",
+        do: MergeLeases.release_held(change_request, "closed", DateTime.utc_now()),
+        else: []
+
+    updated = change_request |> ChangeRequest.state_changeset(to) |> Repo.update!()
+    record_event(change_request.state, to, change_request, api_key)
+    recompute(updated)
+    record_state_changed(change_request, to, api_key)
+    MergeLeases.record_ended(ended, api_key)
+    recompute_children(children)
+    updated
   end
 
   defp next_state(%ChangeRequest{state: "draft"}, :ready), do: {:ok, "open"}
@@ -287,14 +309,37 @@ defmodule GoodFlows.ChangeRequests do
     Repo.one!(from c in ChangeRequest, where: c.id == ^id, lock: "FOR UPDATE")
   end
 
+  # The `draft` and `open` children of a change request, locked after it
+  # and in `number` order (parents before children, the order of every
+  # multi-row lock) and before any event is recorded.
+  defp lock_children(%ChangeRequest{id: id}) do
+    Repo.all(
+      from c in ChangeRequest,
+        where: c.parent_id == ^id and c.state in @active_states,
+        order_by: c.number,
+        lock: "FOR UPDATE"
+    )
+  end
+
+  defp recompute_children([]), do: :ok
+
+  defp recompute_children([child | _rest] = children) do
+    policy = ReviewPolicies.compiled(child.project_id)
+    Enum.each(children, &recompute(&1, policy))
+  end
+
   @doc """
   Records a merge report from a normalized body. Accepted from `draft` or
   `open`: the stored verdict's state (`pending` without a head), policy
   version and reasons are kept with the merge, and
   `merged_without_mergeable_verdict` is set when that state is not
-  `mergeable`. On a `merged` change request the same `merged_commit` and
-  `target_branch` return the stored merge unchanged; anything else is
-  `:merge_conflict`. A `closed` change request is `:invalid_transition`.
+  `mergeable`. A held lease is released with `release_reason: "merged"`
+  (one past its time is expired), without recomputing the verdict;
+  `merged_without_lease` is false only when `lease_id` names the lease
+  released that way. On a `merged` change request the same
+  `merged_commit` and `target_branch` return the stored merge unchanged,
+  whatever else the body carries; anything else is `:merge_conflict`. A
+  `closed` change request is `:invalid_transition`.
   """
   @spec report_merge(ChangeRequest.t(), ApiKey.t(), term()) ::
           {:ok, ChangeRequest.t()}
@@ -314,28 +359,185 @@ defmodule GoodFlows.ChangeRequests do
 
   defp merge_locked(%ChangeRequest{state: state} = change_request, api_key, attrs)
        when state in @active_states do
+    children = lock_children(change_request)
+    now = DateTime.utc_now()
+    ended = MergeLeases.release_held(change_request, "merged", now)
+
+    leased? =
+      attrs.lease_id != nil and
+        Enum.any?(ended, fn {kind, lease} -> kind == :released and lease.id == attrs.lease_id end)
+
     verdict = Repo.get(Verdict, change_request.id)
     verdict_state = if change_request.head && verdict, do: verdict.state, else: "pending"
 
     merge = %{
       merged_commit: attrs.merged_commit,
       target_branch: attrs.target_branch,
-      merged_at: DateTime.utc_now(),
+      merged_at: now,
       head: change_request.head,
       verdict_state: verdict_state,
       policy_version:
         if(verdict, do: verdict.policy_version, else: current_policy_version(change_request)),
       reasons: if(verdict, do: verdict.reasons, else: []),
-      merged_without_mergeable_verdict: verdict_state != "mergeable"
+      merged_without_mergeable_verdict: verdict_state != "mergeable",
+      merged_without_lease: not leased?
     }
 
     updated = change_request |> ChangeRequest.merge_changeset(merge) |> Repo.update!()
     record_event(state, "merged", change_request, api_key)
     record_state_changed(change_request, "merged", api_key)
+    MergeLeases.record_ended(ended, api_key)
+    recompute_children(children)
     updated
   end
 
   defp merge_locked(%ChangeRequest{}, _api_key, _attrs), do: Repo.rollback(:invalid_transition)
+
+  @doc """
+  Sets the parent of a `draft` or `open` change request to change request
+  `number` of the same project, which must have a lower number, from a
+  normalized body (`{"number": n}`), and recomputes the verdict. A child
+  in another state is `{:coded_conflict, "not_editable", %{}}`; an
+  unknown, equal or higher number is `{:invalid_body, %{"number" => _}}`.
+  The parent row is locked (`FOR SHARE`) before the child's: `number`
+  order, the same as a parent's state change, which locks its children
+  after it, and the bulk recomputes.
+  """
+  @spec set_parent(ChangeRequest.t(), ApiKey.t(), term()) ::
+          {:ok, ChangeRequest.t()}
+          | {:error, {:invalid_body, map()} | {:coded_conflict, String.t(), map()}}
+  def set_parent(%ChangeRequest{} = change_request, %ApiKey{}, body) do
+    with :ok <- require_editable(change_request),
+         {:ok, number} <- Params.parent(body),
+         {:ok, parent} <- parent_by_number(change_request, number) do
+      Repo.transaction(fn ->
+        Repo.one!(from c in ChangeRequest, where: c.id == ^parent.id, lock: "FOR SHARE")
+        relink(change_request, parent.id)
+      end)
+    end
+  end
+
+  @doc """
+  Clears the parent of a `draft` or `open` change request and recomputes
+  the verdict; another state is `{:coded_conflict, "not_editable", %{}}`.
+  """
+  @spec clear_parent(ChangeRequest.t(), ApiKey.t()) ::
+          {:ok, ChangeRequest.t()} | {:error, {:coded_conflict, String.t(), map()}}
+  def clear_parent(%ChangeRequest{} = change_request, %ApiKey{}) do
+    with :ok <- require_editable(change_request) do
+      Repo.transaction(fn -> relink(change_request, nil) end)
+    end
+  end
+
+  defp relink(change_request, parent_id) do
+    change_request = lock(change_request)
+    if require_active(change_request) != :ok, do: Repo.rollback(not_editable())
+
+    updated =
+      change_request |> ChangeRequest.parent_changeset(parent_id) |> Repo.update!()
+
+    recompute(updated)
+    updated
+  end
+
+  defp parent_by_number(change_request, number) when number < change_request.number do
+    case get(%Project{id: change_request.project_id}, number) do
+      {:ok, parent} -> {:ok, parent}
+      {:error, :not_found} -> number_error()
+    end
+  end
+
+  defp parent_by_number(_change_request, _number), do: number_error()
+
+  defp number_error,
+    do:
+      {:error,
+       {:invalid_body,
+        %{"number" => ["must be a lower change request number of the same project"]}}}
+
+  defp require_editable(change_request) do
+    if require_active(change_request) == :ok, do: :ok, else: {:error, not_editable()}
+  end
+
+  defp not_editable, do: {:coded_conflict, "not_editable", %{}}
+
+  @doc """
+  Changes the target branch of a `draft` or `open` change request from a
+  normalized body (`{"target_branch": name}`) and recomputes its verdict in
+  the same transaction; no Git ref and no head changes. With a parent,
+  only after the parent is `merged` (else `{:coded_conflict,
+  "parent_not_merged", %{}}`) and only to the parent's target branch (else
+  `{:invalid_body, %{"target_branch" => _}}`); without one, any branch.
+  A held merge lease is `{:coded_conflict, "lease_held", %{}}`, another
+  state `not_editable`, and so is a parent link that changed under each
+  of #{@retarget_attempts} attempts.
+  """
+  @spec retarget(ChangeRequest.t(), ApiKey.t(), term()) ::
+          {:ok, ChangeRequest.t()}
+          | {:error, {:invalid_body, map()} | {:coded_conflict, String.t(), map()}}
+  def retarget(%ChangeRequest{} = change_request, %ApiKey{}, body) do
+    with :ok <- require_editable(change_request),
+         {:ok, target} <- Params.retarget(body) do
+      retarget_attempt(change_request, target, @retarget_attempts)
+    end
+  end
+
+  # The parent row is locked before the child's. When the parent link
+  # changed between the read and the child's lock, the transaction rolls
+  # back and restarts from a fresh read, so no parent is ever locked while
+  # the child's lock is held. A link that changes under every attempt is
+  # `not_editable`: the change request is being edited concurrently.
+  defp retarget_attempt(change_request, target, attempts) do
+    case Repo.transaction(fn -> retarget_locked(change_request, target) end) do
+      {:error, :parent_moved} when attempts > 1 ->
+        retarget_attempt(Repo.get!(ChangeRequest, change_request.id), target, attempts - 1)
+
+      {:error, :parent_moved} ->
+        {:error, not_editable()}
+
+      result ->
+        result
+    end
+  end
+
+  defp retarget_locked(change_request, target) do
+    parent = change_request.parent_id && lock_parent(change_request.parent_id)
+    change_request = lock(change_request)
+
+    cond do
+      require_active(change_request) != :ok ->
+        Repo.rollback(not_editable())
+
+      change_request.parent_id != (parent && parent.id) ->
+        Repo.rollback(:parent_moved)
+
+      MergeLeases.held(change_request) != nil ->
+        Repo.rollback({:coded_conflict, "lease_held", %{}})
+
+      true ->
+        check_parent_target(parent, target)
+
+        updated =
+          change_request |> ChangeRequest.target_changeset(target) |> Repo.update!()
+
+        recompute(updated)
+        updated
+    end
+  end
+
+  defp check_parent_target(nil, _target), do: :ok
+
+  defp check_parent_target(%ChangeRequest{state: state}, _target) when state != "merged",
+    do: Repo.rollback({:coded_conflict, "parent_not_merged", %{}})
+
+  defp check_parent_target(%ChangeRequest{target_branch: target}, target), do: :ok
+
+  defp check_parent_target(_parent, _target),
+    do:
+      Repo.rollback({:invalid_body, %{"target_branch" => ["must be the parent's target branch"]}})
+
+  defp lock_parent(parent_id),
+    do: Repo.one!(from c in ChangeRequest, where: c.id == ^parent_id, lock: "FOR SHARE")
 
   defp current_policy_version(change_request),
     do: ReviewPolicies.current(change_request.project_id).version
@@ -585,7 +787,9 @@ defmodule GoodFlows.ChangeRequests do
         claims: claims,
         workflows: required_workflows(change_request, policy),
         policy: policy,
-        grading: grading
+        grading: grading,
+        parent: parent_input(change_request),
+        merge_result: merge_result_input(change_request, facts, policy, grading)
       })
 
     items = Items.build(verdict.reasons, claims && claims.front_matter)
@@ -619,6 +823,31 @@ defmodule GoodFlows.ChangeRequests do
   end
 
   def recompute(%ChangeRequest{}, _policy), do: :skipped
+
+  defp parent_input(%ChangeRequest{parent_id: nil}), do: nil
+
+  defp parent_input(%ChangeRequest{parent_id: parent_id}) do
+    Repo.one(
+      from c in ChangeRequest,
+        where: c.id == ^parent_id,
+        select: %{number: c.number, state: c.state}
+    )
+  end
+
+  # The merge-result check applies while the change request holds a lease,
+  # `merge.regrade_merge_result` is on, and the lease's base is not the
+  # head's `git-facts` merge base.
+  defp merge_result_input(_change_request, nil, _policy, _grading), do: nil
+
+  defp merge_result_input(change_request, %GitFacts{document: document}, policy, grading) do
+    with true <- policy.effective["merge"]["regrade_merge_result"],
+         %Lease{base: base} <- MergeLeases.held(change_request),
+         true <- base != document["target"]["merge_base"] do
+      %{base: base, runs: Grading.merge_result_runs(change_request.project_id, base, grading)}
+    else
+      _other -> nil
+    end
+  end
 
   defp record_verdict_changed(_change_request, %Verdict{} = previous, state, verdict)
        when previous.state == state and previous.head == verdict.head and
@@ -713,7 +942,7 @@ defmodule GoodFlows.ChangeRequests do
       Repo.all(
         from c in ChangeRequest,
           where: c.project_id == ^project_id and c.head == ^commit and c.state in @active_states,
-          order_by: c.id,
+          order_by: c.number,
           lock: "FOR UPDATE"
       )
 
@@ -761,7 +990,7 @@ defmodule GoodFlows.ChangeRequests do
           where:
             c.project_id == ^project_id and c.state in @active_states and
               c.id in subquery(with_set),
-          order_by: c.id,
+          order_by: c.number,
           lock: "FOR UPDATE"
       )
 
@@ -820,7 +1049,7 @@ defmodule GoodFlows.ChangeRequests do
           Repo.all(
             from c in ChangeRequest,
               where: c.project_id == ^project_id and c.state in @active_states,
-              order_by: c.id,
+              order_by: c.number,
               lock: "FOR UPDATE"
           )
 

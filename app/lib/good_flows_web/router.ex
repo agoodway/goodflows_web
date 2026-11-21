@@ -120,6 +120,8 @@ defmodule GoodFlowsWeb.Router do
     get "/feature-index/versions", FeatureIndexController, :index
     get "/feature-index/versions/:version", FeatureIndexController, :show_version
     get "/events", EventController, :index
+    get "/defects", DefectController, :index
+    get "/calibration", CalibrationController, :show
   end
 
   # Cache lookup, reserve and commit: `sk_` and `ck_` keys. The per-scope
@@ -188,6 +190,14 @@ defmodule GoodFlowsWeb.Router do
     post "/verify-runs", VerifyRunController, :create
     post "/verify-runs/:run_id/commit", VerifyRunController, :commit
     post "/feature-index", FeatureIndexController, :create
+
+    put "/change-requests/:number/parent", ChangeRequestController, :set_parent
+    delete "/change-requests/:number/parent", ChangeRequestController, :clear_parent
+    post "/change-requests/:number/retarget", ChangeRequestController, :retarget
+    post "/change-requests/:number/merge-lease", MergeLeaseController, :acquire
+    post "/merge-leases/:lease_id/heartbeat", MergeLeaseController, :heartbeat
+    delete "/merge-leases/:lease_id", MergeLeaseController, :release
+    post "/defects", DefectController, :create
   end
 
   # Cache listing and purging: private (sk_) keys only, and `503` while no

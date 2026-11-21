@@ -269,6 +269,49 @@ defmodule GoodFlows.ChangeRequests.RulesTest do
     assert first.inputs["claims"] == "02"
   end
 
+  test "a Must without a result in the merge-result run is merge_result_failed as not_run" do
+    set = %{
+      version: 1,
+      digest: "d1",
+      approved: true,
+      graded: true,
+      revision: nil,
+      scenarios: [%{id: "S1", priority: "must"}, %{id: "S2", priority: "must"}],
+      coverage: []
+    }
+
+    run = fn run_id, results ->
+      %{
+        id: Ecto.UUID.generate(),
+        run_id: run_id,
+        source: "intent",
+        digest: "d1",
+        finished_at: ~U[2026-11-20 10:00:00Z],
+        results: results,
+        features: []
+      }
+    end
+
+    verdict =
+      Rules.evaluate(
+        Map.merge(inputs([]), %{
+          grading: %{
+            linked?: true,
+            intent: set,
+            diff: nil,
+            runs: [run.("head", %{"S1" => "passed", "S2" => "passed"})],
+            index: nil
+          },
+          merge_result: %{base: sha(9), runs: [run.("mr", %{"S2" => "passed"})]}
+        })
+      )
+
+    assert [%{"subject" => ["intent", "S1"], "outcome" => "blocked", "message" => message}] =
+             Enum.filter(verdict.reasons, &(&1["rule"] == "merge_result_failed"))
+
+    assert message == "Must scenario S1 of the intent set is not_run on the merge result"
+  end
+
   test "inactive settings do not change the verdict" do
     opts = [claims: claims_with(%{"door" => "one_way"})]
     base = evaluate(opts)

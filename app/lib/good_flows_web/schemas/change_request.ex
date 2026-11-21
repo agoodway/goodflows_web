@@ -21,6 +21,7 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequest do
       :openspec_change,
       :links,
       :head,
+      :parent,
       :opened_by,
       :merge,
       :inserted_at,
@@ -40,6 +41,11 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequest do
         description: "Public keys see `threads` as null"
       },
       head: %Schema{type: :string, nullable: true, description: "The last reported head"},
+      parent: %Schema{
+        type: :integer,
+        nullable: true,
+        description: "The parent change request's number (a stacked change request), or null"
+      },
       opened_by: %Schema{
         type: :object,
         properties: %{user_id: %Schema{type: :string, format: :uuid, nullable: true}}
