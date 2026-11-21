@@ -52,8 +52,6 @@ defmodule GoodFlows.ReviewPolicies.Document do
     "merge" => %{"lease_ttl" => "10m", "regrade_merge_result" => true}
   }
 
-  # Phases 1 to 4 (`add-change-request-core`, `add-change-request-grading`,
-  # `add-change-request-review` and `add-change-request-merge`): every setting.
   @active_settings ~w(
     scenarios.require_approved_intent
     scenarios.should_failures

@@ -247,9 +247,6 @@ defmodule GoodFlows.ChangeRequests do
     end)
   end
 
-  # Locks the children after the change request, ends a held lease on
-  # close, then records events and recomputes the change request and its
-  # children.
   defp move(change_request, api_key, to) do
     children = lock_children(change_request)
 

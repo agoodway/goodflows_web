@@ -75,8 +75,6 @@ defmodule GoodFlows.MergeLeases do
     end
   end
 
-  # A retarget between reading the branch and locking the row moves the
-  # slot; the attempt is retried with the new branch.
   defp acquire_slot(change_request, api_key, attrs, attempts) do
     fresh = Repo.get!(ChangeRequest, change_request.id)
 
