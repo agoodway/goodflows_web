@@ -3,8 +3,8 @@ defmodule GoodFlows.Projects.Project do
   An account-owned project addressed by its `slug`. A project groups the
   account's Spry recipes, uploaded test reports, stored workflow runs,
   change requests and verify runs; recipe names are unique within a
-  project, and its cache entries, cache keys, review policy versions and
-  feature index versions are deleted with it.
+  project, and its cache entries, cache keys, review policy versions,
+  feature index versions and events are deleted with it.
 
   `default_branch` names the project's fallback cache scope: the scope whose
   string equals it. It follows the cache scope rule
@@ -38,6 +38,7 @@ defmodule GoodFlows.Projects.Project do
     field :default_branch, :string, default: "main"
     # Last change request number handed out; see `GoodFlows.ChangeRequests`.
     field :change_request_seq, :integer, default: 0
+    field :events_deleted_through, :integer
 
     belongs_to :account, Account
     has_many :recipes, Recipe

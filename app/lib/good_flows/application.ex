@@ -23,7 +23,9 @@ defmodule GoodFlows.Application do
         GoodFlows.Vault,
         GoodFlows.Spry.Executions,
         {Task.Supervisor, name: GoodFlows.Spry.TaskSupervisor},
-        {Phoenix.PubSub, name: GoodFlows.PubSub}
+        {Phoenix.PubSub, name: GoodFlows.PubSub},
+        {Registry, keys: :duplicate, name: GoodFlows.ProjectEvents.waiters()},
+        GoodFlows.ProjectEvents.Listener
       ] ++
         pgflow_children() ++
         [

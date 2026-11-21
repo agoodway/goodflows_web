@@ -25,6 +25,12 @@ defmodule GoodFlows.ChangeRequests do
   transaction-level advisory lock keyed on (project, commit), so one of
   them always recomputes with both. `closed` and `merged` verdicts are
   never recomputed.
+
+  A recompute resolves a `needs_review` verdict with the review answers at
+  the head (`GoodFlows.Review.Items.resolve/3`) and records a
+  `verdict_changed` event when the state, head or policy version changed.
+  State changes and merge reports record `cr_state_changed`, and a new
+  head makes the change request's `open` review tasks `stale`.
   """
   import Ecto.Query
 
@@ -43,8 +49,11 @@ defmodule GoodFlows.ChangeRequests do
   alias GoodFlows.ChangeRequests.Verdict
   alias GoodFlows.JsonDocument
   alias GoodFlows.KeysetCursor
+  alias GoodFlows.ProjectEvents
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
+  alias GoodFlows.Review
+  alias GoodFlows.Review.Items
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.WorkflowRuns.Run
   alias GoodFlows.WorkflowRuns.Validator, as: RunValidator
@@ -227,6 +236,7 @@ defmodule GoodFlows.ChangeRequests do
 
           record_event(change_request.state, to, change_request, api_key)
           recompute(updated)
+          record_state_changed(change_request, to, api_key)
           updated
 
         :conflict ->
@@ -261,6 +271,16 @@ defmodule GoodFlows.ChangeRequests do
       api_key_id: api_key.id
     })
     |> Repo.insert!()
+  end
+
+  defp record_state_changed(change_request, to, api_key) do
+    ProjectEvents.record(
+      change_request.project_id,
+      change_request.number,
+      "cr_state_changed",
+      %{"from" => change_request.state, "to" => to},
+      api_key
+    )
   end
 
   defp lock(%ChangeRequest{id: id}) do
@@ -311,6 +331,7 @@ defmodule GoodFlows.ChangeRequests do
 
     updated = change_request |> ChangeRequest.merge_changeset(merge) |> Repo.update!()
     record_event(state, "merged", change_request, api_key)
+    record_state_changed(change_request, "merged", api_key)
     updated
   end
 
@@ -402,8 +423,10 @@ defmodule GoodFlows.ChangeRequests do
 
   defp put_head(%ChangeRequest{head: head} = change_request, head), do: change_request
 
-  defp put_head(change_request, head),
-    do: change_request |> ChangeRequest.head_changeset(head) |> Repo.update!()
+  defp put_head(change_request, head) do
+    Review.stale_open_tasks(change_request)
+    change_request |> ChangeRequest.head_changeset(head) |> Repo.update!()
+  end
 
   @doc """
   Stores a `change-claims/2` file (raw bytes) for the current head of a
@@ -553,21 +576,29 @@ defmodule GoodFlows.ChangeRequests do
     facts = current_facts(change_request)
 
     grading = Grading.load(change_request, facts && facts.document, policy)
+    claims = facts && current_claims(change_request)
 
     verdict =
       Rules.evaluate(%{
         head: change_request.head,
         git_facts: facts && %{document: facts.document, digest: facts.digest},
-        claims: facts && current_claims(change_request),
+        claims: claims,
         workflows: required_workflows(change_request, policy),
         policy: policy,
         grading: grading
       })
 
+    items = Items.build(verdict.reasons, claims && claims.front_matter)
+
+    {verdict_state, review} =
+      Items.resolve(verdict.state, items, Review.current_answers(change_request))
+
+    previous = Repo.get(Verdict, change_request.id)
+
     Repo.insert!(
       %Verdict{
         change_request_id: change_request.id,
-        state: verdict.state,
+        state: verdict_state,
         head: verdict.head,
         policy_version: verdict.policy_version,
         reasons: verdict.reasons,
@@ -575,6 +606,7 @@ defmodule GoodFlows.ChangeRequests do
         scenarios: verdict.scenarios,
         coverage: verdict.coverage,
         counted_runs: verdict.counted_runs,
+        review: review,
         computed_at: DateTime.utc_now()
       },
       on_conflict: {:replace_all_except, [:change_request_id]},
@@ -582,10 +614,33 @@ defmodule GoodFlows.ChangeRequests do
     )
 
     record_counted_runs(change_request, grading.runs)
+    record_verdict_changed(change_request, previous, verdict_state, verdict)
     :ok
   end
 
   def recompute(%ChangeRequest{}, _policy), do: :skipped
+
+  defp record_verdict_changed(_change_request, %Verdict{} = previous, state, verdict)
+       when previous.state == state and previous.head == verdict.head and
+              previous.policy_version == verdict.policy_version,
+       do: :ok
+
+  defp record_verdict_changed(change_request, previous, state, verdict) do
+    ProjectEvents.record(
+      change_request.project_id,
+      change_request.number,
+      "verdict_changed",
+      %{
+        "from" => previous && previous.state,
+        "to" => state,
+        "head" => verdict.head,
+        "policy_version" => verdict.policy_version
+      },
+      nil
+    )
+
+    :ok
+  end
 
   defp record_counted_runs(_change_request, []), do: :ok
 

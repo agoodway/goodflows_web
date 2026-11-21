@@ -4,7 +4,10 @@ defmodule GoodFlows.ChangeRequests.Verdict do
   `head` it was computed for (or nil), the `policy_version`, the `reasons`
   (a JSON array of `rule`, `outcome`, `subject` and `message`), the
   `inputs` digests, the grading `scenarios`, `coverage` and
-  `counted_runs` (verify run IDs), and `computed_at`. It is replaced by
+  `counted_runs` (verify run IDs), `review` (the number of review packet
+  `items` at the head and how many are `cleared` by answers there), and
+  `computed_at`. `state` is `mergeable` when the rules gave
+  `needs_review` and every packet item is cleared. It is replaced by
   every recompute.
   """
   use Ecto.Schema
@@ -29,6 +32,7 @@ defmodule GoodFlows.ChangeRequests.Verdict do
     field :scenarios, :map
     field :coverage, :map
     field :counted_runs, {:array, :string}, default: []
+    field :review, :map
     field :computed_at, :utc_datetime_usec
   end
 

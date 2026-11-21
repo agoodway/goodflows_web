@@ -119,6 +119,7 @@ defmodule GoodFlowsWeb.Router do
     get "/feature-index", FeatureIndexController, :show
     get "/feature-index/versions", FeatureIndexController, :index
     get "/feature-index/versions/:version", FeatureIndexController, :show_version
+    get "/events", EventController, :index
   end
 
   # Cache lookup, reserve and commit: `sk_` and `ck_` keys. The per-scope
@@ -174,6 +175,15 @@ defmodule GoodFlowsWeb.Router do
     post "/change-requests/:number/scenario-sets/:source/rejections",
          ScenarioSetController,
          :reject
+
+    get "/change-requests/:number/review", ReviewController, :show
+
+    post "/change-requests/:number/review/items/:item_id/answers",
+         ReviewController,
+         :answer
+
+    get "/change-requests/:number/tasks", ReviewController, :tasks
+    post "/change-requests/:number/tasks/:task_id/done", ReviewController, :done
 
     post "/verify-runs", VerifyRunController, :create
     post "/verify-runs/:run_id/commit", VerifyRunController, :commit

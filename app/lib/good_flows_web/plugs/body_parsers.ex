@@ -55,9 +55,10 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
   `GoodFlowsWeb.Plugs.JsonBody` or `GoodFlowsWeb.Plugs.MarkdownBody` reads
   after authentication: creating a change request, reporting a merge, Git
   facts or claims, writing a review policy version, uploading, approving
-  or rejecting a scenario set, uploading or committing a verify run, and
-  syncing a feature index. The state changes
-  (`ready`, `draft`, `close`, `reopen`) take no body and are left unparsed
+  or rejecting a scenario set, uploading or committing a verify run,
+  syncing a feature index, and answering a review item. The state changes
+  (`ready`, `draft`, `close`, `reopen`) and marking a review task done
+  take no body and are left unparsed
   too, so no body is read before authentication; whatever is sent is
   ignored.
   """
@@ -122,6 +123,39 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
   def strict_json_route?(%Plug.Conn{
         method: "POST",
         path_info: ["api", "v1", "projects", _project, "verify-runs", _run_id, "commit"]
+      }),
+      do: true
+
+  def strict_json_route?(%Plug.Conn{
+        method: "POST",
+        path_info: [
+          "api",
+          "v1",
+          "projects",
+          _project,
+          "change-requests",
+          _number,
+          "review",
+          "items",
+          _item_id,
+          "answers"
+        ]
+      }),
+      do: true
+
+  def strict_json_route?(%Plug.Conn{
+        method: "POST",
+        path_info: [
+          "api",
+          "v1",
+          "projects",
+          _project,
+          "change-requests",
+          _number,
+          "tasks",
+          _task_id,
+          "done"
+        ]
       }),
       do: true
 

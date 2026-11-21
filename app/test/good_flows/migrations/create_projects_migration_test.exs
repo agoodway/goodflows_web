@@ -25,10 +25,17 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
   # Cache entries and cache-key columns also reference `projects`, so they
   # are rolled back (newest first) before `projects` and migrated up after.
-  # Change request tables and the review policy versions reference
-  # `projects` too (and the last index is on `workflow_runs`), so they come
+  # Change request, review and event tables and the review policy versions
+  # reference `projects` too (and the last index is on `workflow_runs`), so they come
   # first.
   @cache_migrations [
+    {20_261_121_174_556, GoodFlows.Repo.Migrations.AddReviewToChangeRequestVerdicts,
+     "add_review_to_change_request_verdicts"},
+    {20_261_121_174_554, GoodFlows.Repo.Migrations.CreateReviewTasks, "create_review_tasks"},
+    {20_261_121_174_552, GoodFlows.Repo.Migrations.CreateReviewAnswers, "create_review_answers"},
+    {20_261_121_174_550, GoodFlows.Repo.Migrations.AddEventsDeletedThroughToProjects,
+     "add_events_deleted_through_to_projects"},
+    {20_261_121_174_548, GoodFlows.Repo.Migrations.CreateProjectEvents, "create_project_events"},
     {20_261_121_162_154, GoodFlows.Repo.Migrations.AddGradingToChangeRequestVerdicts,
      "add_grading_to_change_request_verdicts"},
     {20_261_121_162_152, GoodFlows.Repo.Migrations.CreateFeatureIndexVersions,

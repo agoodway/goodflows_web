@@ -9,7 +9,7 @@ defmodule GoodFlowsWeb.Schemas.Verdict do
     title: "Verdict",
     description: "Act on a verdict only while its `head` and `policy_version` are still current.",
     type: :object,
-    required: [:state, :head, :policy_version, :reasons, :inputs, :computed_at],
+    required: [:state, :head, :policy_version, :reasons, :inputs, :review, :computed_at],
     properties: %{
       state: %Schema{type: :string, enum: ~w(pending blocked needs_review mergeable)},
       head: %Schema{type: :string, nullable: true},
@@ -50,6 +50,14 @@ defmodule GoodFlowsWeb.Schemas.Verdict do
         type: :array,
         items: %Schema{type: :string},
         description: "Verify run IDs that counted for this verdict"
+      },
+      review: %Schema{
+        type: :object,
+        description:
+          "The number of review packet `items` at the head and how many are `cleared` " <>
+            "(a current `approve` or `choose` answer at the head). A `scenario_set_approval` item " <>
+            "is counted in `items` but never in `cleared`: the set's approval removes it.",
+        properties: %{items: %Schema{type: :integer}, cleared: %Schema{type: :integer}}
       },
       computed_at: %Schema{type: :string, format: :"date-time"}
     }

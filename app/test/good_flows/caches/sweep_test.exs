@@ -175,7 +175,8 @@ defmodule GoodFlows.Caches.SweepTest do
       repo: Repo
     }
 
-    assert %{"entries_evicted" => _, "objects_deleted" => _} = SweepJob.perform(%{}, pgflow_ctx)
+    assert %{"entries_evicted" => _, "objects_deleted" => _, "project_events_deleted" => _} =
+             SweepJob.perform(%{}, pgflow_ctx)
   end
 
   test "the scheduler enqueues from the leader only" do

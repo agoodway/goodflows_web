@@ -82,6 +82,12 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: errors})
   end
 
+  def call(conn, {:error, {:stale_head, head}}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{errors: %{detail: "head is not the change request's current head", head: head}})
+  end
+
   def call(conn, {:error, :invalid_transition}) do
     conn
     |> put_status(:conflict)

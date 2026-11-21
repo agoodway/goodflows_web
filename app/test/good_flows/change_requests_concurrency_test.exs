@@ -7,6 +7,7 @@ defmodule GoodFlows.ChangeRequestsConcurrencyTest do
   import Ecto.Query
   import GoodFlows.AccountsFixtures
   import GoodFlows.ChangeRequestFixtures
+  import GoodFlows.GradingFixtures, only: [feature: 2]
   import GoodFlows.SpryFixtures
 
   alias Ecto.Adapters.SQL.Sandbox
@@ -14,6 +15,8 @@ defmodule GoodFlows.ChangeRequestsConcurrencyTest do
   alias GoodFlows.Accounts.{Account, User}
   alias GoodFlows.ChangeRequests
   alias GoodFlows.ChangeRequests.{ChangeRequest, GitFacts}
+  alias GoodFlows.FeatureIndex
+  alias GoodFlows.ProjectEvents
   alias GoodFlows.Repo
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ReviewPolicies.Version
@@ -198,6 +201,87 @@ defmodule GoodFlows.ChangeRequestsConcurrencyTest do
       true ->
         Process.sleep(50)
         wait_until_blocked_or_done(task, tries - 1)
+    end
+  end
+
+  # The write locks the project row, then waits on the change request row
+  # the other transaction holds; that one then records an event, whose
+  # foreign key check takes FOR KEY SHARE on the project row. With a
+  # FOR UPDATE project lock the two deadlock and one aborts.
+  for kind <- [:policy, :feature_index] do
+    @kind kind
+    test "a #{kind} write and an event on a locked change request both commit", ctx do
+      {:ok, cr} =
+        unboxed(fn ->
+          ChangeRequests.create(ctx.account, ctx.project, ctx.api_key, %{
+            "title" => "t",
+            "source_branch" => "b"
+          })
+        end)
+
+      parent = self()
+
+      holder =
+        Task.async(fn ->
+          unboxed(fn ->
+            Repo.transaction(fn ->
+              cr = ChangeRequests.lock_active(cr)
+              send(parent, :cr_locked)
+              receive(do: (:record -> :ok))
+
+              ProjectEvents.record(
+                cr.project_id,
+                cr.number,
+                "cr_state_changed",
+                %{"from" => "draft", "to" => "open"},
+                ctx.api_key
+              )
+            end)
+          end)
+        end)
+
+      assert_receive :cr_locked, 5_000
+      writer = Task.async(fn -> unboxed(fn -> write(@kind, ctx) end) end)
+      wait_until_row_lock_waits(writer, 100)
+      send(holder.pid, :record)
+
+      assert {:ok, _event} = Task.await(holder, 15_000)
+      assert {:ok, :created, _version} = Task.await(writer, 15_000)
+    end
+  end
+
+  defp write(:policy, ctx) do
+    ReviewPolicies.write(ctx.project, ctx.account_user, ctx.api_key, %{
+      "previous_version" => 0,
+      "policy" => %{"format" => "review-policy/1", "size" => %{"max_changed_files" => 5}}
+    })
+  end
+
+  defp write(:feature_index, ctx),
+    do: FeatureIndex.sync(ctx.project, ctx.api_key, %{"features" => [feature("x", ["lib/**"])]})
+
+  defp wait_until_row_lock_waits(_task, 0), do: flunk("the write neither ran nor waited")
+
+  defp wait_until_row_lock_waits(task, tries) do
+    waiting =
+      unboxed(fn ->
+        Repo.one(
+          from l in "pg_locks",
+            where: l.locktype in ["transactionid", "tuple"] and not l.granted,
+            select: count()
+        )
+      end)
+
+    cond do
+      waiting > 0 ->
+        :ok
+
+      Process.info(task.pid) == nil ->
+        :ok
+
+      true ->
+        Process.sleep(50)
+        wait_until_row_lock_waits(task, tries - 1)
     end
   end
 

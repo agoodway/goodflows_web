@@ -1,7 +1,9 @@
 defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
   use GoodFlowsWeb.ConnCase, async: true
 
+  alias GoodFlows.ProjectEvents
   alias GoodFlows.Projects.Project
+  alias GoodFlows.Review.Items
 
   test "serves the OpenAPI spec", %{conn: conn} do
     spec = conn |> get(~p"/api/v1/openapi") |> json_response(200)
@@ -105,7 +107,13 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/feature-index", "get"},
     {"/api/v1/projects/{project}/feature-index", "post"},
     {"/api/v1/projects/{project}/feature-index/versions", "get"},
-    {"/api/v1/projects/{project}/feature-index/versions/{version}", "get"}
+    {"/api/v1/projects/{project}/feature-index/versions/{version}", "get"},
+    {"/api/v1/projects/{project}/events", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/review", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/review/items/{item_id}/answers",
+     "post"},
+    {"/api/v1/projects/{project}/change-requests/{number}/tasks", "get"},
+    {"/api/v1/projects/{project}/change-requests/{number}/tasks/{task_id}/done", "post"}
   ]
 
   test "documents the project slug rule on every project path parameter", %{conn: conn} do
@@ -630,7 +638,13 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       {@fi, "get", ~w(200 401 403 404 406 422)},
       {@fi, "post", ~w(200 201 400 401 403 404 406 413 415 422)},
       {@fi <> "/versions", "get", ~w(200 401 403 404 406 422)},
-      {@fi <> "/versions/{version}", "get", ~w(200 401 403 404 406 422)}
+      {@fi <> "/versions/{version}", "get", ~w(200 401 403 404 406 422)},
+      {"/api/v1/projects/{project}/events", "get", ~w(200 401 403 404 406 410 422)},
+      {@cr <> "/{number}/review", "get", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/review/items/{item_id}/answers", "post",
+       ~w(201 400 401 403 404 406 409 413 415 422)},
+      {@cr <> "/{number}/tasks", "get", ~w(200 401 403 404 406 422)},
+      {@cr <> "/{number}/tasks/{task_id}/done", "post", ~w(200 401 403 404 406 422)}
     ]
 
     test "every operation lists its statuses", %{paths: paths} do
@@ -651,7 +665,8 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
             {@cr <> "/{number}/scenario-sets/{source}/approvals", "post",
              "ScenarioSetDecisionRequest"},
             {@vr, "post", "VerifyRunRequest"},
-            {@fi, "post", "FeatureIndexSyncRequest"}
+            {@fi, "post", "FeatureIndexSyncRequest"},
+            {@cr <> "/{number}/review/items/{item_id}/answers", "post", "ReviewAnswerRequest"}
           ] do
         assert get_in(paths, [
                  path,
@@ -667,6 +682,44 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
       claims = get_in(paths, [@cr <> "/{number}/claims", "post", "requestBody", "content"])
       assert Map.keys(claims) == ["text/markdown"]
+    end
+
+    test "the event feed documents its parameters, types and 410 body", %{conn: conn} do
+      doc = conn |> get(~p"/api/v1/openapi") |> json_response(200)
+      op = doc["paths"]["/api/v1/projects/{project}/events"]["get"]
+      names = Enum.map(op["parameters"], & &1["name"])
+      assert Enum.sort(names) == ~w(after limit project wait)
+
+      assert get_in(op, ["responses", "410", "content", "application/json", "schema", "$ref"]) =~
+               "EventsGoneResponse"
+
+      schemas = doc["components"]["schemas"]
+      assert Map.has_key?(schemas["EventsGoneResponse"]["properties"], "latest_cursor")
+
+      assert Enum.sort(schemas["ProjectEvent"]["properties"]["type"]["enum"]) ==
+               Enum.sort(ProjectEvents.types())
+
+      for type <- ProjectEvents.types(),
+          do: assert(schemas["ProjectEvent"]["description"] =~ "`#{type}`")
+    end
+
+    test "the review schemas list every item kind and answer kind", %{conn: conn} do
+      schemas =
+        conn
+        |> get(~p"/api/v1/openapi")
+        |> json_response(200)
+        |> get_in(["components", "schemas"])
+
+      assert Enum.sort(schemas["ReviewItem"]["properties"]["kind"]["enum"]) ==
+               Enum.sort(Items.kinds())
+
+      for kind <- Items.kinds(),
+          do: assert(schemas["ReviewItem"]["description"] =~ "`#{kind}`")
+
+      assert schemas["ReviewAnswerRequest"]["properties"]["answer"]["enum"] ==
+               ~w(approve reject request_change choose)
+
+      assert Map.has_key?(schemas["Verdict"]["properties"], "review")
     end
 
     test "the project delete 409 names change requests and verify runs", %{conn: conn} do
