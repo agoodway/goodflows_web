@@ -112,6 +112,10 @@ defmodule GoodFlows.MergeLeasesTest do
     end
 
     test "a verdict other than mergeable is not_mergeable with its state", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "paths" => [%{"glob" => "app/priv/repo/migrations/**", "outcome" => "needs_review"}]
+      })
+
       number =
         mergeable!(ctx.sk_conn, ctx.slug, sha(1), files: [file("app/priv/repo/migrations/1.exs")])
 

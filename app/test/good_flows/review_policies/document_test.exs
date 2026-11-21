@@ -28,6 +28,7 @@ defmodule GoodFlows.ReviewPolicies.DocumentTest do
       assert default["coverage"]["undriven_features"] == "ignore"
       assert default["claims"]["min_proof_level"] == "ran"
       assert default["size"]["max_changed_files"] == 40
+      assert default["paths"] == []
     end
 
     test "omitted keys keep their default, paths are replaced whole" do

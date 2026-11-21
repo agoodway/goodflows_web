@@ -112,6 +112,10 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestStackTest do
     end
 
     test "other reasons are kept", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "paths" => [%{"glob" => "app/priv/repo/migrations/**", "outcome" => "needs_review"}]
+      })
+
       facts!(ctx.sk_conn, ctx.slug, ctx.child, sha(3),
         files: [file("app/priv/repo/migrations/1.exs")]
       )

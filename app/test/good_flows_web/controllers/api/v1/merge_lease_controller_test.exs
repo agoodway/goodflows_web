@@ -130,6 +130,10 @@ defmodule GoodFlowsWeb.Api.V1.MergeLeaseControllerTest do
 
       assert head == sha(2)
 
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "paths" => [%{"glob" => "app/priv/repo/migrations/**", "outcome" => "needs_review"}]
+      })
+
       review =
         mergeable!(ctx.sk_conn, ctx.slug, sha(3), files: [file("app/priv/repo/migrations/x.exs")])
 

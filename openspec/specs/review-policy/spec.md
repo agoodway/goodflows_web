@@ -48,11 +48,11 @@ Every `GET` review policy route SHALL accept any valid `sk_` or `pk_` key of the
 - **THEN** the API responds `403` and the current version is unchanged
 
 ### Requirement: A project without a policy uses version 0
-A project with no written version SHALL have current version `0`: a default that is never stored, with `written_by`, `note` and `inserted_at` null, and that appears in no history list. It is the D5 example except `evidence.required_workflows` `[]`, `scenarios.require_approved_intent` false, and `scenarios.spec_gaps`, `coverage.unmapped_areas` and `coverage.undriven_features` `ignore`, so a project without workflows, scenario sets or a feature index is not held `pending`.
+A project with no written version SHALL have current version `0`: a default that is never stored, with `written_by`, `note` and `inserted_at` null, and that appears in no history list. It is the D5 example except `evidence.required_workflows` `[]`, `scenarios.require_approved_intent` false, and `scenarios.spec_gaps`, `coverage.unmapped_areas` and `coverage.undriven_features` `ignore`, so a project without workflows, scenario sets or a feature index is not held `pending`, and `paths` `[]`, because sensitive paths depend on the project's language and layout.
 
 #### Scenario: New project
 - **WHEN** a client reads the review policy of a project that never wrote one
-- **THEN** the API responds `200` with `version` `0`, `claims.min_proof_level` `ran`, `size.max_changed_files` `40`, `evidence.required_workflows` `[]`, `scenarios.require_approved_intent` false, and `scenarios.spec_gaps`, `coverage.unmapped_areas` and `coverage.undriven_features` `ignore`
+- **THEN** the API responds `200` with `version` `0`, `claims.min_proof_level` `ran`, `size.max_changed_files` `40`, `evidence.required_workflows` `[]`, `paths` `[]`, `scenarios.require_approved_intent` false, and `scenarios.spec_gaps`, `coverage.unmapped_areas` and `coverage.undriven_features` `ignore`
 
 #### Scenario: Empty history
 - **WHEN** a client lists the versions of a project that never wrote a policy

@@ -384,6 +384,11 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
     test "one-way door, size, sensitive path, unproven claim, questions and open items", ctx do
       slug = ctx.project.slug
       head = sha(1)
+
+      policy!(ctx.sk_conn, slug, %{
+        "paths" => [%{"glob" => "app/priv/repo/migrations/**", "outcome" => "needs_review"}]
+      })
+
       migration = "app/priv/repo/migrations/1_add.exs"
       files = [file(migration, %{"additions" => 1_000}), file("lib/a.ex", %{"additions" => 600})]
       files = files ++ for(n <- 1..40, do: file("lib/f#{n}.ex"))

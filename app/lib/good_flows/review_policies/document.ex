@@ -46,7 +46,7 @@ defmodule GoodFlows.ReviewPolicies.Document do
       "min_proof_level" => "ran",
       "open_items" => "needs_review"
     },
-    "paths" => [%{"glob" => "app/priv/repo/migrations/**", "outcome" => "needs_review"}],
+    "paths" => [],
     "size" => %{"max_changed_files" => 40, "max_changed_lines" => 1500},
     "coverage" => %{"unmapped_areas" => "ignore", "undriven_features" => "ignore"},
     "merge" => %{"lease_ttl" => "10m", "regrade_merge_result" => true}

@@ -307,10 +307,20 @@ defmodule GoodFlows.CalibrationTest do
     end
 
     test "by glob: a commit's changed files, else the merged head's diff", ctx do
+      Repo.insert!(%Version{
+        project_id: ctx.project.id,
+        version: 1,
+        previous_version: 0,
+        document: %{
+          "format" => "review-policy/1",
+          "paths" => [%{"glob" => "app/priv/repo/migrations/**", "outcome" => "needs_review"}]
+        }
+      })
+
       migration = file("app/priv/repo/migrations/20261101_add.exs")
       sweep = file("app/lib/good_flows/caches/sweep.ex")
-      by_commit = merged(ctx, 42, commits: [sha(1)], files: [migration])
-      by_number = merged(ctx, 43, files: [sweep])
+      by_commit = merged(ctx, 42, commits: [sha(1)], files: [migration], policy_version: 1)
+      by_number = merged(ctx, 43, files: [sweep], policy_version: 1)
 
       {:ok, _} = Calibration.record_defect(ctx.project, ctx.api_key, %{"commit" => sha(1)})
       defect!(by_number)

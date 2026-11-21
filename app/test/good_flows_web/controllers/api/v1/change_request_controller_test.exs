@@ -520,6 +520,12 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestControllerTest do
       slug = ctx.project.slug
       links = %{"tickets" => ["GOO-1"], "threads" => ["https://ampcode.com/threads/T-1"]}
       _ = create_cr(ctx.sk_conn, slug, %{"links" => links})
+
+      _ =
+        GoodFlows.ReviewFixtures.policy!(ctx.sk_conn, slug, %{
+          "paths" => [%{"glob" => "app/priv/repo/migrations/**", "outcome" => "needs_review"}]
+        })
+
       _ = facts!(ctx, 1, sha(1), files: [file("app/priv/repo/migrations/1.exs")])
       _ = claims!(ctx, 1, claims(front_matter(sha(1), %{"cr" => 1, "door" => "one_way"})))
       _ = ctx.sk_conn |> post(cr_path(slug, 1, "/ready")) |> json_response(200)
@@ -609,7 +615,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestControllerTest do
     test "verdict and merge", ctx do
       verdict = ctx.pk_conn |> get(cr_path(ctx.project.slug, 1, "/verdict")) |> json_response(200)
       assert_schema(verdict, "VerdictResponse", ApiSpec.spec())
-      assert %{"head" => _, "policy_version" => 0, "reasons" => reasons} = verdict["data"]
+      assert %{"head" => _, "policy_version" => 1, "reasons" => reasons} = verdict["data"]
 
       assert %{
                "rule" => "path_match",
