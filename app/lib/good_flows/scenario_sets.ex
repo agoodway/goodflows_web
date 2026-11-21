@@ -23,6 +23,7 @@ defmodule GoodFlows.ScenarioSets do
   alias GoodFlows.ChangeRequests
   alias GoodFlows.ChangeRequests.ChangeRequest
   alias GoodFlows.DocumentErrors
+  alias GoodFlows.ProjectEvents
   alias GoodFlows.Repo
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ScenarioSets.{Decision, Document, Version}
@@ -110,6 +111,15 @@ defmodule GoodFlows.ScenarioSets do
           )
 
         ChangeRequests.recompute(change_request)
+
+        ProjectEvents.record(
+          change_request.project_id,
+          change_request.number,
+          "scenario_set_uploaded",
+          %{"source" => version.source, "digest" => digest, "version" => version.version},
+          api_key
+        )
+
         {:created, version}
     end
   end
@@ -250,7 +260,12 @@ defmodule GoodFlows.ScenarioSets do
     end
   end
 
-  defp check_approver(change_request, account_user) do
+  @doc """
+  `:ok` when the project's current `scenarios.approver` lets `account_user`
+  decide on the change request's intent set, else `{:error, :forbidden}`.
+  """
+  @spec check_approver(ChangeRequest.t(), AccountUser.t()) :: :ok | {:error, :forbidden}
+  def check_approver(change_request, account_user) do
     approver =
       ReviewPolicies.compiled(change_request.project_id).effective["scenarios"]["approver"]
 
@@ -289,6 +304,29 @@ defmodule GoodFlows.ScenarioSets do
   defp decide_locked(change_request, account_user, api_key, attrs) do
     change_request = ChangeRequests.lock_active(change_request)
 
+    case record_decision(change_request, account_user, api_key, attrs) do
+      {:created, decision} ->
+        ChangeRequests.recompute(change_request)
+        {:created, decision}
+
+      retry ->
+        retry
+    end
+  end
+
+  @doc """
+  Records a decision (`attrs`: `decision`, `digest`, `note`) on the current
+  intent digest of a change request the caller has locked
+  (`GoodFlows.ChangeRequests.lock_active/1`), with its
+  `scenario_set_approved` or `scenario_set_rejected` event, in the caller's
+  transaction. Does not recompute the verdict. A decision equal to the
+  digest's latest one by the same membership is `{:retry, latest}` and
+  records nothing; a digest that is not current rolls back with
+  `:stale_digest`.
+  """
+  @spec record_decision(ChangeRequest.t(), AccountUser.t(), ApiKey.t(), map()) ::
+          {:created | :retry, Decision.t()}
+  def record_decision(change_request, account_user, api_key, attrs) do
     case current(change_request, "intent") do
       %Version{digest: digest} when digest == attrs.digest -> :ok
       _other -> Repo.rollback(:stale_digest)
@@ -320,10 +358,30 @@ defmodule GoodFlows.ScenarioSets do
           log: false
         )
 
-      ChangeRequests.recompute(change_request)
+      record_decision_event(change_request, decision, api_key)
       {:created, decision}
     end
   end
+
+  defp record_decision_event(change_request, %Decision{decision: "approve"} = decision, api_key),
+    do:
+      ProjectEvents.record(
+        change_request.project_id,
+        change_request.number,
+        "scenario_set_approved",
+        %{"digest" => decision.digest},
+        api_key
+      )
+
+  defp record_decision_event(change_request, %Decision{decision: "reject"} = decision, api_key),
+    do:
+      ProjectEvents.record(
+        change_request.project_id,
+        change_request.number,
+        "scenario_set_rejected",
+        %{"digest" => decision.digest, "note" => decision.note},
+        api_key
+      )
 
   @doc """
   Compares version `to` (default current) of the change request's

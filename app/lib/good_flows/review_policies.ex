@@ -22,6 +22,7 @@ defmodule GoodFlows.ReviewPolicies do
   alias GoodFlows.ChangeRequests
   alias GoodFlows.JsonDocument
   alias GoodFlows.KeysetCursor
+  alias GoodFlows.ProjectEvents
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
   alias GoodFlows.ReviewPolicies.{Document, Glob, Version}
@@ -174,6 +175,15 @@ defmodule GoodFlows.ReviewPolicies do
           |> Repo.insert!()
 
         ChangeRequests.recompute_after_policy_write(project)
+
+        ProjectEvents.record(
+          project.id,
+          nil,
+          "policy_version_created",
+          %{"version" => version.version, "note" => version.note},
+          api_key
+        )
+
         {:created, version}
 
       retry?(write, current) ->

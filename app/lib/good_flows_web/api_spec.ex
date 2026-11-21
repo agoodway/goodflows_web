@@ -332,6 +332,26 @@ defmodule GoodFlowsWeb.ApiSpec do
         approval state, but no set content, failure reasons, entry points,
         changed paths, thread links or artifact URLs.
 
+        ## Review and events
+
+        `…/change-requests/{number}/review` is the review packet: one item per
+        reason of the verdict at the current head that needs a person, with
+        the evidence for it, plus the `pending` and `blocked` reasons as
+        context. `POST …/review/items/{item_id}/answers` answers an item at
+        a `head` (`approve`, `reject`, `request_change` or `choose`). A
+        `needs_review` verdict becomes `mergeable` once every item has a
+        current `approve` or `choose` at the head; `blocked` and `pending`
+        are never overridden. A new head starts a full review, and makes
+        open tasks `stale`. `request_change` and `reject` create tasks the
+        author agent lists at `…/tasks` and closes with
+        `…/tasks/{task_id}/done`. These routes take private keys only.
+
+        `/api/v1/projects/{project}/events` is the append-only feed of
+        change request activity, oldest first, with an `after` cursor and
+        an optional `wait` of up to 30 seconds (long-poll). Events are kept
+        90 days; an older cursor is `410` with `latest_cursor`. Public keys
+        read it with notes and actors redacted to null.
+
         ## Caches
 
         `/api/v1/projects/{project}/caches` is a remote store for goodflows

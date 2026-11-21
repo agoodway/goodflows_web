@@ -127,6 +127,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
       scenarios: verdict.scenarios || %{"intent" => nil, "diff" => nil},
       coverage: coverage(verdict.coverage, redact?),
       counted_runs: verdict.counted_runs,
+      review: verdict.review || %{"items" => 0, "cleared" => 0},
       computed_at: DateTime.to_iso8601(verdict.computed_at)
     }
   end
