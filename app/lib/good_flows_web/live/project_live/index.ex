@@ -14,7 +14,6 @@ defmodule GoodFlowsWeb.ProjectLive.Index do
   @impl true
   def mount(_params, _session, socket) do
     account = socket.assigns.current_account
-    projects = Projects.list_projects(account)
 
     {:ok,
      socket
@@ -25,14 +24,13 @@ defmodule GoodFlowsWeb.ProjectLive.Index do
          %{label: "Dashboard", to: ~p"/dashboard/accounts/#{account.id}"},
          %{label: "Projects"}
        ],
-       project_count: length(projects),
        can_manage?: manager?(socket),
        show_create_modal: false,
        edit_project: nil,
        delete_project: nil
      )
      |> assign_create_form(%{})
-     |> stream(:projects, projects)}
+     |> assign_projects()}
   end
 
   @impl true
@@ -218,7 +216,7 @@ defmodule GoodFlowsWeb.ProjectLive.Index do
          edit_project: nil,
          delete_project: nil
        )
-       |> stream(:projects, Projects.list_projects(socket.assigns.current_account), reset: true)
+       |> assign_projects()
        |> put_flash(:error, "Only account owners and admins can manage projects.")}
     end
   end
@@ -261,9 +259,9 @@ defmodule GoodFlowsWeb.ProjectLive.Index do
       {:ok, project} ->
         {:noreply,
          socket
-         |> assign(show_create_modal: false, project_count: socket.assigns.project_count + 1)
+         |> assign(show_create_modal: false)
          |> assign_create_form(%{})
-         |> stream(:projects, Projects.list_projects(socket.assigns.current_account), reset: true)
+         |> assign_projects()
          |> put_flash(:info, "Project “#{project.slug}” created.")}
 
       {:error, changeset} ->
@@ -307,6 +305,7 @@ defmodule GoodFlowsWeb.ProjectLive.Index do
         {:noreply,
          socket
          |> assign(edit_project: nil)
+         |> assign_projects()
          |> put_flash(:error, "That project no longer exists.")}
     end
   end
@@ -330,14 +329,13 @@ defmodule GoodFlowsWeb.ProjectLive.Index do
       :ok ->
         {:noreply,
          socket
-         |> assign(project_count: socket.assigns.project_count - 1)
-         |> stream_delete(:projects, project)
+         |> assign_projects()
          |> put_flash(:info, "Project “#{project.slug}” deleted.")}
 
       {:error, :not_found} ->
         {:noreply,
          socket
-         |> stream_delete(:projects, project)
+         |> assign_projects()
          |> put_flash(:error, "That project no longer exists.")}
 
       {:error, reason} ->
@@ -348,6 +346,16 @@ defmodule GoodFlowsWeb.ProjectLive.Index do
            "“#{project.slug}” still has #{blocker(reason)}, so it can't be deleted."
          )}
     end
+  end
+
+  # The count and the rows come from one fetch, so the empty state never
+  # hides rows another session added.
+  defp assign_projects(socket) do
+    projects = Projects.list_projects(socket.assigns.current_account)
+
+    socket
+    |> assign(project_count: length(projects))
+    |> stream(:projects, projects, reset: true)
   end
 
   defp manager?(socket) do

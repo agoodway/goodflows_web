@@ -37,13 +37,20 @@ defmodule GoodFlows.Projects do
     |> Repo.insert()
   end
 
-  @doc "Changes the project's `default_branch`, its fallback cache scope."
+  @doc """
+  Changes the project's `default_branch`, its fallback cache scope. A
+  project deleted since it was loaded is `{:error, :not_found}`.
+  """
   @spec update_project(Account.t(), Project.t(), map()) ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found}
   def update_project(%Account{id: account_id}, %Project{account_id: account_id} = project, attrs) do
-    project
-    |> Project.update_changeset(attrs)
-    |> Repo.update()
+    case project |> Project.update_changeset(attrs) |> Repo.update(stale_error_field: :id) do
+      {:ok, project} ->
+        {:ok, project}
+
+      {:error, %Ecto.Changeset{errors: errors} = changeset} ->
+        if Keyword.has_key?(errors, :id), do: {:error, :not_found}, else: {:error, changeset}
+    end
   end
 
   def update_project(%Account{}, %Project{}, _attrs), do: {:error, :not_found}

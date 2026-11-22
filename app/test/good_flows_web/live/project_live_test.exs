@@ -47,11 +47,11 @@ defmodule GoodFlowsWeb.ProjectLiveTest do
     {:ok, view, _html} = live(conn, path)
     view |> element("#new-project-btn") |> render_click()
 
-    html = view |> form("#create-project-form", project: %{slug: "Bad Slug"}) |> render_submit()
-    assert html =~ "must be 1 to 64 bytes"
+    view |> form("#create-project-form", project: %{slug: "Bad Slug"}) |> render_submit()
+    assert has_element?(view, "#project_slug-error-0", "must be 1 to 64 bytes")
 
-    html = view |> form("#create-project-form", project: %{slug: "taken"}) |> render_submit()
-    assert html =~ "has already been taken"
+    view |> form("#create-project-form", project: %{slug: "taken"}) |> render_submit()
+    assert has_element?(view, "#project_slug-error-0", "has already been taken")
 
     assert has_element?(view, "#create-project-modal")
     assert [%{slug: "taken"}] = Projects.list_projects(account)
@@ -63,8 +63,8 @@ defmodule GoodFlowsWeb.ProjectLiveTest do
 
     view |> element("#edit-#{project.id}") |> render_click()
 
-    html = view |> form("#edit-project-form", project: %{default_branch: ""}) |> render_submit()
-    assert html =~ "can&#39;t be blank"
+    view |> form("#edit-project-form", project: %{default_branch: ""}) |> render_submit()
+    assert has_element?(view, "#project_default_branch-error-0", "can't be blank")
     assert {:ok, %{default_branch: "main"}} = Projects.get_project(account, "api")
 
     render_submit(view, "update_project", %{
@@ -99,9 +99,9 @@ defmodule GoodFlowsWeb.ProjectLiveTest do
     {:ok, view, _html} = live(conn, path)
 
     view |> element("#delete-#{project.id}") |> render_click()
-    html = view |> element("#delete-confirm-modal-confirm") |> render_click()
+    view |> element("#delete-confirm-modal-confirm") |> render_click()
 
-    assert html =~ "still has recipes"
+    assert has_element?(view, "#flash-error", "still has recipes")
     assert has_element?(view, "#projects-#{project.id}")
     assert {:ok, _} = Projects.get_project(account, project.slug)
   end
@@ -149,11 +149,47 @@ defmodule GoodFlowsWeb.ProjectLiveTest do
 
     view |> element("#delete-#{project.id}") |> render_click()
     {:ok, _} = Accounts.update_account_user_role(account_user, :member)
-    html = view |> element("#delete-confirm-modal-confirm") |> render_click()
+    view |> element("#delete-confirm-modal-confirm") |> render_click()
 
-    assert html =~ "Only account owners and admins"
+    assert has_element?(view, "#flash-error", "Only account owners and admins")
     assert {:ok, _} = Projects.get_project(account, project.slug)
     refute has_element?(view, "#delete-#{project.id}")
     assert has_element?(view, "#projects-read-only")
+  end
+
+  test "saving a project deleted while its edit dialog is open shows an error", %{
+    conn: conn,
+    path: path,
+    account: account
+  } do
+    project = SpryFixtures.project_fixture(account, slug: "gone")
+    {:ok, view, _html} = live(conn, path)
+
+    view |> element("#edit-#{project.id}") |> render_click()
+    :ok = Projects.delete_project(account, project)
+    view |> form("#edit-project-form", project: %{default_branch: "trunk"}) |> render_submit()
+
+    assert has_element?(view, "#flash-error", "no longer exists")
+    refute has_element?(view, "#edit-project-modal")
+    refute has_element?(view, "#projects-#{project.id}")
+  end
+
+  test "the list stays visible when projects were added in another session", %{
+    conn: conn,
+    path: path,
+    account: account
+  } do
+    {:ok, view, _html} = live(conn, path)
+    elsewhere = SpryFixtures.project_fixture(account, slug: "elsewhere")
+
+    view |> element("#empty-new-project-btn") |> render_click()
+    view |> form("#create-project-form", project: %{slug: "here"}) |> render_submit()
+    {:ok, here} = Projects.get_project(account, "here")
+
+    view |> element("#delete-#{here.id}") |> render_click()
+    view |> element("#delete-confirm-modal-confirm") |> render_click()
+
+    assert has_element?(view, "#projects-#{elsewhere.id}")
+    refute has_element?(view, "#projects-empty")
   end
 end
