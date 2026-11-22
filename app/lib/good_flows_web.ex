@@ -95,6 +95,7 @@ defmodule GoodFlowsWeb do
       import Phoenix.HTML
       # Core UI components
       import GoodFlowsWeb.CoreComponents
+      import GoodFlowsWeb.DashboardComponents
 
       # Common modules used in templates
       alias GoodFlowsWeb.Layouts

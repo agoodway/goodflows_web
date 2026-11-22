@@ -34,43 +34,30 @@ defmodule GoodFlowsWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <span class="text-sm font-bold tracking-tight">GoodFlows</span>
-        </a>
-      </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center text-sm">
-          <%= if @current_scope do %>
-            <li class="hidden sm:block text-base-content/60">{@current_scope.user.email}</li>
-            <li>
-              <.link href={~p"/dashboard"} class="btn btn-ghost btn-sm">Dashboard</.link>
-            </li>
-            <li>
-              <.link href={~p"/users/settings"} class="btn btn-ghost btn-sm">Settings</.link>
-            </li>
-            <li>
-              <.link href={~p"/users/log-out"} method="delete" class="btn btn-ghost btn-sm">
-                Log out
-              </.link>
-            </li>
-          <% else %>
-            <li>
-              <.link navigate={~p"/users/register"} class="btn btn-ghost btn-sm">Register</.link>
-            </li>
-            <li>
-              <.link navigate={~p"/users/log-in"} class="btn btn-primary btn-sm">Log in</.link>
-            </li>
-          <% end %>
-          <li>
-            <.theme_toggle />
-          </li>
-        </ul>
-      </div>
+    <header class="flex flex-wrap items-center justify-between gap-3 border-b border-base-300 bg-base-100 px-4 py-3 sm:px-6">
+      <a href="/" class="flex items-center gap-3" aria-label="GoodFlows home">
+        <span class="brand-mark" aria-hidden="true">GF</span>
+        <span class="text-sm font-semibold">GoodFlows</span>
+      </a>
+      <nav aria-label="Account" class="flex flex-wrap items-center gap-2">
+        <%= if @current_scope do %>
+          <span class="hidden font-mono text-xs text-muted sm:block">
+            {@current_scope.user.email}
+          </span>
+          <.button href={~p"/dashboard"} variant="subtle" size="sm">Dashboard</.button>
+          <.button href={~p"/users/settings"} variant="subtle" size="sm">Settings</.button>
+          <.button href={~p"/users/log-out"} method="delete" variant="subtle" size="sm">
+            Log out
+          </.button>
+        <% else %>
+          <.button navigate={~p"/users/register"} variant="subtle" size="sm">Register</.button>
+          <.button navigate={~p"/users/log-in"} variant="primary" size="sm">Log in</.button>
+        <% end %>
+        <.theme_toggle />
+      </nav>
     </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
+    <main class="bg-grid min-h-[calc(100vh-3.5rem)] px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
       <div class="mx-auto max-w-2xl space-y-4">
         {render_slot(@inner_block)}
       </div>
@@ -131,8 +118,8 @@ defmodule GoodFlowsWeb.Layouts do
 
   # --- Sidebar ---
 
-  @doc "Renders the sidebar logo, navigation groups, and signed-in user."
-  attr :active_nav, :atom, required: true
+  @doc "Renders the sidebar brand, navigation groups, and account switcher."
+  attr :active_nav, :atom, default: nil
   attr :current_scope, :map, required: true
   attr :current_account, :map, default: nil
 
@@ -140,72 +127,58 @@ defmodule GoodFlowsWeb.Layouts do
     assigns = assign(assigns, :account_base, account_dashboard_path(assigns.current_account))
 
     ~H"""
-    <%!-- Logo --%>
-    <div class="flex h-14 shrink-0 items-center px-5 border-b border-white/[0.06]">
-      <.link href={@account_base} class="flex items-center gap-2.5">
-        <%!-- Replace with your logo --%>
-        <span class="text-sm font-bold tracking-tight text-white/90">GoodFlows</span>
+    <div class="relative flex items-center justify-between border-b border-base-300/50 p-4">
+      <.link href={@account_base} class="flex items-center gap-3">
+        <span class="brand-mark" aria-hidden="true">GF</span>
+        <span class="flex flex-col">
+          <span class="text-sm font-semibold tracking-tight text-base-content">GoodFlows</span>
+          <span class="font-mono text-[10px] uppercase tracking-wider text-muted">Workflows</span>
+        </span>
       </.link>
+      <button
+        type="button"
+        class="-mr-2 rounded-sm p-2 text-muted hover:bg-base-300/50 lg:hidden"
+        phx-click={hide_mobile_sidebar()}
+        aria-label="Close menu"
+      >
+        <.icon name="hero-x-mark" class="size-5" />
+      </button>
     </div>
 
-    <%!-- Navigation --%>
-    <nav class="flex flex-1 flex-col px-3 py-4">
-      <ul role="list" class="flex flex-1 flex-col gap-y-5">
-        <li>
-          <p class="px-2 mb-2 text-[0.65rem] font-semibold uppercase tracking-widest text-white/30">
-            Overview
-          </p>
-          <ul role="list" class="space-y-0.5">
-            <.sidebar_nav_item
-              href={@account_base}
-              icon="hero-squares-2x2"
-              label="Dashboard"
-              active={@active_nav == :dashboard}
-            />
-          </ul>
-        </li>
+    <nav aria-label="Main" class="relative flex-1 space-y-1 overflow-y-auto px-2 py-1">
+      <div class="nav-section-header">// Overview</div>
+      <.sidebar_nav_item
+        href={@account_base}
+        icon="hero-squares-2x2"
+        label="Dashboard"
+        active={@active_nav == :dashboard}
+      />
 
-        <li>
-          <p class="px-2 mb-2 text-[0.65rem] font-semibold uppercase tracking-widest text-white/30">
-            Developers
-          </p>
-          <ul role="list" class="space-y-0.5">
-            <.sidebar_nav_item
-              href={"#{@account_base}/api-keys"}
-              icon="hero-key"
-              label="API Keys"
-              active={@active_nav == :api_keys}
-            />
-          </ul>
-        </li>
+      <div class="nav-section-header">// Developers</div>
+      <.sidebar_nav_item
+        href={"#{@account_base}/api-keys"}
+        icon="hero-key"
+        label="API keys"
+        active={@active_nav == :api_keys}
+      />
 
-        <%!-- Bottom section --%>
-        <li class="mt-auto">
-          <ul role="list" class="space-y-0.5">
-            <.sidebar_nav_item
-              href={~p"/users/settings"}
-              icon="hero-cog-6-tooth"
-              label="Settings"
-              active={@active_nav == :settings}
-            />
-          </ul>
-
-          <%!-- User info --%>
-          <div class="mt-3 pt-3 border-t border-white/[0.06]">
-            <div class="flex items-center gap-2.5 px-2 py-1.5">
-              <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white/70">
-                {String.first(@current_scope.user.email) |> String.upcase()}
-              </div>
-              <div class="min-w-0 flex-1">
-                <p class="truncate text-xs font-medium text-white/70">
-                  {@current_scope.user.email}
-                </p>
-              </div>
-            </div>
-          </div>
-        </li>
-      </ul>
+      <div class="nav-section-header">// You</div>
+      <.sidebar_nav_item
+        href={~p"/users/settings"}
+        icon="hero-cog-6-tooth"
+        label="Settings"
+        active={@active_nav == :settings}
+      />
     </nav>
+
+    <div :if={@current_account} class="relative border-t border-base-300/50 p-3">
+      <.live_component
+        module={GoodFlowsWeb.Components.AccountSwitcher}
+        id="account-switcher"
+        current_scope={@current_scope}
+        current_account={@current_account}
+      />
+    </div>
     """
   end
 
@@ -217,69 +190,24 @@ defmodule GoodFlowsWeb.Layouts do
 
   def sidebar_nav_item(assigns) do
     ~H"""
-    <li>
-      <.link
-        href={@href}
-        class={[
-          "group flex items-center gap-x-2.5 rounded-md px-2 py-1.5 text-[0.8125rem] font-medium transition-colors",
-          if(@active,
-            do: "bg-white/10 text-white",
-            else: "text-white/60 hover:bg-white/[0.06] hover:text-white/80"
-          )
-        ]}
-      >
-        <.icon
-          name={@icon}
-          class={[
-            "size-[1.125rem] shrink-0",
-            if(@active,
-              do: "text-primary",
-              else: "text-white/30 group-hover:text-white/60"
-            )
-          ]}
-        />
-        {@label}
-      </.link>
-    </li>
+    <.link href={@href} class={["nav-item", @active && "active"]} aria-current={@active && "page"}>
+      <.icon name={@icon} class="size-5 shrink-0" />
+      <span>{@label}</span>
+    </.link>
     """
   end
 
   # --- Mobile Sidebar JS ---
 
-  @doc "Slides the mobile sidebar in and focuses its first link."
+  @doc "Opens the sidebar drawer below the `lg` breakpoint and focuses its first link."
   def show_mobile_sidebar do
-    JS.show(
-      to: "#mobile-sidebar-backdrop",
-      transition: {"transition-opacity ease-linear duration-300", "opacity-0", "opacity-100"}
-    )
-    |> JS.show(
-      to: "#mobile-sidebar-overlay",
-      transition: {"transition-opacity ease-linear duration-300", "opacity-0", "opacity-100"}
-    )
-    |> JS.show(
-      to: "#mobile-sidebar-panel",
-      transition:
-        {"transition ease-in-out duration-300 transform", "-translate-x-full", "translate-x-0"}
-    )
-    |> JS.focus_first(to: "#mobile-sidebar-panel")
+    JS.add_class("sidebar-open", to: "#sidebar")
+    |> JS.focus_first(to: "#sidebar")
   end
 
-  @doc "Slides the mobile sidebar out."
+  @doc "Closes the sidebar drawer."
   def hide_mobile_sidebar do
-    JS.hide(
-      to: "#mobile-sidebar-panel",
-      transition:
-        {"transition ease-in-out duration-300 transform", "translate-x-0", "-translate-x-full"}
-    )
-    |> JS.hide(
-      to: "#mobile-sidebar-overlay",
-      transition: {"transition-opacity ease-linear duration-300", "opacity-100", "opacity-0"}
-    )
-    |> JS.hide(
-      to: "#mobile-sidebar-backdrop",
-      transition: {"transition-opacity ease-linear duration-300", "opacity-100", "opacity-0"},
-      time: 300
-    )
+    JS.remove_class("sidebar-open", to: "#sidebar")
   end
 
   defp account_dashboard_path(nil), do: ~p"/dashboard"
@@ -292,31 +220,27 @@ defmodule GoodFlowsWeb.Layouts do
   """
   def theme_toggle(assigns) do
     ~H"""
-    <div class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full">
-      <div class="absolute w-1/3 h-full rounded-full border-1 border-base-200 bg-base-100 brightness-200 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 [[data-theme-source=system]_&]:!left-0 transition-[left]" />
-
+    <div
+      role="group"
+      aria-label="Theme"
+      class="flex items-center gap-px rounded border border-base-300 bg-base-300/50 p-px"
+    >
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        :for={
+          {theme, label, icon} <- [
+            {"system", "System theme", "hero-computer-desktop-micro"},
+            {"light", "Light theme", "hero-sun-micro"},
+            {"dark", "Dark theme", "hero-moon-micro"}
+          ]
+        }
+        type="button"
+        class="theme-toggle-btn flex rounded-sm p-1 text-muted transition-colors hover:bg-base-200 hover:text-base-content"
         phx-click={JS.dispatch("phx:set-theme")}
-        data-phx-theme="system"
+        data-phx-theme={theme}
+        aria-label={label}
+        title={label}
       >
-        <.icon name="hero-computer-desktop-micro" class="size-4 opacity-75 hover:opacity-100" />
-      </button>
-
-      <button
-        class="flex p-2 cursor-pointer w-1/3"
-        phx-click={JS.dispatch("phx:set-theme")}
-        data-phx-theme="light"
-      >
-        <.icon name="hero-sun-micro" class="size-4 opacity-75 hover:opacity-100" />
-      </button>
-
-      <button
-        class="flex p-2 cursor-pointer w-1/3"
-        phx-click={JS.dispatch("phx:set-theme")}
-        data-phx-theme="dark"
-      >
-        <.icon name="hero-moon-micro" class="size-4 opacity-75 hover:opacity-100" />
+        <.icon name={icon} class="size-3" />
       </button>
     </div>
     """

@@ -1,22 +1,44 @@
 <Layouts.app flash={@flash} current_scope={@current_scope}>
-  <section id="home-hero" class="py-12 space-y-6">
-    <h1 class="text-4xl font-bold tracking-tight text-base-content sm:text-5xl">GoodFlows</h1>
-    <p class="text-lg text-base-content/60 max-w-xl">
-      Background jobs and workflows for your accounts.
+  <section id="home-hero" class="space-y-6 py-4 sm:py-8">
+    <h1 class="text-3xl font-semibold tracking-tight text-base-content sm:text-4xl">
+      Your checks, defined once and run with one command
+    </h1>
+    <p class="max-w-xl text-base text-muted">
+      List the jobs in <code class="text-base-content">goodflows.toml</code>.
+      GoodFlows runs them in dependency order and keeps the runs, test reports
+      and change reviews for each project.
     </p>
-    <div class="flex gap-3">
+
+    <div class="space-y-2">
+      <.code_block title="goodflows.toml">
+        <:source phx-no-format>[[workflows.ci.jobs]]
+name = "compile"
+command = "mix compile --warnings-as-errors"
+
+[[workflows.ci.jobs]]
+name = "test"
+command = "mix test"
+depends_on = ["compile"]</:source>
+      </.code_block>
+      <.code_block>
+        <:line>goodflows run ci</:line>
+      </.code_block>
+    </div>
+
+    <div class="flex flex-wrap gap-3">
       <%= if @current_scope do %>
-        <.link id="home-dashboard-link" href={~p"/dashboard"} class="btn btn-primary">
-          Go to dashboard <span aria-hidden="true">&rarr;</span>
-        </.link>
+        <.button id="home-dashboard-link" href={~p"/dashboard"} variant="primary">
+          Go to dashboard
+        </.button>
       <% else %>
-        <.link id="home-login-link" navigate={~p"/users/log-in"} class="btn btn-primary">
+        <.button id="home-login-link" navigate={~p"/users/log-in"} variant="primary">
           Log in
-        </.link>
-        <.link id="home-register-link" navigate={~p"/users/register"} class="btn btn-ghost">
+        </.button>
+        <.button id="home-register-link" navigate={~p"/users/register"} variant="subtle">
           Create an account
-        </.link>
+        </.button>
       <% end %>
+      <.button href={~p"/api/v1/docs"} variant="subtle">API reference</.button>
     </div>
   </section>
 </Layouts.app>

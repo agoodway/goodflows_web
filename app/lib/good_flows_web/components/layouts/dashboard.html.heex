@@ -1,143 +1,78 @@
-<%!-- Mobile sidebar backdrop + panel --%>
-<div
-  id="mobile-sidebar-backdrop"
-  class="relative z-50 lg:hidden hidden"
-  role="dialog"
-  aria-modal="true"
->
-  <div
-    id="mobile-sidebar-overlay"
-    class="fixed inset-0 bg-black/60 backdrop-blur-xs"
-    phx-click={hide_mobile_sidebar()}
+<div id="dashboard-layout" class="flex min-h-screen bg-base-100">
+  <aside
+    id="sidebar"
+    class="sidebar inset-y-0 left-0 z-50 flex w-72 shrink-0 flex-col lg:sticky lg:top-0 lg:h-screen lg:w-60"
     phx-window-keydown={hide_mobile_sidebar()}
     phx-key="Escape"
-  />
-
-  <div class="fixed inset-0 flex">
-    <div id="mobile-sidebar-panel" class="relative mr-16 flex w-full max-w-xs flex-1">
-      <%!-- Close button --%>
-      <div class="absolute top-0 left-full flex w-16 justify-center pt-5">
-        <button type="button" class="-m-2.5 p-2.5" phx-click={hide_mobile_sidebar()}>
-          <span class="sr-only">Close sidebar</span>
-          <.icon name="hero-x-mark" class="size-6 text-white/80" />
-        </button>
-      </div>
-
-      <%!-- Mobile sidebar content --%>
-      <div class="sidebar-panel flex grow flex-col overflow-y-auto">
-        <.sidebar_content
-          active_nav={@active_nav}
-          current_scope={@current_scope}
-          current_account={assigns[:current_account]}
-        />
-      </div>
-    </div>
-  </div>
-</div>
-
-<%!-- Desktop sidebar --%>
-<div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-64 lg:flex-col">
-  <div class="sidebar-panel flex grow flex-col overflow-y-auto">
+  >
     <.sidebar_content
-      active_nav={@active_nav}
+      active_nav={assigns[:active_nav]}
       current_scope={@current_scope}
       current_account={assigns[:current_account]}
     />
+  </aside>
+
+  <div
+    class="sidebar-backdrop fixed inset-0 z-40 bg-black/50"
+    aria-hidden="true"
+    phx-click={hide_mobile_sidebar()}
+  >
   </div>
-</div>
 
-<%!-- Main content area --%>
-<div class="lg:pl-64">
-  <%!-- Top bar --%>
-  <div class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-x-4 border-b border-base-300/50 bg-base-100/95 backdrop-blur-sm px-4 sm:gap-x-6 sm:px-6 lg:px-8">
-    <%!-- Mobile hamburger --%>
-    <button
-      type="button"
-      class="-m-2.5 p-2.5 text-base-content/60 hover:text-base-content lg:hidden"
-      phx-click={show_mobile_sidebar()}
-    >
-      <span class="sr-only">Open sidebar</span>
-      <.icon name="hero-bars-3" class="size-5" />
-    </button>
-
-    <%!-- Separator --%>
-    <div class="h-5 w-px bg-base-300 lg:hidden" aria-hidden="true" />
-
-    <div class="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
-      <%!-- Breadcrumbs / Page title --%>
-      <div class="flex items-center flex-1 min-w-0">
-        <%= if assigns[:breadcrumbs] do %>
-          <.breadcrumbs items={@breadcrumbs} />
-        <% else %>
-          <h1 class="text-sm font-semibold text-base-content/80">
-            {assigns[:page_title] || "Dashboard"}
-          </h1>
-        <% end %>
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-base-300/50 bg-base-100 px-4 lg:h-11">
+      <div class="flex min-w-0 items-center gap-3">
+        <button
+          type="button"
+          class="-ml-2 rounded-sm p-2 text-base-content hover:bg-base-200 lg:hidden"
+          phx-click={show_mobile_sidebar()}
+          aria-label="Open menu"
+        >
+          <.icon name="hero-bars-3" class="size-6" />
+        </button>
+        <.breadcrumbs items={
+          assigns[:breadcrumbs] || [%{label: assigns[:page_title] || "Dashboard"}]
+        } />
       </div>
-      <div class="flex items-center gap-x-3 lg:gap-x-4">
-        <%!-- Account Switcher --%>
-        <%= if assigns[:current_account] do %>
-          <.live_component
-            module={GoodFlowsWeb.Components.AccountSwitcher}
-            id="account-switcher"
-            current_scope={@current_scope}
-            current_account={@current_account}
-          />
 
-          <%!-- Separator --%>
-          <div class="hidden lg:block lg:h-5 lg:w-px lg:bg-base-300" aria-hidden="true" />
-        <% end %>
-
+      <div class="flex shrink-0 items-center gap-3">
         <.theme_toggle />
 
-        <%!-- Separator --%>
-        <div class="hidden lg:block lg:h-5 lg:w-px lg:bg-base-300" aria-hidden="true" />
-
-        <%!-- Profile dropdown --%>
         <div class="dropdown dropdown-end">
           <div
             tabindex="0"
             role="button"
-            class="flex items-center gap-x-2 p-1 rounded-lg hover:bg-base-200 transition-colors"
+            aria-label="Your account"
+            class="flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 font-mono text-xs text-muted transition-colors hover:bg-base-200 hover:text-base-content"
           >
-            <div class="avatar placeholder">
-              <div class="bg-primary/15 text-primary w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center">
-                <span>
-                  {String.first(@current_scope.user.email) |> String.upcase()}
-                </span>
-              </div>
-            </div>
-            <span class="hidden lg:flex lg:items-center">
-              <span class="text-xs font-medium text-base-content/70">
-                {@current_scope.user.email}
-              </span>
-              <.icon name="hero-chevron-down-micro" class="ml-1 size-4 text-base-content/40" />
-            </span>
+            <.icon name="hero-user-circle-mini" class="size-4 sm:hidden" />
+            <span class="hidden max-w-56 truncate sm:block">{@current_scope.user.email}</span>
+            <.icon name="hero-chevron-down-micro" class="size-3.5" />
           </div>
-          <ul
-            tabindex="0"
-            class="dropdown-content menu bg-base-100 rounded-lg z-[1] w-52 p-1 shadow-xl ring-1 ring-base-300/50 mt-1"
-          >
+          <ul tabindex="0" class="dropdown-content menu-panel z-20 mt-1 w-52">
+            <li class="truncate px-2.5 py-2 font-mono text-[11px] text-muted sm:hidden">
+              {@current_scope.user.email}
+            </li>
             <li>
-              <.link href={~p"/users/settings"} class="text-sm">
-                <.icon name="hero-cog-6-tooth-mini" class="size-4" /> Settings
+              <.link href={~p"/users/settings"} class="menu-item">
+                <.icon name="hero-cog-6-tooth-mini" class="size-4 text-muted" /> Settings
               </.link>
             </li>
             <li>
-              <.link href={~p"/users/log-out"} method="delete" class="text-sm">
-                <.icon name="hero-arrow-right-start-on-rectangle-mini" class="size-4" /> Sign out
+              <.link href={~p"/users/log-out"} method="delete" class="menu-item">
+                <.icon name="hero-arrow-right-start-on-rectangle-mini" class="size-4 text-muted" />
+                Log out
               </.link>
             </li>
           </ul>
         </div>
       </div>
-    </div>
-  </div>
+    </header>
 
-  <main class="min-h-[calc(100vh-3.5rem)]">
-    <div class="px-4 py-6 sm:px-6 lg:px-8">
-      <.flash_group flash={@flash} />
+    <main class="bg-grid flex-1 p-4 lg:p-6">
       {@inner_content}
-    </div>
-  </main>
+    </main>
+  </div>
 </div>
+
+<.flash_group flash={@flash} />
