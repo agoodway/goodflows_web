@@ -34,7 +34,7 @@ A project SHALL belong to exactly one account and SHALL have a required `slug` o
 - **THEN** the API responds `422` with an error on `default_branch` and stores nothing
 
 ### Requirement: Project endpoints
-The API SHALL provide `POST /api/v1/projects`, `GET /api/v1/projects`, `GET /api/v1/projects/:project`, `PATCH /api/v1/projects/:project`, and `DELETE /api/v1/projects/:project`. Each operation MUST be described in the OpenAPI document. `PATCH` MUST accept only `default_branch`; a body with `slug` or any other key MUST respond `422`, so a project can't be renamed. Creating, updating and deleting MUST require a private key. Listing and showing MUST accept any valid `sk_` or `pk_` key for the account. Listing MUST return the account's projects ordered by `slug`. A project belonging to another account MUST respond `404`.
+The API SHALL provide `POST /api/v1/projects`, `GET /api/v1/projects`, `GET /api/v1/projects/:project`, `PATCH /api/v1/projects/:project`, and `DELETE /api/v1/projects/:project`. Each operation MUST be described in the OpenAPI document. `PATCH` MUST accept only `default_branch`; a body with `slug` or any other key MUST respond `422`, so a project can't be renamed. Creating, updating and deleting MUST require a private key whose membership is owner or admin of the account; a private key of a plain member MUST receive `403` and change nothing. The dashboard's projects page MUST apply the same rule: every member can list projects, and only owners and admins can create, edit, or delete them. Listing and showing MUST accept any valid `sk_` or `pk_` key for the account. Listing MUST return the account's projects ordered by `slug`. A project belonging to another account MUST respond `404`.
 
 #### Scenario: List projects
 - **WHEN** a client lists projects
@@ -63,6 +63,14 @@ The API SHALL provide `POST /api/v1/projects`, `GET /api/v1/projects`, `GET /api
 #### Scenario: Public key cannot delete
 - **WHEN** a client with a `pk_` key deletes a project
 - **THEN** the API responds `403` and the project remains
+
+#### Scenario: Plain member cannot write
+- **WHEN** a client with an `sk_` key of a plain member of the account creates, patches, or deletes a project
+- **THEN** the API responds `403` and no project is created, changed, or deleted
+
+#### Scenario: Plain member can list
+- **WHEN** a client with an `sk_` key of a plain member lists projects
+- **THEN** the API responds `200`
 
 #### Scenario: Public key can list
 - **WHEN** a client with a `pk_` key lists projects

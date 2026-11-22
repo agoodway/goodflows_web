@@ -1,13 +1,15 @@
 defmodule GoodFlowsWeb.Api.V1.ProjectController do
   @moduledoc """
   Create, list, show, update, and delete the account's projects. Reads
-  accept any API key; writes require a private (`sk_`) key. `PATCH`
+  accept any API key; writes require a private (`sk_`) key of an account
+  owner or admin. `PATCH`
   changes only `default_branch`; there is no rename: the slug is the
   project's public name.
   """
   use GoodFlowsWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
+  alias GoodFlows.Accounts.AccountUser
   alias GoodFlows.Projects
   alias GoodFlowsWeb.ApiParams
 
@@ -22,6 +24,8 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
   }
 
   action_fallback GoodFlowsWeb.FallbackController
+
+  plug :require_admin when action in [:create, :update, :delete]
 
   tags(["Projects"])
 
@@ -48,7 +52,8 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
       unsupported_media_type: ApiParams.unsupported_media_type(),
       created: {"The created project", "application/json", ProjectResponse},
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
-      forbidden: {"Public keys cannot write", "application/json", ErrorResponse},
+      forbidden:
+        {"Public keys and plain members cannot write", "application/json", ErrorResponse},
       unprocessable_entity:
         {"Invalid or duplicate slug, or invalid `default_branch`", "application/json",
          ValidationErrorResponse}
@@ -96,7 +101,8 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
       ok: {"The updated project", "application/json", ProjectResponse},
       unsupported_media_type: ApiParams.unsupported_media_type(),
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
-      forbidden: {"Public keys cannot write", "application/json", ErrorResponse},
+      forbidden:
+        {"Public keys and plain members cannot write", "application/json", ErrorResponse},
       not_found: {"No such project in this account", "application/json", ErrorResponse},
       unprocessable_entity:
         {"Invalid `default_branch`, an unknown key, or an invalid project slug",
@@ -133,7 +139,8 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
     responses: [
       no_content: "Deleted",
       unauthorized: {"Missing or invalid API key", "application/json", ErrorResponse},
-      forbidden: {"Public keys cannot write", "application/json", ErrorResponse},
+      forbidden:
+        {"Public keys and plain members cannot write", "application/json", ErrorResponse},
       not_found: {"No such project in this account", "application/json", ErrorResponse},
       conflict:
         {"The project still has recipes, test reports, workflow runs, change requests or " <>
@@ -146,6 +153,16 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
   def delete(conn, _params) do
     with :ok <- Projects.delete_project(conn.assigns.current_account, conn.assigns.project) do
       send_resp(conn, :no_content, "")
+    end
+  end
+
+  # Creating or deleting a project reshapes the whole account, so plain
+  # members, like in the dashboard, may only read.
+  defp require_admin(conn, _opts) do
+    if AccountUser.admin?(conn.assigns.current_account_user) do
+      conn
+    else
+      conn |> GoodFlowsWeb.FallbackController.call({:error, :forbidden}) |> halt()
     end
   end
 end

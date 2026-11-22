@@ -54,6 +54,28 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
     end
   end
 
+  describe "plain members" do
+    test "can read projects but cannot create, update, or delete them", ctx do
+      project = project_fixture(ctx.account, %{"slug" => "shared"})
+      conn = ctx.member_sk_conn
+
+      assert %{"data" => [%{"slug" => "shared"}]} =
+               conn |> get(~p"/api/v1/projects") |> json_response(200)
+
+      body = conn |> post(~p"/api/v1/projects", %{"slug" => "mine"}) |> json_response(403)
+      assert_schema(body, "ErrorResponse", ApiSpec.spec())
+
+      conn
+      |> patch(~p"/api/v1/projects/shared", %{"default_branch" => "trunk"})
+      |> json_response(403)
+
+      conn |> delete(~p"/api/v1/projects/shared") |> json_response(403)
+
+      assert [%{id: id, default_branch: "main"}] = Projects.list_projects(ctx.account)
+      assert id == project.id
+    end
+  end
+
   describe "read" do
     test "lists the account's projects ordered by slug, also with a public key", ctx do
       for slug <- ["zeta", "alpha"], do: project_fixture(ctx.account, %{"slug" => slug})
