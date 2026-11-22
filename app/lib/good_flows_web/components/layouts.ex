@@ -157,6 +157,12 @@ defmodule GoodFlowsWeb.Layouts do
         label="Dashboard"
         active={@active_nav == :dashboard}
       />
+      <.sidebar_nav_item
+        href={"#{@account_base}/projects"}
+        icon="hero-folder"
+        label="Projects"
+        active={@active_nav == :projects}
+      />
 
       <div class="nav-section-header">// Developers</div>
       <.sidebar_nav_item

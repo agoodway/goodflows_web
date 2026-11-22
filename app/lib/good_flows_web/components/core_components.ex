@@ -257,6 +257,7 @@ defmodule GoodFlowsWeb.CoreComponents do
   attr :multiple, :boolean, default: false, doc: "the multiple flag for select inputs"
   attr :class, :any, default: nil, doc: "the input class to use over defaults"
   attr :error_class, :any, default: nil, doc: "the input error class to use over defaults"
+  attr :hint, :string, default: nil, doc: "help text shown below a text-like input"
 
   attr :rest, :global,
     include: ~w(accept autocomplete capture cols disabled form list max maxlength min minlength
@@ -374,13 +375,19 @@ defmodule GoodFlowsWeb.CoreComponents do
           @errors != [] && (@error_class || "ui-input-error")
         ]}
         aria-invalid={@errors != [] && "true"}
-        aria-describedby={error_ids(@id || @name, @errors)}
+        aria-describedby={described_by(@id || @name, @hint, @errors)}
         {@rest}
       />
+      <p :if={@hint} id={"#{@id || @name}-hint"} class="ui-field-hint">{@hint}</p>
       <.field_errors base={@id || @name} errors={@errors} />
     </div>
     """
   end
+
+  defp described_by(base, nil, errors), do: error_ids(base, errors)
+
+  defp described_by(base, _hint, errors),
+    do: Enum.join(["#{base}-hint" | List.wrap(error_ids(base, errors))], " ")
 
   attr :base, :string, required: true
   attr :errors, :list, required: true
