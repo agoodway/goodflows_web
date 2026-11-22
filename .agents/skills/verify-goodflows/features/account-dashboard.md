@@ -1,3 +1,17 @@
+---
+paths:
+  - "app/lib/good_flows_web/live/dashboard_live.ex"
+  - "app/lib/good_flows_web/controllers/dashboard_redirect_controller.ex"
+  - "app/lib/good_flows_web/components/account_switcher.ex"
+  - "app/lib/good_flows_web/components/layouts/dashboard.html.heex"
+  - "app/lib/good_flows_web/plugs/load_account.ex"
+  - "app/lib/good_flows/account_context.ex"
+  - "app/lib/good_flows/accounts/account.ex"
+  - "app/lib/good_flows/accounts/account_user.ex"
+  - "app/test/good_flows_web/live/dashboard_live_test.exs"
+  - "app/test/good_flows/account_context_test.exs"
+---
+
 # Account dashboard
 
 A signed-in user opens the dashboard for one of their accounts, moves between its pages from the sidebar, and switches to another account they belong to. The choice is remembered for their next `/dashboard` visit.

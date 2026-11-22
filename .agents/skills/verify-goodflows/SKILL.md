@@ -25,13 +25,16 @@ Read the feature map in [`features/README.md`](features/README.md) before drivin
 Preconditions: the orb setup in `.agents/setup` has run, so `mix` (Elixir 1.19.4) and PostgreSQL on `localhost:5432` exist, and `agent-browser` is installed. Launch runs `.agents/resume` when PostgreSQL is down.
 
 ```bash
-eval "$($C launch)"     # exports RUN_ID, GF_URL, GF_RUN_DIR
+eval "$($C launch)"                                  # exports RUN_ID, GF_URL, GF_RUN_DIR
+eval "$($C launch --scenarios <qa-scenarios.md>)"    # also grade a scenario set
 ```
+
+A run uploads to a goodflows change request only when it graded a scenario set, such as the diff set `gs-qa-scenarios` writes to `.goodflows/change-requests/<branch>/qa-scenarios.md` or an OpenSpec change's `qa-scenarios.md`. Pass it with `--scenarios`, or set `VERIFY_SCENARIOS`. Launch from a clean, committed tree: goodflows stores a run built from a dirty tree but never counts it.
 
 Launch does this:
 
 1. It picks the first free port in 4400–4499, or uses `VERIFY_PORT`. A taken `VERIFY_PORT` makes it refuse to start.
-2. It creates `.verify/goodflows/$RUN_ID/` and `run.md`, and adds `/.verify/` to `.gitignore` when it is missing.
+2. It creates `.verify/goodflows/$RUN_ID/` and `run.md`, and adds `/.verify/` to `.gitignore` when it is missing. With a scenario set, it copies the set byte for byte to `scenarios.md` in the run folder; never edit that copy.
 3. It runs `mix ecto.setup` with `BRANCH_DB=verify_<timestamp>`, which creates, migrates, and seeds a new `good_flows_verify_<timestamp>_dev` database. The default `good_flows_dev` database and the portal service on Amp's port are never touched.
 4. It starts `mix phx.server` under `setsid`, logging to `$GF_RUN_DIR/server.log`.
 
@@ -92,11 +95,24 @@ $C db "select name, type, status from api_keys" api-keys/db-row.txt
 
 ## Evidence
 
-Every run writes to `.verify/goodflows/$RUN_ID/`, where `RUN_ID` is `<UTC yyyymmddThhmmssZ>-<short sha>`. `.verify/` is gitignored, so evidence is never committed. `run.md` holds the full commit SHA, the branch, whether the working tree was clean or dirty (with the changed files), the start time, the URL, and the database. Record each feature or sub-feature you drive, then the outcome:
+Every run writes to `.verify/goodflows/$RUN_ID/`, where `RUN_ID` is `<UTC yyyymmddThhmmssZ>-<short sha>`. `.verify/` is gitignored, so evidence is never committed. `run.md` holds the full commit SHA, the branch, whether the working tree was clean or dirty (with the changed files), the start time, the URL, and the database. Record each feature or sub-feature you drive, each scenario of the set, any feature map drift you found, then the outcome:
 
 ```bash
 $C record keys-create "API keys page → Create key (empty state)" pass api-keys/03-token-shown.png api/me-active.json
+$C result 1 passed api-keys/03-token-shown.png                 # scenario 1 of the set
+$C result 2 failed --step 3 --reason "No token modal" api-keys/04-no-modal.png
+$C result 3 not_run --reason "Needs a second account owner"
+$C drift "api-keys.md: #empty-new-key-btn is now #create-first-key"
 $C finish pass "one-line summary"      # or fail / partial
+```
+
+`record` takes a feature ID (a file name in `features/`) or a sub-feature ID from a file's `Sub-features` list, and refuses any other ID. `result` takes a scenario ID of the set; evidence paths are relative to the run folder and must exist. Recording a scenario again replaces its earlier result. A feature recorded more than once is failed when any of its drives failed.
+
+`finish` writes the `verify-run-notes/1` YAML front matter at the top of `run.md`, which `goodflows cr runs upload` reads: the set's path and SHA-256, the commit, branch, dirty flag and changed files, the start and finish times, one result per scenario of the set (a scenario with no `result` is `not_run`), one entry per driven feature, and the drift. Running `finish` again rewrites the front matter and the outcome. Check the folder before uploading it:
+
+```bash
+goodflows cr validate "$GF_RUN_DIR"
+goodflows cr runs upload "$GF_RUN_DIR"
 ```
 
 Keep screenshots, ARIA snapshots (`$C browser snapshot -s '<selector>' > file.aria.txt`), API responses, and `db` output in per-feature folders. `server.log` and `ecto-setup.log` are already there.

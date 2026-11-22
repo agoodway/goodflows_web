@@ -1,3 +1,16 @@
+---
+paths:
+  - "app/lib/good_flows_web/live/user_live/login.ex"
+  - "app/lib/good_flows_web/live/user_live/confirmation.ex"
+  - "app/lib/good_flows_web/controllers/user_session_controller.ex"
+  - "app/lib/good_flows_web/user_auth.ex"
+  - "app/lib/good_flows/accounts/user_token.ex"
+  - "app/test/good_flows_web/live/user_live/login_test.exs"
+  - "app/test/good_flows_web/live/user_live/confirmation_test.exs"
+  - "app/test/good_flows_web/controllers/user_session_controller_test.exs"
+  - "app/test/good_flows_web/user_auth_test.exs"
+---
+
 # Sign in and sign out
 
 A registered user signs in with email and password, or with a one-time link mailed to them. They see a signed-in header, and can sign out again.

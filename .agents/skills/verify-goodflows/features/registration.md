@@ -1,3 +1,11 @@
+---
+paths:
+  - "app/lib/good_flows_web/live/user_live/registration.ex"
+  - "app/lib/good_flows/accounts/user.ex"
+  - "app/lib/good_flows/accounts/user_notifier.ex"
+  - "app/test/good_flows_web/live/user_live/registration_test.exs"
+---
+
 # Registration
 
 A visitor creates a user with just an email address, receives a confirmation link by email, and is confirmed and signed in when they open it and choose a confirm button.

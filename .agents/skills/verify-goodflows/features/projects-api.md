@@ -1,3 +1,15 @@
+---
+paths:
+  - "app/lib/good_flows_web/controllers/api/v1/project_controller.ex"
+  - "app/lib/good_flows_web/controllers/api/v1/project_json.ex"
+  - "app/lib/good_flows_web/schemas/project*.ex"
+  - "app/lib/good_flows_web/plugs/load_project.ex"
+  - "app/lib/good_flows/projects.ex"
+  - "app/lib/good_flows/projects/**"
+  - "app/test/good_flows_web/controllers/api/v1/project_controller_test.exs"
+  - "app/test/good_flows/projects_test.exs"
+---
+
 # Projects API
 
 An API client authenticated with a dashboard-created key manages the account's projects through `/api/v1/projects`: create a project by slug, list and read projects, change the default branch, and delete one. Writes need a private key of an account owner or admin: public keys and plain members' private keys can only read. The same projects are managed in the dashboard, see [Projects page](./projects-page.md).

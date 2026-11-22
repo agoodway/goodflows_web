@@ -1,3 +1,11 @@
+---
+paths:
+  - "app/lib/good_flows_web/live/project_live/**"
+  - "app/lib/good_flows/projects.ex"
+  - "app/lib/good_flows/projects/**"
+  - "app/test/good_flows_web/live/project_live_test.exs"
+---
+
 # Projects page
 
 A signed-in owner or admin lists, creates, edits, and deletes the current account's projects on the dashboard's Projects page. A plain member of the account sees the same list without any controls to change it.

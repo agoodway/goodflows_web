@@ -3,13 +3,15 @@
 # instance for verification. See ../SKILL.md. Every command except `launch`
 # needs RUN_ID, which `launch` prints.
 #
-#   eval "$(control-goodflows launch)"     # exports RUN_ID, GF_URL, GF_RUN_DIR
+#   eval "$(control-goodflows launch [--scenarios <set-file>])"   # exports RUN_ID, GF_URL, GF_RUN_DIR
 #   control-goodflows doctor
 #   control-goodflows login
 #   control-goodflows browser <agent-browser args...>
 #   control-goodflows api <name> <METHOD> <path> [json-body]
 #   control-goodflows db <sql> [output-file]
 #   control-goodflows record <feature-id> <entry-point> <pass|fail> <artifact>...
+#   control-goodflows result <scenario-id> <passed|failed|not_run> [--step N] [--reason TEXT] [evidence...]
+#   control-goodflows drift <text>
 #   control-goodflows finish <pass|fail|partial> [note]
 #   control-goodflows cleanup
 set -euo pipefail
@@ -52,18 +54,34 @@ cmd_launch() {
   fi
   port_free "$port" || die "port $port is already in use; refusing to drive an instance this run did not start"
 
-  local stamp sha run_id branch_db
+  # A scenario set to grade, such as a qa-scenarios.md that gs-qa-scenarios
+  # wrote. goodflows uploads only runs that graded a set.
+  local set_file=${VERIFY_SCENARIOS:-}
+  if [[ ${1:-} == --scenarios ]]; then set_file=${2:?--scenarios needs a file}; fi
+  local set_path=""
+  if [[ -n $set_file ]]; then
+    [[ -f $set_file ]] || die "scenario set $set_file does not exist"
+    set_file=$(realpath "$set_file")
+    set_path=$(realpath --relative-to="$repo" "$set_file")
+  fi
+
+  local stamp sha run_id branch_db started_at
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   sha=$(git -C "$repo" rev-parse HEAD)
   run_id="$stamp-${sha:0:7}"
   branch_db="verify_$(date -u +%Y%m%d%H%M%S)"
   run_dir="$evidence_root/$run_id"
-  mkdir -p "$run_dir"
+  mkdir -p "$run_dir/notes"
   grep -qxF '/.verify/' "$repo/.gitignore" 2>/dev/null || printf '/.verify/\n' >>"$repo/.gitignore"
+  # The run's copy of the set, byte for byte: its SHA-256 is the set digest.
+  [[ -n $set_file ]] && cp "$set_file" "$run_dir/scenarios.md"
 
   local porcelain tree
   porcelain=$(git -C "$repo" status --porcelain -- . ':!.verify' ':!.gitignore')
   if [[ -z $porcelain ]]; then tree=clean; else tree=dirty; fi
+  # The changed paths, the new name for a rename, for the front matter.
+  [[ -n $porcelain ]] && printf '%s\n' "$porcelain" | cut -c4- | sed 's/.* -> //' >"$run_dir/notes/changed-files"
   {
     echo "# GoodFlows verification run $run_id"
     echo
@@ -74,7 +92,8 @@ cmd_launch() {
       echo "- Changed files:"
       printf '%s\n' "$porcelain" | sed 's/^/  - `/; s/$/`/'
     fi
-    echo "- Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "- Started: $started_at"
+    [[ -n $set_path ]] && echo "- Scenario set: \`$set_path\` (copied as \`scenarios.md\`)"
     echo "- URL: http://127.0.0.1:$port"
     echo "- Database: \`good_flows_${branch_db}_dev\` (created and dropped by this run)"
     echo
@@ -100,6 +119,10 @@ GF_PID=$pid
 GF_BRANCH_DB=$branch_db
 GF_DB=good_flows_${branch_db}_dev
 GF_SHA=$sha
+GF_BRANCH=$(git -C "$repo" branch --show-current || true)
+GF_DIRTY=$([[ $tree == dirty ]] && echo true || echo false)
+GF_STARTED_AT=$started_at
+GF_SET_PATH=$set_path
 GF_BROWSER_SESSION=verify-goodflows-$run_id
 ENV
 
@@ -190,12 +213,117 @@ cmd_record() {
   shift 3
   local artifacts
   artifacts=$(printf '`%s` ' "$@")
-  echo "| \`$feature\` | $entry | $result | $artifacts|" >>"$run_dir/run.md"
+  local row="| \`$feature\` | $entry | $result | $artifacts|"
+  case $result in pass) result=passed ;; fail) result=failed ;; *) die "result must be pass or fail" ;; esac
+  # goodflows knows features by their file name in features/, so a
+  # sub-feature counts toward the file whose Sub-features section lists it.
+  local id=$feature map="$repo/.agents/skills/verify-goodflows/features" file
+  if [[ ! -f "$map/$feature.md" ]]; then
+    id=""
+    for file in "$map"/*.md; do
+      awk -v sub_id="$feature" '/^## /{on = ($0 == "## Sub-features")} on && index($0, "- `" sub_id "` ") == 1 {found = 1} END {exit !found}' "$file" &&
+        id=$(basename "$file" .md)
+    done
+    [[ -n $id ]] || die "$feature is neither a feature nor a sub-feature in $map; record the gap with: drift <text>"
+  fi
+  jq -nc --arg id "$id" --arg entry "$entry" --arg result "$result" \
+    '{id: $id, entry_point: $entry, result: $result}' >>"$run_dir/notes/features.jsonl"
+  echo "$row" >>"$run_dir/run.md"
+}
+
+cmd_result() {
+  load_run
+  [[ -f "$run_dir/scenarios.md" ]] || die "this run graded no scenario set; launch with --scenarios <file>"
+  [[ $# -ge 2 ]] || die "usage: result <scenario-id> <passed|failed|not_run> [--step N] [--reason TEXT] [evidence...]"
+  local id=$1 result=$2 step="" reason=""
+  shift 2
+  [[ $result =~ ^(passed|failed|not_run)$ ]] || die "result must be passed, failed, or not_run"
+  while [[ ${1:-} == --step || ${1:-} == --reason ]]; do
+    [[ $1 == --step ]] && step=${2:?--step needs a step number} || reason=${2:?--reason needs text}
+    shift 2
+  done
+  local file
+  for file in "$@"; do [[ -f "$run_dir/$file" ]] || die "evidence $file is not in $run_dir"; done
+  jq -nc --arg id "$id" --arg result "$result" --arg step "$step" --arg reason "$reason" \
+    '{id: $id, result: $result, failed_step: (if $step == "" then null else $step end), reason: (if $reason == "" then null else $reason end), evidence: $ARGS.positional}' \
+    --args "$@" >>"$run_dir/notes/results.jsonl"
+}
+
+cmd_drift() {
+  load_run
+  jq -nc --arg text "${1:?usage: drift <text>}" '$text' >>"$run_dir/notes/drift.jsonl"
+}
+
+# The verify-run-notes/1 front matter that `goodflows cr runs upload` reads,
+# built from what launch, record, result, and drift wrote under notes/.
+front_matter() {
+  local set_ids=()
+  if [[ -f "$run_dir/scenarios.md" ]]; then
+    # Scenario IDs from the set's `### <id>. ` (or `#### <id>. `) headings under
+    # `## Scenarios`, which goodflows requires to match its front matter.
+    mapfile -t set_ids < <(awk '/^## /{on = ($0 == "## Scenarios")} on && /^####? [A-Za-z0-9][A-Za-z0-9._-]*\. /{sub(/^####? /, ""); sub(/\. .*/, ""); print}' "$run_dir/scenarios.md")
+  fi
+  jq -nr \
+    --arg commit "$GF_SHA" --arg branch "$GF_BRANCH" --argjson dirty "$GF_DIRTY" \
+    --arg started "$GF_STARTED_AT" --arg finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg set_path "$GF_SET_PATH" \
+    --arg sha256 "$([[ -f "$run_dir/scenarios.md" ]] && sha256sum "$run_dir/scenarios.md" | cut -d' ' -f1)" \
+    --rawfile changed <(cat "$run_dir/notes/changed-files" 2>/dev/null) \
+    --slurpfile results <(cat "$run_dir/notes/results.jsonl" 2>/dev/null) \
+    --slurpfile features <(cat "$run_dir/notes/features.jsonl" 2>/dev/null) \
+    --slurpfile drift <(cat "$run_dir/notes/drift.jsonl" 2>/dev/null) \
+    --args '
+    def q: tojson;
+    def nq: if . == null then "null" else tojson end;
+    def idv: if test("^[1-9][0-9]*$") then . else tojson end;
+    def list(f): if length == 0 then " []" else map("\n" + f) | join("") end;
+    # The last result recorded for each scenario wins; a scenario of the set
+    # with none is not_run.
+    ($results | map({key: .id, value: .}) | from_entries) as $by_id
+    | ($ARGS.positional | map($by_id[.] // {id: ., result: "not_run", reason: "Not driven in this run", evidence: []})) as $all
+    # One entry per feature: failed when any of its drives failed.
+    | ($features | group_by(.id) | map({id: .[0].id, entry_point: (map(.entry_point) | unique | join("; ")),
+        result: (if any(.result == "failed") then "failed" else "passed" end)})) as $feats
+    | "---",
+      "format: \"verify-run-notes/1\"",
+      (if $set_path != "" then "set:\n  path: \($set_path | q)\n  sha256: \($sha256 | q)" else empty end),
+      "commit: \($commit | q)",
+      "branch: \(if $branch == "" then "null" else ($branch | q) end)",
+      "dirty: \($dirty)",
+      "changed_files:\($changed | split("\n") | map(select(. != "")) | list("  - \(q)"))",
+      "started_at: \($started | q)",
+      "finished_at: \($finished | q)",
+      "results:\($all | list("  - id: \(.id | idv)\n    result: \(.result)\n    failed_step: \(.failed_step | nq)\n    reason: \(.reason | nq)\n    evidence:\(.evidence | list("      - \(q)"))"))",
+      "features:\($feats | list("  - id: \(.id | q)\n    entry_point: \(.entry_point | q)\n    result: \(.result)"))",
+      "drift:\($drift | list("  - \(q)"))",
+      "---"
+    ' "${set_ids[@]}"
 }
 
 cmd_finish() {
   load_run
-  { echo; echo "## Outcome"; echo; echo "- Finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "- Outcome: ${1:?pass, fail, or partial}${2:+ — $2}"; } >>"$run_dir/run.md"
+  local outcome=${1:?pass, fail, or partial}
+  if [[ -f "$run_dir/scenarios.md" && -f "$run_dir/notes/results.jsonl" ]]; then
+    local unknown
+    unknown=$(jq -r .id "$run_dir/notes/results.jsonl" | while read -r id; do
+      grep -qE "^####? $(printf '%s' "$id" | sed 's/[.]/\\./g')\. " "$run_dir/scenarios.md" || echo "$id"
+    done)
+    [[ -z $unknown ]] || die "results name scenarios the set does not have: $(echo $unknown)"
+  fi
+  local body
+  # A second finish replaces the front matter and the outcome the first one wrote.
+  body=$(awk '
+    NR == 1 && $0 == "---" {fm = 1; next}
+    fm {if ($0 == "---") fm = 0; next}
+    $0 == "## Outcome" {out = 1; next}
+    out && /^## / {out = 0}
+    out && (/^- (Finished|Outcome):/ || $0 == "") {next}
+    {out = 0; print}' "$run_dir/run.md" | cat -s)
+  { front_matter
+    printf '%s\n' "$body"
+    echo; echo "## Outcome"; echo; echo "- Finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "- Outcome: $outcome${2:+ — $2}"
+  } >"$run_dir/run.md.new"
+  mv "$run_dir/run.md.new" "$run_dir/run.md"
 }
 
 cmd_cleanup() {
@@ -215,6 +343,6 @@ cmd_cleanup() {
 command=${1:-}
 shift || true
 case $command in
-  launch | doctor | login | browser | api | db | record | finish | cleanup) "cmd_$command" "$@" ;;
-  *) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  launch | doctor | login | browser | api | db | record | result | drift | finish | cleanup) "cmd_$command" "$@" ;;
+  *) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

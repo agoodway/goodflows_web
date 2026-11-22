@@ -1,3 +1,16 @@
+---
+paths:
+  - "app/lib/good_flows_web/live/api_key_live/**"
+  - "app/lib/good_flows/accounts/api_key.ex"
+  - "app/lib/good_flows_web/plugs/api_auth.ex"
+  - "app/lib/good_flows_web/controllers/api/v1/me_controller.ex"
+  - "app/lib/good_flows_web/schemas/me_response.ex"
+  - "app/test/good_flows_web/live/api_key_live_test.exs"
+  - "app/test/good_flows_web/plugs/api_auth_test.exs"
+  - "app/test/good_flows_web/controllers/api/v1/me_controller_test.exs"
+  - "app/test/good_flows/api_keys_test.exs"
+---
+
 # API keys
 
 A signed-in user creates an API key for the current account on the API keys page. They see its raw token exactly once, can use it against `/api/v1`, and can revoke it, after which the API refuses it.
