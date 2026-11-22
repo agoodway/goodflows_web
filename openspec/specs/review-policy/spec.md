@@ -48,15 +48,34 @@ Every `GET` review policy route SHALL accept any valid `sk_` or `pk_` key of the
 - **THEN** the API responds `403` and the current version is unchanged
 
 ### Requirement: A project without a policy uses version 0
-A project with no written version SHALL have current version `0`: a default that is never stored, with `written_by`, `note` and `inserted_at` null, and that appears in no history list. It is the D5 example except `evidence.required_workflows` `[]`, `scenarios.require_approved_intent` false, and `scenarios.spec_gaps`, `coverage.unmapped_areas` and `coverage.undriven_features` `ignore`, so a project without workflows, scenario sets or a feature index is not held `pending`, and `paths` `[]`, because sensitive paths depend on the project's language and layout.
+A project with no written version SHALL have current version `0`: a default that is never stored, with `written_by`, `note` and `inserted_at` null, and that appears in no history list. Version 0 MUST NOT need OpenSpec, CI workflows, scenario sets or a feature index: a change request with no linked OpenSpec change becomes `mergeable` with Git facts for its head and a `change-claims/2` file whose claims meet the claims and size settings. Its settings are:
+
+- `scenarios`: `require_approved_intent` false, `should_failures` `needs_review`, `spec_gaps` `ignore`, `approver` `any`, `diff_only` `needs_review`.
+- `evidence`: `required_workflows` `[]`, `ignore_paths` `["docs/**", "**/*.md"]`.
+- `claims`: `one_way_door` `needs_review`, `min_proof_level` `ran`, `open_items` `needs_review`.
+- `paths` `[]`, because sensitive paths depend on the project's language and layout.
+- `size`: `max_changed_files` `40`, `max_changed_lines` `1500`.
+- `coverage`: `unmapped_areas` and `undriven_features` `ignore`.
+- `merge`: `lease_ttl` `10m`, `regrade_merge_result` true.
 
 #### Scenario: New project
 - **WHEN** a client reads the review policy of a project that never wrote one
 - **THEN** the API responds `200` with `version` `0`, `claims.min_proof_level` `ran`, `size.max_changed_files` `40`, `evidence.required_workflows` `[]`, `paths` `[]`, `scenarios.require_approved_intent` false, and `scenarios.spec_gaps`, `coverage.unmapped_areas` and `coverage.undriven_features` `ignore`
 
+#### Scenario: Change request without OpenSpec
+- **WHEN** a project that never wrote a policy has a change request with no `openspec_change`, Git facts for its head changing 3 files, and claims for that head that call it `two_way`, leave nothing open, and prove every fact `ran`
+- **THEN** its verdict is `mergeable` with `policy_version` `0` and no reasons
+
 #### Scenario: Empty history
 - **WHEN** a client lists the versions of a project that never wrote a policy
 - **THEN** the API responds `200` with `data` `[]`
+
+### Requirement: OpenSpec settings are opt-in
+Only the scenario settings SHALL depend on OpenSpec, and version 0 turns each of them off. `scenarios.require_approved_intent` true holds a change request `pending` until it has an approved intent set, which needs a linked OpenSpec change, or a diff scenario set. `scenarios.spec_gaps` reads the intent set's coverage of OpenSpec scenarios. `scenarios.diff_only` applies only under `require_approved_intent`. `scenarios.should_failures` applies to any uploaded scenario set, intent or diff. A project that uses OpenSpec opts in by writing a version that sets `require_approved_intent` true and, if wanted, `spec_gaps` `needs_review`.
+
+#### Scenario: Project opts in to OpenSpec gating
+- **WHEN** an admin writes a policy with `scenarios.require_approved_intent` true and a change request has no `openspec_change` and no diff scenario set
+- **THEN** its verdict has a `scenario_set_missing` reason with outcome `pending`
 
 ### Requirement: Writing creates a new immutable version
 A valid write SHALL store a new version numbered one above the current one, starting at `1`, and respond `201`. Each version MUST store the document, the membership, the key, the time, the `previous_version` and the optional `note` (1 to 1,024 UTF-8 bytes). Versions MUST NOT be updated or deleted through the API, and their numbers are never reused.
