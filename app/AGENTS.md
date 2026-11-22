@@ -39,6 +39,7 @@ custom classes must fully style the input
 
 ### UI/UX & design guidelines
 
+- Read [../DESIGN.md](../DESIGN.md) before visual or UI changes. Its app-specific design system governs the general guidance below.
 - **Produce world-class UI designs** with a focus on usability, aesthetics, and modern design principles
 - Implement **subtle micro-interactions** (e.g., button hover effects, and smooth transitions)
 - Ensure **clean typography, spacing, and layout balance** for a refined, premium look
