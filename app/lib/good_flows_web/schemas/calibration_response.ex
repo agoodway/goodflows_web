@@ -23,7 +23,10 @@ defmodule GoodFlowsWeb.Schemas.CalibrationResponse do
           :rules,
           :gaps,
           :globs,
-          :unmatched_defect_count
+          :unmatched_defect_count,
+          :defects,
+          :defects_truncated,
+          :unattributed_defect_count
         ],
         properties: %{
           from: %Schema{type: :string, format: :"date-time"},
@@ -77,6 +80,61 @@ defmodule GoodFlowsWeb.Schemas.CalibrationResponse do
             type: :integer,
             minimum: 0,
             description: "Defects with no file matching any glob"
+          },
+          defects: %Schema{
+            type: :array,
+            description:
+              "The defects counted above, newest `recorded_at` first, at most 500, each with " <>
+                "its change request's lane, `merge.policy_version` and `merge.reasons` rules, " <>
+                "and the globs its files match",
+            items: %Schema{
+              type: :object,
+              required: [
+                :id,
+                :change_request,
+                :commit,
+                :attribution,
+                :severity,
+                :ticket,
+                :recorded_at,
+                :lane,
+                :policy_version,
+                :rules,
+                :globs
+              ],
+              properties: %{
+                id: %Schema{type: :string, format: :uuid},
+                change_request: %Schema{type: :integer},
+                commit: %Schema{type: :string, nullable: true},
+                attribution: %Schema{type: :string, enum: ~w(change_request commit)},
+                severity: %Schema{
+                  type: :string,
+                  nullable: true,
+                  enum: ~w(low medium high critical)
+                },
+                ticket: %Schema{
+                  type: :string,
+                  nullable: true,
+                  description: "Null for public keys"
+                },
+                recorded_at: %Schema{type: :string, format: :"date-time"},
+                lane: %Schema{type: :string, enum: ~w(auto reviewed bypass)},
+                policy_version: %Schema{type: :integer, minimum: 0},
+                rules: %Schema{type: :array, items: %Schema{type: :string}},
+                globs: %Schema{type: :array, items: %Schema{type: :string}}
+              }
+            }
+          },
+          defects_truncated: %Schema{
+            type: :boolean,
+            description: "True when more defects exist than `defects` lists; counts cover all"
+          },
+          unattributed_defect_count: %Schema{
+            type: :integer,
+            minimum: 0,
+            description:
+              "Unattributed defects whose `recorded_at` (not a merge time) is in `[from, to)`; " <>
+                "they count in no lane, rule or glob"
           }
         }
       }

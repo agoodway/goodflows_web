@@ -234,5 +234,34 @@ defmodule GoodFlowsWeb.Api.V1.CalibrationControllerTest do
              |> json_response(200) ==
                policy_before
     end
+
+    test "the report lists its defects; pk_ sees ticket null", ctx do
+      number = mergeable!(ctx.sk_conn, ctx.slug, sha(1))
+      lease = acquire!(ctx.sk_conn, ctx.slug, number, sha(1), sha(0))
+
+      ctx.sk_conn
+      |> merged(ctx.slug, number, sha(500), %{"lease_id" => lease["id"]})
+      |> json_response(200)
+
+      ctx.sk_conn
+      |> post_defect(ctx.slug, %{"change_request" => number, "ticket" => "GOO-512"})
+      |> json_response(201)
+
+      ctx.sk_conn |> post_defect(ctx.slug, %{"commit" => sha(777)}) |> json_response(201)
+
+      private = ctx.sk_conn |> get(calibration_path(ctx.slug)) |> json_response(200)
+      assert_schema(private, "CalibrationResponse", ApiSpec.spec())
+
+      assert [%{"change_request" => ^number, "ticket" => "GOO-512", "lane" => "auto"} = entry] =
+               private["data"]["defects"]
+
+      assert {:ok, _, _} = DateTime.from_iso8601(entry["recorded_at"])
+      assert private["data"]["defects_truncated"] == false
+      assert private["data"]["unattributed_defect_count"] == 1
+
+      public = ctx.pk_conn |> get(calibration_path(ctx.slug)) |> json_response(200)
+      assert_schema(public, "CalibrationResponse", ApiSpec.spec())
+      assert [%{"ticket" => nil, "change_request" => ^number}] = public["data"]["defects"]
+    end
   end
 end
