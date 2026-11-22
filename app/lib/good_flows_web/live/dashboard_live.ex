@@ -10,30 +10,83 @@ defmodule GoodFlowsWeb.DashboardLive do
      assign(socket,
        page_title: "Dashboard",
        active_nav: :dashboard,
-       breadcrumbs: [%{label: "Dashboard"}]
+       breadcrumbs: [%{label: "Dashboard"}],
+       me_url: url(~p"/api/v1/me")
      )}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
-    <div id="dashboard" class="space-y-6">
-      <div class="flex items-end justify-between">
-        <div>
-          <h1 class="text-xl font-bold tracking-tight text-base-content">{@current_account.name}</h1>
-          <p class="mt-0.5 text-sm text-base-content/50">
-            Welcome to your dashboard.
-          </p>
-        </div>
-      </div>
+    <div id="dashboard" class="mx-auto max-w-5xl space-y-4 lg:space-y-6">
+      <.header icon="hero-squares-2x2">
+        {@current_account.name}
+        <:subtitle><code>{@current_account.slug}</code></:subtitle>
+        <:actions>
+          <.button
+            href={~p"/dashboard/accounts/#{@current_account.id}/api-keys"}
+            variant="primary"
+            size="sm"
+            icon="hero-key"
+          >
+            API keys
+          </.button>
+        </:actions>
+      </.header>
 
-      <div class="rounded-xl border border-base-300/60 bg-base-100">
-        <div class="flex items-center justify-between border-b border-base-300/40 px-5 py-3.5">
-          <h2 class="text-sm font-semibold text-base-content">Getting Started</h2>
-        </div>
-        <div class="p-5">
-          <p class="text-sm text-base-content/60">Your dashboard is ready. Start building!</p>
-        </div>
+      <div class="grid items-start gap-4 lg:grid-cols-3 lg:gap-6">
+        <.panel
+          id="get-started"
+          title="Make your first API call"
+          icon="hero-command-line"
+          class="lg:col-span-2"
+        >
+          <ol class="space-y-5 text-sm">
+            <li class="flex items-start gap-3">
+              <.tag>1</.tag>
+              <div class="min-w-0 flex-1">
+                <p class="font-medium">Create an API key</p>
+                <p class="mt-1 text-muted">
+                  A key authenticates requests as you, within this account.
+                  <.text_link href={~p"/dashboard/accounts/#{@current_account.id}/api-keys"}>
+                    Go to API keys
+                  </.text_link>
+                </p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <.tag>2</.tag>
+              <div class="min-w-0 flex-1">
+                <p class="font-medium">Check that the key works</p>
+                <p class="mt-1 text-muted">
+                  This returns the user and account the key belongs to.
+                </p>
+                <.code_block class="mt-2">
+                  <:line>curl -H "Authorization: Bearer $GOODFLOWS_API_KEY" {@me_url}</:line>
+                </.code_block>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <.tag>3</.tag>
+              <div class="min-w-0 flex-1">
+                <p class="font-medium">Browse the endpoints</p>
+                <p class="mt-1 text-muted">
+                  The API reference lists every endpoint and lets you try requests.
+                  <.text_link href={~p"/api/v1/docs"}>Open the API reference</.text_link>
+                </p>
+              </div>
+            </li>
+          </ol>
+        </.panel>
+
+        <.panel id="account-details" title="Account" icon="hero-building-office">
+          <.list>
+            <:item title="Name">{@current_account.name}</:item>
+            <:item title="Slug"><code>{@current_account.slug}</code></:item>
+            <:item title="ID"><code>{@current_account.id}</code></:item>
+            <:item title="Signed in as">{@current_scope.user.email}</:item>
+          </.list>
+        </.panel>
       </div>
     </div>
     """

@@ -1,30 +1,16 @@
 defmodule GoodFlowsWeb.CoreComponents do
   @moduledoc """
-  Provides core UI components.
+  The app-wide UI primitives. Every page builds its controls from these
+  instead of writing its own markup, which is what keeps the interface
+  consistent.
 
-  At first glance, this module may seem daunting, but its goal is to provide
-  core building blocks for your application, such as tables, forms, and
-  inputs. The components consist mostly of markup and are well-documented
-  with doc strings and declarative assigns. You may customize and style
-  them in any way you want, based on your application growth and needs.
+  Before writing markup, look here and in `lib/good_flows_web/components/`.
+  If a control or layout would appear in a second place, add it here and use
+  it in both. `DESIGN.md` at the repository root is the catalog of these
+  components and the visual rules they follow; their classes (`ui-button`,
+  `ui-input`, `status-badge`, ...) are defined in `assets/css/app.css`.
 
-  The foundation for styling is Tailwind CSS, a utility-first CSS framework,
-  augmented with daisyUI, a Tailwind CSS plugin that provides UI components
-  and themes. Here are useful references:
-
-    * [daisyUI](https://daisyui.com/docs/intro/) - a good place to get
-      started and see the available components.
-
-    * [Tailwind CSS](https://tailwindcss.com) - the foundational framework
-      we build on. You will use it for layout, sizing, flexbox, grid, and
-      spacing.
-
-    * [Heroicons](https://heroicons.com) - see `icon/1` for usage.
-
-    * [Phoenix.Component](https://phoenix-live-view.hexdocs.pm/Phoenix.Component.html) -
-      the component system used by Phoenix. Some components, such as `<.link>`
-      and `<.form>`, are defined there.
-
+  This module is imported once, in `GoodFlowsWeb.html_helpers/0`.
   """
   use Phoenix.Component
   use Gettext, backend: GoodFlowsWeb.Gettext
@@ -64,64 +50,158 @@ defmodule GoodFlowsWeb.CoreComponents do
       id={@id}
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       role="alert"
-      class="toast toast-top toast-end z-50"
+      class={["flash", "flash-#{@kind}"]}
       {@rest}
     >
-      <div class={[
-        "alert w-80 sm:w-96 max-w-80 sm:max-w-96 text-wrap",
-        @kind == :info && "alert-info",
-        @kind == :error && "alert-error"
-      ]}>
-        <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0" />
-        <.icon :if={@kind == :error} name="hero-exclamation-circle" class="size-5 shrink-0" />
-        <div>
-          <p :if={@title} class="font-semibold">{@title}</p>
-          <p>{msg}</p>
-        </div>
-        <div class="flex-1" />
-        <button type="button" class="group self-start cursor-pointer" aria-label={gettext("close")}>
-          <.icon name="hero-x-mark" class="size-5 opacity-40 group-hover:opacity-70" />
-        </button>
+      <.icon :if={@kind == :info} name="hero-information-circle" class="flash-icon size-4" />
+      <.icon :if={@kind == :error} name="hero-exclamation-circle" class="flash-icon size-4" />
+      <div class="min-w-0 flex-1">
+        <p :if={@title} class="font-semibold">{@title}</p>
+        <p class="break-words">{msg}</p>
       </div>
+      <button type="button" class="text-muted hover:text-base-content" aria-label={gettext("close")}>
+        <.icon name="hero-x-mark" class="size-4" />
+      </button>
     </div>
     """
   end
 
   @doc """
-  Renders a button with navigation support.
+  Renders a button, or a link styled as one when given `href`, `navigate`
+  or `patch`.
+
+  Variants:
+
+    * `primary` - the page's or dialog's one main action
+    * `soft` - the default, for secondary actions
+    * `ghost` - quiet row and header actions
+    * `outline` - quiet bordered actions such as pagers and retries
+    * `danger` - the confirm button of a destructive dialog
+
+  Use `size="sm"` in rows, toolbars and headers. `class` is added to the
+  variant's classes; pass it for layout (width, margin) only.
 
   ## Examples
 
-      <.button>Send!</.button>
-      <.button phx-click="go" variant="primary">Send!</.button>
-      <.button navigate={~p"/"}>Home</.button>
+      <.button>Send</.button>
+      <.button phx-click="go" variant="primary">Send</.button>
+      <.button navigate={~p"/"} variant="ghost" size="sm">Home</.button>
   """
   attr :rest, :global, include: ~w(href navigate patch method download name value disabled type)
-  attr :class, :any
-  attr :variant, :string, values: ~w(primary)
+  attr :class, :any, default: nil
+  attr :variant, :string, default: "soft", values: ~w(primary soft ghost outline danger)
+  attr :size, :string, default: "md", values: ~w(sm md)
+  attr :icon, :string, default: nil
   slot :inner_block, required: true
 
   def button(%{rest: rest} = assigns) do
-    variants = %{"primary" => "btn-primary", nil => "btn-primary btn-soft"}
-
     assigns =
-      assign_new(assigns, :class, fn ->
-        ["btn", Map.fetch!(variants, assigns[:variant])]
-      end)
+      assign(assigns, :classes, [
+        "ui-button",
+        "ui-button-#{assigns.variant}",
+        "ui-button-#{assigns.size}",
+        assigns.class
+      ])
 
     if rest[:href] || rest[:navigate] || rest[:patch] do
       ~H"""
-      <.link class={@class} {@rest}>
+      <.link class={@classes} {@rest}>
+        <.icon :if={@icon} name={@icon} class="size-4 shrink-0" />
         {render_slot(@inner_block)}
       </.link>
       """
     else
       ~H"""
-      <button class={@class} {@rest}>
+      <button class={@classes} {@rest}>
+        <.icon :if={@icon} name={@icon} class="size-4 shrink-0" />
         {render_slot(@inner_block)}
       </button>
       """
     end
+  end
+
+  @doc """
+  Renders a link inside running text.
+
+  ## Examples
+
+      <.text_link navigate={~p"/users/register"}>Sign up</.text_link>
+  """
+  attr :rest, :global, include: ~w(href navigate patch method download)
+  slot :inner_block, required: true
+
+  def text_link(assigns) do
+    ~H"""
+    <.link class="ui-link" {@rest}>{render_slot(@inner_block)}</.link>
+    """
+  end
+
+  @doc """
+  Renders a status or tag. Write the status in words, in sentence case: the
+  colour only supports it.
+
+  Kinds: `neutral` (the default), `primary` (positive or current), `error`.
+
+  ## Examples
+
+      <.status_badge kind="primary" dot>Active</.status_badge>
+  """
+  attr :kind, :string, default: "neutral", values: ~w(neutral primary error)
+  attr :dot, :boolean, default: false
+  slot :inner_block, required: true
+
+  def status_badge(assigns) do
+    ~H"""
+    <span class={["status-badge", "status-badge-#{@kind}"]}>
+      <span :if={@dot} aria-hidden="true" class="size-1.5 rounded-full bg-current"></span>
+      {render_slot(@inner_block)}
+    </span>
+    """
+  end
+
+  @doc """
+  Renders a short literal value, such as a key prefix or a step number, as
+  code. Unlike `status_badge/1` it keeps the value's own casing.
+
+  ## Examples
+
+      <.tag>pk_live_ab12…</.tag>
+  """
+  slot :inner_block, required: true
+
+  def tag(assigns) do
+    ~H"""
+    <code class="tag-badge">{render_slot(@inner_block)}</code>
+    """
+  end
+
+  @doc """
+  Renders an inline notice that stays on the page, unlike a flash.
+
+  ## Examples
+
+      <.notice kind="warning">Copy the key now. It is not shown again.</.notice>
+  """
+  attr :kind, :string, default: "neutral", values: ~w(neutral info warning)
+  attr :class, :any, default: nil
+  slot :inner_block, required: true
+
+  def notice(assigns) do
+    ~H"""
+    <div class={["ui-notice", "ui-notice-#{@kind}", @class]}>
+      <.icon
+        :if={@kind == "info"}
+        name="hero-information-circle-mini"
+        class="ui-notice-icon size-4"
+      />
+      <.icon
+        :if={@kind == "warning"}
+        name="hero-exclamation-triangle-mini"
+        class="ui-notice-icon size-4"
+      />
+      <div class="min-w-0 flex-1">{render_slot(@inner_block)}</div>
+    </div>
+    """
   end
 
   @doc """
@@ -130,6 +210,9 @@ defmodule GoodFlowsWeb.CoreComponents do
   A `Phoenix.HTML.FormField` may be passed as argument,
   which is used to retrieve the input name, id, and values.
   Otherwise all attributes may be passed explicitly.
+
+  An invalid field shows an icon and the message under it. Each message
+  has an id that the field names in `aria-describedby`.
 
   ## Types
 
@@ -141,27 +224,17 @@ defmodule GoodFlowsWeb.CoreComponents do
 
     * For live file uploads, see `Phoenix.Component.live_file_input/1`
 
-  See https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input
-  for more information. Unsupported types, such as radio, are best
-  written directly in your templates.
+  Unsupported types, such as radio, are best written directly in your
+  templates.
 
   ## Examples
 
   ```heex
-  <.input field={@form[:email]} type="email" />
-  <.input name="my-input" errors={["oh no!"]} />
+  <.input field={@form[:email]} type="email" label="Email" />
+  <.input field={@form[:type]} type="select" label="Type" options={["Admin": "admin"]} />
   ```
 
-  ## Select type
-
-  When using `type="select"`, you must pass the `options` and optionally
-  a `value` to mark which option should be preselected.
-
-  ```heex
-  <.input field={@form[:user_type]} type="select" options={["Admin": "admin", "User": "user"]} />
-  ```
-
-  For more information on what kind of data can be passed to `options` see
+  For what `options` accepts, see
   [`options_for_select`](https://phoenix-html.hexdocs.pm/Phoenix.HTML.Form.html#options_for_select/2).
   """
   attr :id, :any, default: nil
@@ -213,69 +286,75 @@ defmodule GoodFlowsWeb.CoreComponents do
       end)
 
     ~H"""
-    <div class="fieldset mb-2">
-      <label for={@id}>
+    <div class="ui-field">
+      <input
+        type="hidden"
+        name={@name}
+        value="false"
+        disabled={@rest[:disabled]}
+        form={@rest[:form]}
+      />
+      <label for={@id} class="flex items-center gap-2 text-sm">
         <input
-          type="hidden"
+          type="checkbox"
+          id={@id}
           name={@name}
-          value="false"
-          disabled={@rest[:disabled]}
-          form={@rest[:form]}
-        />
-        <span class="label">
-          <input
-            type="checkbox"
-            id={@id}
-            name={@name}
-            value="true"
-            checked={@checked}
-            class={@class || "checkbox checkbox-sm"}
-            {@rest}
-          />{@label}
-        </span>
+          value="true"
+          checked={@checked}
+          class={@class || "ui-checkbox"}
+          aria-invalid={@errors != [] && "true"}
+          aria-describedby={error_ids(@id || @name, @errors)}
+          {@rest}
+        />{@label}
       </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
+      <.field_errors base={@id || @name} errors={@errors} />
     </div>
     """
   end
 
   def input(%{type: "select"} = assigns) do
     ~H"""
-    <div class="fieldset mb-2">
-      <label for={@id}>
-        <span :if={@label} class="label mb-1">{@label}</span>
+    <div class="ui-field">
+      <label :if={@label} for={@id} class="ui-field-label">{@label}</label>
+      <div class="relative">
         <select
           id={@id}
           name={@name}
-          class={[@class || "w-full select", @errors != [] && (@error_class || "select-error")]}
+          class={[
+            @class || "ui-input ui-select",
+            @errors != [] && (@error_class || "ui-input-error")
+          ]}
           multiple={@multiple}
+          aria-invalid={@errors != [] && "true"}
+          aria-describedby={error_ids(@id || @name, @errors)}
           {@rest}
         >
           <option :if={@prompt} value="">{@prompt}</option>
           {Form.options_for_select(@options, @value)}
         </select>
-      </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
+        <.icon :if={!@multiple} name="hero-chevron-down-micro" class="ui-select-icon size-4" />
+      </div>
+      <.field_errors base={@id || @name} errors={@errors} />
     </div>
     """
   end
 
   def input(%{type: "textarea"} = assigns) do
     ~H"""
-    <div class="fieldset mb-2">
-      <label for={@id}>
-        <span :if={@label} class="label mb-1">{@label}</span>
-        <textarea
-          id={@id}
-          name={@name}
-          class={[
-            @class || "w-full textarea",
-            @errors != [] && (@error_class || "textarea-error")
-          ]}
-          {@rest}
-        >{Form.normalize_value("textarea", @value)}</textarea>
-      </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
+    <div class="ui-field">
+      <label :if={@label} for={@id} class="ui-field-label">{@label}</label>
+      <textarea
+        id={@id}
+        name={@name}
+        class={[
+          @class || "ui-input ui-textarea",
+          @errors != [] && (@error_class || "ui-input-error")
+        ]}
+        aria-invalid={@errors != [] && "true"}
+        aria-describedby={error_ids(@id || @name, @errors)}
+        {@rest}
+      >{Form.normalize_value("textarea", @value)}</textarea>
+      <.field_errors base={@id || @name} errors={@errors} />
     </div>
     """
   end
@@ -283,73 +362,140 @@ defmodule GoodFlowsWeb.CoreComponents do
   # All other inputs text, datetime-local, url, password, etc. are handled here...
   def input(assigns) do
     ~H"""
-    <div class="fieldset mb-2">
-      <label for={@id}>
-        <span :if={@label} class="label mb-1">{@label}</span>
-        <input
-          type={@type}
-          name={@name}
-          id={@id}
-          value={Form.normalize_value(@type, @value)}
-          class={[
-            @class || "w-full input",
-            @errors != [] && (@error_class || "input-error")
-          ]}
-          {@rest}
-        />
-      </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
+    <div class="ui-field">
+      <label :if={@label} for={@id} class="ui-field-label">{@label}</label>
+      <input
+        type={@type}
+        name={@name}
+        id={@id}
+        value={Form.normalize_value(@type, @value)}
+        class={[
+          @class || "ui-input",
+          @errors != [] && (@error_class || "ui-input-error")
+        ]}
+        aria-invalid={@errors != [] && "true"}
+        aria-describedby={error_ids(@id || @name, @errors)}
+        {@rest}
+      />
+      <.field_errors base={@id || @name} errors={@errors} />
     </div>
     """
   end
 
-  # Helper used by inputs to generate form errors
-  defp error(assigns) do
+  attr :base, :string, required: true
+  attr :errors, :list, required: true
+
+  defp field_errors(assigns) do
     ~H"""
-    <p class="mt-1.5 flex gap-2 items-center text-sm text-error">
-      <.icon name="hero-exclamation-circle" class="size-5" />
-      {render_slot(@inner_block)}
+    <p
+      :for={{msg, index} <- Enum.with_index(@errors)}
+      id={error_id(@base, index)}
+      class="ui-field-error"
+    >
+      <.icon name="hero-exclamation-circle-mini" class="size-4 shrink-0" />
+      {msg}
     </p>
     """
   end
 
+  defp error_id(base, index), do: "#{base}-error-#{index}"
+
+  defp error_ids(_base, []), do: nil
+
+  defp error_ids(base, errors) do
+    errors
+    |> Enum.with_index()
+    |> Enum.map_join(" ", fn {_msg, index} -> error_id(base, index) end)
+  end
+
   @doc """
-  Renders a header with title.
+  Renders the page title, with an optional icon, subtitle and actions. It
+  has no bottom border; the panel that follows owns its border.
+
+  ## Examples
+
+      <.header icon="hero-key">
+        API keys
+        <:subtitle>Keys authenticate API requests as you.</:subtitle>
+        <:actions><.button variant="primary" size="sm">Create key</.button></:actions>
+      </.header>
   """
+  attr :icon, :string, default: nil
   slot :inner_block, required: true
   slot :subtitle
   slot :actions
 
   def header(assigns) do
     ~H"""
-    <header class={[@actions != [] && "flex items-center justify-between gap-6", "pb-4"]}>
-      <div>
-        <h1 class="text-lg font-semibold leading-8">
-          {render_slot(@inner_block)}
-        </h1>
-        <p :if={@subtitle != []} class="text-sm text-base-content/70">
-          {render_slot(@subtitle)}
-        </p>
+    <header class="flex flex-wrap items-center justify-between gap-4">
+      <div class="flex min-w-0 items-center gap-3 sm:gap-4">
+        <div :if={@icon} class="ui-header-icon">
+          <.icon name={@icon} class="size-4 sm:size-5" />
+        </div>
+        <div class="min-w-0">
+          <h1 class="text-base font-semibold text-base-content sm:text-lg">
+            {render_slot(@inner_block)}
+          </h1>
+          <p :if={@subtitle != []} class="mt-0.5 text-sm text-muted">
+            {render_slot(@subtitle)}
+          </p>
+        </div>
       </div>
-      <div class="flex-none">{render_slot(@actions)}</div>
+      <div :if={@actions != []} class="flex shrink-0 flex-wrap items-center gap-2">
+        {render_slot(@actions)}
+      </div>
     </header>
     """
   end
 
   @doc """
-  Renders a table with generic styling.
+  Renders a card section with an optional title.
+
+  ## Examples
+
+      <.panel title="Email" icon="hero-envelope">
+        ...
+      </.panel>
+  """
+  attr :title, :string, default: nil
+  attr :icon, :string, default: nil
+  attr :class, :any, default: nil
+  attr :rest, :global
+  slot :actions
+  slot :inner_block, required: true
+
+  def panel(assigns) do
+    ~H"""
+    <section class={["section-card", @class]} {@rest}>
+      <header :if={@title} class="section-card-header">
+        <.icon :if={@icon} name={@icon} class="size-4 shrink-0" />
+        <h2>{@title}</h2>
+        <div :if={@actions != []} class="ml-auto">{render_slot(@actions)}</div>
+      </header>
+      <div class="section-card-body">{render_slot(@inner_block)}</div>
+    </section>
+    """
+  end
+
+  @doc """
+  Renders a data table. Below `md` each row stacks into a card whose
+  values are labelled by their column.
+
+  Pass `empty` with an `:empty_state` slot to show an empty state in place
+  of the table. It renders outside the stream container.
 
   ## Examples
 
       <.table id="users" rows={@users}>
-        <:col :let={user} label="id">{user.id}</:col>
-        <:col :let={user} label="username">{user.username}</:col>
+        <:col :let={user} label="Id">{user.id}</:col>
+        <:col :let={user} label="Username">{user.username}</:col>
       </.table>
   """
   attr :id, :string, required: true
   attr :rows, :list, required: true
   attr :row_id, :any, default: nil, doc: "the function for generating the row id"
   attr :row_click, :any, default: nil, doc: "the function for handling phx-click on each row"
+  attr :empty, :boolean, default: false, doc: "whether there are no rows to show"
 
   attr :row_item, :any,
     default: &Function.identity/1,
@@ -357,9 +503,11 @@ defmodule GoodFlowsWeb.CoreComponents do
 
   slot :col, required: true do
     attr :label, :string
+    attr :class, :any
   end
 
   slot :action, doc: "the slot for showing user actions in the last table column"
+  slot :empty_state, doc: "shown in place of the table when `empty` is true"
 
   def table(assigns) do
     assigns =
@@ -368,39 +516,49 @@ defmodule GoodFlowsWeb.CoreComponents do
       end
 
     ~H"""
-    <table class="table table-zebra">
-      <thead>
-        <tr>
-          <th :for={col <- @col}>{col[:label]}</th>
-          <th :if={@action != []}>
-            <span class="sr-only">{gettext("Actions")}</span>
-          </th>
-        </tr>
-      </thead>
-      <tbody id={@id} phx-update={is_struct(@rows, Phoenix.LiveView.LiveStream) && "stream"}>
-        <tr :for={row <- @rows} id={@row_id && @row_id.(row)}>
-          <td
-            :for={col <- @col}
-            phx-click={@row_click && @row_click.(row)}
-            class={@row_click && "hover:cursor-pointer"}
+    <div :if={@empty && @empty_state != []} class="list-table">
+      {render_slot(@empty_state)}
+    </div>
+    <div :if={!@empty} class="list-table data-table">
+      <table>
+        <thead>
+          <tr>
+            <th :for={col <- @col}>{col[:label]}</th>
+            <th :if={@action != []}>
+              <span class="sr-only">{gettext("Actions")}</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody id={@id} phx-update={is_struct(@rows, Phoenix.LiveView.LiveStream) && "stream"}>
+          <tr
+            :for={row <- @rows}
+            id={@row_id && @row_id.(row)}
+            class={@row_click && "data-table-row-link"}
           >
-            {render_slot(col, @row_item.(row))}
-          </td>
-          <td :if={@action != []} class="w-0 font-semibold">
-            <div class="flex gap-4">
-              <%= for action <- @action do %>
-                {render_slot(action, @row_item.(row))}
-              <% end %>
-            </div>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+            <td
+              :for={col <- @col}
+              data-label={col[:label]}
+              phx-click={@row_click && @row_click.(row)}
+              class={col[:class]}
+            >
+              {render_slot(col, @row_item.(row))}
+            </td>
+            <td :if={@action != []} class="table-actions">
+              <div class="flex justify-end gap-2">
+                <%= for action <- @action do %>
+                  {render_slot(action, @row_item.(row))}
+                <% end %>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     """
   end
 
   @doc """
-  Renders a data list.
+  Renders label/value rows. Long values wrap.
 
   ## Examples
 
@@ -415,29 +573,143 @@ defmodule GoodFlowsWeb.CoreComponents do
 
   def list(assigns) do
     ~H"""
-    <ul class="list">
-      <li :for={item <- @item} class="list-row">
-        <div class="list-col-grow">
-          <div class="font-bold">{item.title}</div>
-          <div>{render_slot(item)}</div>
-        </div>
-      </li>
-    </ul>
+    <dl>
+      <div :for={item <- @item} class="detail-row">
+        <dt class="detail-label">{item.title}</dt>
+        <dd class="detail-value">{render_slot(item)}</dd>
+      </div>
+    </dl>
     """
   end
 
   @doc """
-  Renders a [Heroicon](https://heroicons.com).
+  Renders a command or config sample that scrolls inside its own box.
+  Each `:line` is a shell command shown after a prompt. Use `:source` for
+  a file's contents, with `title` for its name.
+
+  ## Examples
+
+      <.code_block>
+        <:line>goodflows run ci</:line>
+      </.code_block>
+
+      <.code_block title="goodflows.toml">
+        <:source>{@config}</:source>
+      </.code_block>
+  """
+  attr :title, :string, default: nil
+  attr :class, :any, default: nil
+  attr :rest, :global
+  slot :line
+  slot :source
+
+  def code_block(assigns) do
+    ~H"""
+    <div class={["code-block", @class]} {@rest}>
+      <div :if={@title} class="code-block-title">{@title}</div>
+      <pre :if={@source != []} phx-no-format><code>{render_slot(@source)}</code></pre>
+      <pre :if={@line != []} phx-no-format><code
+        :for={line <- @line}
+        class="code-block-prompt block"
+      >{render_slot(line)}</code></pre>
+    </div>
+    """
+  end
+
+  @doc """
+  Renders an empty state that says what is missing and offers the next
+  action.
+
+  ## Examples
+
+      <.empty_state icon="hero-key" title="No API keys yet">
+        Create a key to call the API from scripts and services.
+        <:actions><.button variant="primary">Create key</.button></:actions>
+      </.empty_state>
+  """
+  attr :icon, :string, default: nil
+  attr :title, :string, default: nil
+  attr :rest, :global
+  slot :actions
+  slot :inner_block, required: true
+
+  def empty_state(assigns) do
+    ~H"""
+    <div class="ui-empty-state" {@rest}>
+      <div :if={@icon} class="ui-empty-state-icon">
+        <.icon name={@icon} class="size-7" />
+      </div>
+      <h2 :if={@title} class="text-sm font-semibold">{@title}</h2>
+      <p class="mt-1 max-w-sm text-sm text-muted">{render_slot(@inner_block)}</p>
+      <div :if={@actions != []} class="mt-5">{render_slot(@actions)}</div>
+    </div>
+    """
+  end
+
+  @doc """
+  Groups the buttons at the end of a form.
+
+  ## Examples
+
+      <.form_actions>
+        <.button variant="primary">Save password</.button>
+      </.form_actions>
+  """
+  slot :inner_block, required: true
+
+  def form_actions(assigns) do
+    ~H"""
+    <div class="ui-form-actions">{render_slot(@inner_block)}</div>
+    """
+  end
+
+  @doc """
+  Renders a menu that opens from a trigger and closes when focus leaves it.
+
+  The inner block is the menu's `<li>` items; give links and buttons in
+  them the `menu-item` class.
+
+  ## Examples
+
+      <.menu label="Your account" position="end">
+        <:trigger>{@current_scope.user.email}</:trigger>
+        <li><.link href={~p"/users/settings"} class="menu-item">Settings</.link></li>
+      </.menu>
+  """
+  attr :label, :string, required: true, doc: "the accessible name of the trigger"
+  attr :position, :string, default: "end", values: ~w(end top)
+  attr :class, :any, default: nil
+  attr :trigger_class, :any, default: nil
+  attr :panel_class, :any, default: nil
+  slot :trigger, required: true
+  slot :inner_block, required: true
+
+  def menu(assigns) do
+    ~H"""
+    <div class={["dropdown", "dropdown-#{@position}", @class]}>
+      <div
+        tabindex="0"
+        role="button"
+        aria-haspopup="true"
+        aria-label={@label}
+        class={["menu-trigger", @trigger_class]}
+      >
+        {render_slot(@trigger)}
+      </div>
+      <ul tabindex="0" class={["dropdown-content menu-panel", @panel_class]}>
+        {render_slot(@inner_block)}
+      </ul>
+    </div>
+    """
+  end
+
+  @doc """
+  Renders a [Heroicon](https://heroicons.com). This is the only way to
+  render an icon.
 
   Heroicons come in three styles – outline, solid, and mini.
   By default, the outline style is used, but solid and mini may
   be applied by using the `-solid` and `-mini` suffix.
-
-  You can customize the size and colors of the icons by setting
-  width, height, and background color classes.
-
-  Icons are extracted from the `deps/heroicons` directory and bundled within
-  your compiled app.css by the plugin in `assets/vendor/heroicons.js`.
 
   ## Examples
 
@@ -449,7 +721,145 @@ defmodule GoodFlowsWeb.CoreComponents do
 
   def icon(%{name: "hero-" <> _} = assigns) do
     ~H"""
-    <span class={[@name, @class]} />
+    <span class={[@name, @class]} aria-hidden="true" />
+    """
+  end
+
+  @doc """
+  Renders a modal dialog for a form or a message. The caller decides when
+  it is shown, by rendering it conditionally, and names the event that
+  closes it.
+
+  Escape, the ESC button and a click outside the panel all push
+  `on_cancel`. Keyboard focus moves into the dialog when it opens, stays
+  inside it, and returns to the control that opened it when it closes.
+
+  Put the closing buttons in `dialog_actions/1`. For a one-action
+  confirmation use `confirm_dialog/1`.
+
+  ## Examples
+
+      <.editor_dialog :if={@show} id="create-key" title="Create API key" on_cancel="cancel">
+        <.form for={@form} phx-submit="create">
+          <.input field={@form[:name]} label="Name" />
+          <.dialog_actions>
+            <.button type="button" variant="ghost" phx-click="cancel">Cancel</.button>
+            <.button variant="primary">Create key</.button>
+          </.dialog_actions>
+        </.form>
+      </.editor_dialog>
+  """
+  attr :id, :string, required: true
+  attr :title, :string, required: true
+  attr :on_cancel, :string, required: true, doc: "the event pushed when the dialog is dismissed"
+  attr :size, :string, default: "md", values: ~w(sm md)
+  slot :inner_block, required: true
+
+  def editor_dialog(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      class="modal-terminal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={"#{@id}-title"}
+      phx-window-keydown={@on_cancel}
+      phx-key="Escape"
+      phx-hook=".DialogFocus"
+      data-focus-first={"##{@id}-body"}
+    >
+      <div class="modal-backdrop-blur" aria-hidden="true" phx-click={@on_cancel}></div>
+      <.focus_wrap id={"#{@id}-panel"} class={["modal-panel", "modal-panel-#{@size}"]}>
+        <div class="modal-header">
+          <h2 id={"#{@id}-title"} class="modal-title">{@title}</h2>
+          <button
+            type="button"
+            class="modal-close-btn"
+            aria-label={gettext("close")}
+            phx-click={@on_cancel}
+          >
+            ESC
+          </button>
+        </div>
+        <div id={"#{@id}-body"} class="modal-content">
+          {render_slot(@inner_block)}
+        </div>
+      </.focus_wrap>
+    </div>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".DialogFocus">
+      // Remembers the control that opened the dialog, moves focus to the
+      // first control in the dialog body, and hands focus back on close.
+      export default {
+        mounted() {
+          this.opener = document.activeElement;
+          const body = this.el.querySelector(this.el.dataset.focusFirst);
+          const first = body && body.querySelector(
+            "input:not([type=hidden]), select, textarea, button, a[href], [tabindex]:not([tabindex='-1'])"
+          );
+          if (first) requestAnimationFrame(() => first.focus());
+        },
+        destroyed() {
+          if (this.opener && this.opener.isConnected) this.opener.focus();
+        }
+      }
+    </script>
+    """
+  end
+
+  @doc """
+  Groups the buttons at the end of an `editor_dialog/1`.
+  """
+  slot :inner_block, required: true
+
+  def dialog_actions(assigns) do
+    ~H"""
+    <div class="modal-actions">{render_slot(@inner_block)}</div>
+    """
+  end
+
+  @doc """
+  Renders a confirmation with one action, built on `editor_dialog/1`. Use
+  it instead of the browser's `data-confirm`.
+
+  The confirm button's id is the dialog's id followed by `-confirm`.
+
+  ## Examples
+
+      <.confirm_dialog
+        :if={@revoke_key}
+        id="revoke-key"
+        title="Revoke API key"
+        confirm_label="Revoke key"
+        on_confirm="revoke_key"
+        on_cancel="cancel_revoke"
+      >
+        Anything using this key loses access immediately.
+      </.confirm_dialog>
+  """
+  attr :id, :string, required: true
+  attr :title, :string, required: true
+  attr :confirm_label, :string, required: true
+  attr :on_confirm, :string, required: true, doc: "the event pushed by the confirm button"
+  attr :on_cancel, :string, required: true, doc: "the event pushed when the dialog is dismissed"
+  attr :destructive, :boolean, default: true
+  slot :inner_block, required: true
+
+  def confirm_dialog(assigns) do
+    ~H"""
+    <.editor_dialog id={@id} title={@title} on_cancel={@on_cancel} size="sm">
+      <div class="text-sm">{render_slot(@inner_block)}</div>
+      <.dialog_actions>
+        <.button type="button" variant="ghost" phx-click={@on_cancel}>{gettext("Cancel")}</.button>
+        <.button
+          id={"#{@id}-confirm"}
+          type="button"
+          variant={if @destructive, do: "danger", else: "primary"}
+          phx-click={@on_confirm}
+        >
+          {@confirm_label}
+        </.button>
+      </.dialog_actions>
+    </.editor_dialog>
     """
   end
 
@@ -459,30 +869,34 @@ defmodule GoodFlowsWeb.CoreComponents do
   ## Examples
 
       <.breadcrumbs items={[
-        %{label: "Companies", to: ~p"/dashboard/accounts/\#{@account.id}/companies"},
-        %{label: "Acme Corp"}
+        %{label: "Dashboard", to: ~p"/dashboard/accounts/\#{@account.id}"},
+        %{label: "API keys"}
       ]} />
   """
   attr :items, :list, required: true
 
   def breadcrumbs(assigns) do
     ~H"""
-    <nav aria-label="Breadcrumb" class="flex items-center gap-1.5 min-w-0">
-      <%= for {item, idx} <- Enum.with_index(@items) do %>
-        <%= if idx > 0 do %>
-          <.icon name="hero-chevron-right-mini" class="size-4 text-base-content/30 shrink-0" />
-        <% end %>
-        <%= if Map.has_key?(item, :to) do %>
+    <nav aria-label="Breadcrumb" class="min-w-0">
+      <ol class="flex min-w-0 items-center gap-2 font-mono text-xs text-muted">
+        <li :for={{item, idx} <- Enum.with_index(@items)} class="flex min-w-0 items-center gap-2">
+          <span :if={idx > 0} aria-hidden="true">/</span>
           <.link
+            :if={Map.has_key?(item, :to)}
             navigate={item.to}
-            class="text-sm text-base-content/50 hover:text-base-content/70 transition-colors truncate"
+            class="truncate transition-colors hover:text-base-content"
           >
             {item.label}
           </.link>
-        <% else %>
-          <span class="text-sm font-semibold text-base-content truncate">{item.label}</span>
-        <% end %>
-      <% end %>
+          <span
+            :if={!Map.has_key?(item, :to)}
+            aria-current="page"
+            class="truncate text-base-content"
+          >
+            {item.label}
+          </span>
+        </li>
+      </ol>
     </nav>
     """
   end
@@ -493,9 +907,9 @@ defmodule GoodFlowsWeb.CoreComponents do
   def show(js \\ %JS{}, selector) do
     JS.show(js,
       to: selector,
-      time: 300,
+      time: 150,
       transition:
-        {"transition-all ease-out duration-300",
+        {"transition-all ease-out duration-150",
          "opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95",
          "opacity-100 translate-y-0 sm:scale-100"}
     )
@@ -505,9 +919,9 @@ defmodule GoodFlowsWeb.CoreComponents do
   def hide(js \\ %JS{}, selector) do
     JS.hide(js,
       to: selector,
-      time: 200,
+      time: 100,
       transition:
-        {"transition-all ease-in duration-200", "opacity-100 translate-y-0 sm:scale-100",
+        {"transition-all ease-in duration-100", "opacity-100 translate-y-0 sm:scale-100",
          "opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"}
     )
   end

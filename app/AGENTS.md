@@ -39,6 +39,11 @@ custom classes must fully style the input
 
 ### UI/UX & design guidelines
 
+- Follow [../DESIGN.md](../DESIGN.md): theme tokens, one accent, sentence-case labels, visible focus, and AA contrast. Its app-specific design system governs the general guidance below.
+- Check `GoodFlowsWeb.CoreComponents` and `lib/good_flows_web/components/` before writing markup. When a control or layout repeats, add it there as a shared component and use it everywhere.
+- Build on the theme tokens through `GoodFlowsWeb.CoreComponents` and `GoodFlowsWeb.Layouts` rather than one-off markup. Do not hand-write daisyUI classes (`btn`, `badge`, `modal`, `alert`) in a page.
+- Use `<.icon>` for icons and `<.input>` for form fields.
+- `test/good_flows_web/design/` holds a contrast test and a visual-system guard. Both must pass.
 - **Produce world-class UI designs** with a focus on usability, aesthetics, and modern design principles
 - Implement **subtle micro-interactions** (e.g., button hover effects, and smooth transitions)
 - Ensure **clean typography, spacing, and layout balance** for a refined, premium look

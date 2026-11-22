@@ -8,10 +8,8 @@ defmodule GoodFlowsWeb.UserLive.Confirmation do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <div class="mx-auto max-w-sm">
-        <div class="text-center">
-          <.header>Welcome {@user.email}</.header>
-        </div>
+      <div class="mx-auto max-w-sm space-y-4">
+        <.header>Welcome {@user.email}</.header>
 
         <.form
           :if={!@user.confirmed_at}
@@ -27,11 +25,12 @@ defmodule GoodFlowsWeb.UserLive.Confirmation do
             name={@form[:remember_me].name}
             value="true"
             phx-disable-with="Confirming..."
-            class="btn btn-primary w-full"
+            variant="primary"
+            class="w-full"
           >
             Confirm and stay logged in
           </.button>
-          <.button phx-disable-with="Confirming..." class="btn btn-primary btn-soft w-full mt-2">
+          <.button phx-disable-with="Confirming..." class="mt-2 w-full">
             Confirm and log in only this time
           </.button>
         </.form>
@@ -47,7 +46,7 @@ defmodule GoodFlowsWeb.UserLive.Confirmation do
         >
           <input type="hidden" name={@form[:token].name} value={@form[:token].value} />
           <%= if @current_scope do %>
-            <.button phx-disable-with="Logging in..." class="btn btn-primary w-full">
+            <.button phx-disable-with="Logging in..." variant="primary" class="w-full">
               Log in
             </.button>
           <% else %>
@@ -55,19 +54,20 @@ defmodule GoodFlowsWeb.UserLive.Confirmation do
               name={@form[:remember_me].name}
               value="true"
               phx-disable-with="Logging in..."
-              class="btn btn-primary w-full"
+              variant="primary"
+              class="w-full"
             >
               Keep me logged in on this device
             </.button>
-            <.button phx-disable-with="Logging in..." class="btn btn-primary btn-soft w-full mt-2">
+            <.button phx-disable-with="Logging in..." class="mt-2 w-full">
               Log me in only this time
             </.button>
           <% end %>
         </.form>
 
-        <p :if={!@user.confirmed_at} class="alert alert-outline mt-8">
-          Tip: If you prefer passwords, you can enable them in the user settings.
-        </p>
+        <.notice :if={!@user.confirmed_at}>
+          If you prefer passwords, you can set one in your settings after logging in.
+        </.notice>
       </div>
     </Layouts.app>
     """

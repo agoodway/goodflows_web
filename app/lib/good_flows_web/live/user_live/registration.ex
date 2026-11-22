@@ -9,35 +9,32 @@ defmodule GoodFlowsWeb.UserLive.Registration do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <div class="mx-auto max-w-sm">
-        <div class="text-center">
-          <.header>
-            Register for an account
-            <:subtitle>
-              Already registered?
-              <.link navigate={~p"/users/log-in"} class="font-semibold text-brand hover:underline">
-                Log in
-              </.link>
-              to your account now.
-            </:subtitle>
-          </.header>
-        </div>
+      <div class="mx-auto max-w-sm space-y-4">
+        <.header>
+          Register for an account
+          <:subtitle>
+            Already registered? <.text_link navigate={~p"/users/log-in"}>Log in</.text_link>
+            to your account now.
+          </:subtitle>
+        </.header>
 
-        <.form for={@form} id="registration_form" phx-submit="save" phx-change="validate">
-          <.input
-            field={@form[:email]}
-            type="email"
-            label="Email"
-            autocomplete="username"
-            spellcheck="false"
-            required
-            phx-mounted={JS.focus()}
-          />
+        <.panel title="Your email" icon="hero-envelope">
+          <.form for={@form} id="registration_form" phx-submit="save" phx-change="validate">
+            <.input
+              field={@form[:email]}
+              type="email"
+              label="Email"
+              autocomplete="username"
+              spellcheck="false"
+              required
+              phx-mounted={JS.focus()}
+            />
 
-          <.button phx-disable-with="Creating account..." class="btn btn-primary w-full">
-            Create an account
-          </.button>
-        </.form>
+            <.button variant="primary" class="w-full" phx-disable-with="Creating account...">
+              Create an account
+            </.button>
+          </.form>
+        </.panel>
       </div>
     </Layouts.app>
     """

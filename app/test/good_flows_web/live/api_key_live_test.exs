@@ -65,7 +65,7 @@ defmodule GoodFlowsWeb.ApiKeyLiveTest do
     {:ok, view, _html} = live(conn, path)
 
     view |> element("#revoke-#{api_key.id}") |> render_click()
-    view |> element("#confirm-revoke-btn") |> render_click()
+    view |> element("#revoke-confirm-modal-confirm") |> render_click()
 
     assert {:error, :invalid_token} = Accounts.verify_api_token(token)
     refute has_element?(view, "#revoke-#{api_key.id}")
