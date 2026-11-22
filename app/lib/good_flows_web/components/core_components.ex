@@ -462,6 +462,7 @@ defmodule GoodFlowsWeb.CoreComponents do
   it conditionally, and names the event that closes it.
 
   Escape, the ESC button and a click outside the panel all push `on_cancel`.
+  Keyboard focus moves into the dialog when it opens and stays inside it.
   Put the closing buttons in a `<div class="modal-actions">`.
 
   ## Examples
@@ -492,7 +493,7 @@ defmodule GoodFlowsWeb.CoreComponents do
       phx-key="Escape"
     >
       <div class="modal-backdrop-blur" aria-hidden="true" phx-click={@on_cancel}></div>
-      <div class={["modal-panel", "modal-panel-#{@size}"]}>
+      <.focus_wrap id={"#{@id}-panel"} class={["modal-panel", "modal-panel-#{@size}"]}>
         <div class="modal-header">
           <h2 id={"#{@id}-title"} class="modal-title">{@title}</h2>
           <button
@@ -507,7 +508,7 @@ defmodule GoodFlowsWeb.CoreComponents do
         <div class="modal-content" phx-mounted={JS.focus_first()}>
           {render_slot(@inner_block)}
         </div>
-      </div>
+      </.focus_wrap>
     </div>
     """
   end

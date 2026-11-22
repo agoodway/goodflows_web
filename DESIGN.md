@@ -164,7 +164,8 @@ use a placeholder as the only label.
 
 A modal is rendered conditionally by its LiveView and names the event that
 closes it. Escape, the ESC button and a click outside the panel all push that
-event. The modal header is a plain title bar; the window-control dots, glow
+event. Focus moves to the first control in the dialog body when it opens and
+stays inside the dialog until it closes. The modal header is a plain title bar; the window-control dots, glow
 border and scanlines of the GoodIssues modal are intentionally left out here.
 
 Shared components own presentation, while their callers own resource state,
