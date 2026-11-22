@@ -7,6 +7,7 @@ defmodule GoodFlowsWeb.Api.V1.CalibrationController do
   use GoodFlowsWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
+  alias GoodFlows.Accounts.ApiKey
   alias GoodFlows.Calibration
   alias GoodFlowsWeb.ApiParams
   alias GoodFlowsWeb.Schemas.{CalibrationResponse, ErrorResponse, ValidationErrorResponse}
@@ -23,8 +24,11 @@ defmodule GoodFlowsWeb.Api.V1.CalibrationController do
     `bypass`), by policy version, by rule that fired and by policy path
     glob, for change requests whose `merged_at` is in `[from, to)`
     (default: the 90 days before now). Every defect attributed to them
-    counts, whenever it was recorded. Computed on read; reading it never
-    changes the policy.
+    counts, whenever it was recorded. `defects` lists them (at most 500,
+    newest first, `defects_truncated` when cut) with their lane, policy
+    version, rules and globs; public keys see `ticket` null.
+    `unattributed_defect_count` counts unattributed defects recorded in the
+    window. Computed on read; reading it never changes the policy.
     """,
     parameters:
       ApiParams.project() ++
@@ -57,15 +61,26 @@ defmodule GoodFlowsWeb.Api.V1.CalibrationController do
   @doc "Reads the calibration report."
   def show(conn, params) do
     with {:ok, report} <- Calibration.report(conn.assigns.project, Map.take(params, ~w(from to))) do
-      json(conn, %{data: report_json(report)})
+      redact? = not ApiKey.can_write?(conn.assigns.current_api_key)
+      json(conn, %{data: report_json(report, redact?)})
     end
   end
 
-  defp report_json(report) do
+  # Public keys see each listed defect's `ticket` as null, as in the
+  # defect list.
+  defp report_json(report, redact?) do
     %{
       report
       | from: iso8601(report.from),
-        to: iso8601(report.to)
+        to: iso8601(report.to),
+        defects:
+          Enum.map(report.defects, fn defect ->
+            %{
+              defect
+              | ticket: if(redact?, do: nil, else: defect.ticket),
+                recorded_at: DateTime.to_iso8601(defect.recorded_at)
+            }
+          end)
     }
   end
 

@@ -787,12 +787,14 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       assert Enum.sort(Map.keys(schemas["CalibrationLanes"]["properties"])) ==
                ~w(auto bypass reviewed)
 
-      assert "unmatched_defect_count" in get_in(schemas, [
-               "CalibrationResponse",
-               "properties",
-               "data",
-               "required"
-             ])
+      report = get_in(schemas, ["CalibrationResponse", "properties", "data"])
+
+      for field <- ~w(unmatched_defect_count defects defects_truncated unattributed_defect_count),
+          do: assert(field in report["required"])
+
+      assert Enum.sort(Map.keys(report["properties"]["defects"]["items"]["properties"])) ==
+               Enum.sort(~w(id change_request commit attribution severity ticket recorded_at
+                 lane policy_version rules globs))
 
       types = schemas["ProjectEvent"]["properties"]["type"]["enum"]
       assert "lease_expired" in types and "defect_recorded" in types

@@ -353,6 +353,107 @@ defmodule GoodFlows.CalibrationTest do
       assert report.unmatched_defect_count == 1
     end
 
+    test "defects list each defect newest first with its lane, version, rules and globs", ctx do
+      Repo.insert!(%Version{
+        project_id: ctx.project.id,
+        version: 7,
+        previous_version: 6,
+        document: %{
+          "format" => "review-policy/1",
+          "paths" => [%{"glob" => "app/priv/repo/migrations/**", "outcome" => "needs_review"}]
+        }
+      })
+
+      reason = fn rule ->
+        %{"rule" => rule, "outcome" => "needs_review", "subject" => [], "message" => ""}
+      end
+
+      migration = file("app/priv/repo/migrations/20261101_add.exs")
+
+      reviewed =
+        merged(ctx, 43,
+          policy_version: 7,
+          files: [migration],
+          reasons: [reason.("path_match"), reason.("max_changed_lines"), reason.("path_match")]
+        )
+
+      answered!(reviewed)
+      gap = merged(ctx, 46, policy_version: 7)
+
+      defect!(reviewed,
+        recorded_at: ~U[2026-11-05 00:00:00.000000Z],
+        severity: "high",
+        ticket: "GOO-512"
+      )
+
+      defect!(gap, recorded_at: ~U[2026-11-02 00:00:00.000000Z])
+
+      report = report!(ctx)
+      assert report.defects_truncated == false
+
+      assert [newest, oldest] = report.defects
+
+      assert %{
+               change_request: 43,
+               attribution: "change_request",
+               severity: "high",
+               ticket: "GOO-512",
+               lane: "reviewed",
+               policy_version: 7,
+               rules: ["max_changed_lines", "path_match"],
+               globs: ["app/priv/repo/migrations/**"]
+             } = newest
+
+      assert %{change_request: 46, lane: "auto", rules: [], globs: []} = oldest
+      assert report.gaps == [46]
+      assert report.unmatched_defect_count == 1
+    end
+
+    test "the defect list is cut at 500; counts cover every defect", ctx do
+      cr = merged(ctx, 42)
+
+      Repo.insert_all(
+        Defect,
+        for i <- 1..501 do
+          %{
+            id: Ecto.UUID.generate(),
+            project_id: cr.project_id,
+            change_request_id: cr.id,
+            attribution: "change_request",
+            recorded_at: DateTime.add(@t0, i, :second)
+          }
+        end
+      )
+
+      report = report!(ctx)
+      assert length(report.defects) == 500
+      assert report.defects_truncated
+      assert hd(report.defects).recorded_at == DateTime.add(@t0, 501, :second)
+      assert report.lanes["auto"].defect_count == 501
+    end
+
+    test "unattributed defects are counted by recorded_at in [from, to) and nowhere else", ctx do
+      unattributed = fn recorded_at ->
+        Repo.insert!(%Defect{
+          project_id: ctx.project.id,
+          commit: sha(900),
+          attribution: "unattributed",
+          recorded_at: recorded_at
+        })
+      end
+
+      unattributed.(~U[2026-11-10 00:00:00.000000Z])
+      unattributed.(~U[2026-11-20 00:00:00.000000Z])
+      unattributed.(~U[2026-10-31 23:59:59.999999Z])
+      merged(ctx, 42)
+
+      report = report!(ctx)
+      assert report.unattributed_defect_count == 1
+      assert report.defects == []
+      assert report.lanes["auto"].defect_count == 0
+      assert report.unmatched_defect_count == 0
+    end
+
     test "reading the report and recording defects create no policy version or verdict", ctx do
       cr = merged(ctx, 42)
       {:ok, _} = Calibration.record_defect(ctx.project, ctx.api_key, %{"change_request" => 42})

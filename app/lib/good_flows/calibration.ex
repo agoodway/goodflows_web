@@ -14,7 +14,9 @@ defmodule GoodFlows.Calibration do
   number (or nil). `list_defects/2` pages a project's defects newest
   first. `report/2` is computed on read for a `[from, to)` window of
   `merged_at`, counting every defect of those change requests whenever it
-  was recorded.
+  was recorded, and lists those defects (at most 500, newest first) with
+  their lane, policy version, rules and matched globs. Unattributed
+  defects are only counted, by `recorded_at` in the window.
   """
   import Ecto.Query
 
@@ -35,6 +37,7 @@ defmodule GoodFlows.Calibration do
   @max_ticket_chars 200
   @default_window_days 90
   @lanes ~w(auto reviewed bypass)
+  @max_listed_defects 500
 
   @typedoc "One page of defects; `next_cursor` is nil on the last page."
   @type page :: %{defects: [Defect.t()], next_cursor: String.t() | nil}
@@ -225,7 +228,8 @@ defmodule GoodFlows.Calibration do
       lanes = Map.new(merged, &{&1.id, lane(&1, answered)})
       counts = Map.new(merged, &{&1.id, length(Map.get(defects, &1.id, []))})
 
-      {globs, unmatched} = glob_stats(project, merged, defects)
+      {globs, unmatched, matched} = glob_stats(project, merged, defects)
+      {listed, truncated?} = defect_entries(merged, defects, lanes, matched)
 
       {:ok,
        %{
@@ -236,9 +240,52 @@ defmodule GoodFlows.Calibration do
          rules: rule_stats(merged, counts),
          gaps: gaps(merged, counts),
          globs: globs,
-         unmatched_defect_count: unmatched
+         unmatched_defect_count: unmatched,
+         defects: listed,
+         defects_truncated: truncated?,
+         unattributed_defect_count: unattributed_count(project.id, window)
        }}
     end
+  end
+
+  # Every defect of the merged change requests with its change request's
+  # lane, policy version and rules and the globs its files matched, newest
+  # `recorded_at` (then `id`) first, cut at #{@max_listed_defects}.
+  defp defect_entries(merged, defects, lanes, matched) do
+    by_id = Map.new(merged, &{&1.id, &1})
+
+    entries =
+      for {change_request_id, list} <- defects, defect <- list do
+        change_request = Map.fetch!(by_id, change_request_id)
+
+        %{
+          id: defect.id,
+          change_request: change_request.number,
+          commit: defect.commit,
+          attribution: defect.attribution,
+          severity: defect.severity,
+          ticket: defect.ticket,
+          recorded_at: defect.recorded_at,
+          lane: Map.fetch!(lanes, change_request_id),
+          policy_version: change_request.policy_version,
+          rules: change_request |> rules() |> Enum.sort(),
+          globs: Map.get(matched, defect.id, [])
+        }
+      end
+      |> Enum.sort_by(&{DateTime.to_unix(&1.recorded_at, :microsecond), &1.id}, :desc)
+
+    {Enum.take(entries, @max_listed_defects), length(entries) > @max_listed_defects}
+  end
+
+  defp unattributed_count(project_id, window) do
+    Repo.aggregate(
+      from(d in Defect,
+        where:
+          d.project_id == ^project_id and d.attribution == "unattributed" and
+            d.recorded_at >= ^window.from and d.recorded_at < ^window.to
+      ),
+      :count
+    )
   end
 
   defp window_params(params) do
@@ -380,28 +427,25 @@ defmodule GoodFlows.Calibration do
 
     by_id = Map.new(merged, &{&1.id, &1})
 
-    files =
+    # Each defect's id with the sorted globs that match its files.
+    matched =
       for {change_request_id, list} <- defects,
           document <- [merged_facts(Map.fetch!(by_id, change_request_id))],
           defect <- list,
-          do: defect_files(defect, document)
+          into: %{} do
+        files = defect_files(defect, document)
+        hit = for {glob, regex} <- globs, Enum.any?(files, &Glob.match?(regex, &1)), do: glob
+        {defect.id, hit}
+      end
 
     stats =
-      Enum.map(globs, fn {glob, regex} ->
-        %{
-          glob: glob,
-          defect_count: Enum.count(files, &Enum.any?(&1, fn f -> Glob.match?(regex, f) end))
-        }
+      Enum.map(globs, fn {glob, _regex} ->
+        %{glob: glob, defect_count: Enum.count(matched, fn {_id, hit} -> glob in hit end)}
       end)
 
-    unmatched =
-      Enum.count(files, fn defect_files ->
-        not Enum.any?(globs, fn {_glob, regex} ->
-          Enum.any?(defect_files, &Glob.match?(regex, &1))
-        end)
-      end)
+    unmatched = Enum.count(matched, fn {_id, hit} -> hit == [] end)
 
-    {stats, unmatched}
+    {stats, unmatched, matched}
   end
 
   defp policy_globs(project, version) do
