@@ -13,16 +13,12 @@ defmodule GoodFlowsWeb.UserLive.Registration do
         <.header>
           Register for an account
           <:subtitle>
-            Already registered?
-            <.link navigate={~p"/users/log-in"} class="font-medium text-primary hover:underline">
-              Log in
-            </.link>
+            Already registered? <.text_link navigate={~p"/users/log-in"}>Log in</.text_link>
             to your account now.
           </:subtitle>
         </.header>
 
-        <.section_card icon="hero-envelope">
-          <:title>Your email</:title>
+        <.panel title="Your email" icon="hero-envelope">
           <.form for={@form} id="registration_form" phx-submit="save" phx-change="validate">
             <.input
               field={@form[:email]}
@@ -38,7 +34,7 @@ defmodule GoodFlowsWeb.UserLive.Registration do
               Create an account
             </.button>
           </.form>
-        </.section_card>
+        </.panel>
       </div>
     </Layouts.app>
     """

@@ -15,30 +15,17 @@ defmodule GoodFlowsWeb.UserLive.Login do
             <%= if @current_scope do %>
               You need to reauthenticate to perform sensitive actions on your account.
             <% else %>
-              Don't have an account? <.link
-                navigate={~p"/users/register"}
-                class="font-medium text-primary hover:underline"
-                phx-no-format
-              >Sign up</.link> for an account now.
+              Don't have an account? <.text_link navigate={~p"/users/register"}>Sign up</.text_link>
+              for an account now.
             <% end %>
           </:subtitle>
         </.header>
 
-        <div
-          :if={local_mail_adapter?()}
-          class="flex items-start gap-2 border border-info/30 bg-info/10 p-3 text-sm"
-        >
-          <.icon name="hero-information-circle-mini" class="mt-0.5 size-4 shrink-0 text-info" />
-          <p>
-            You are running the local mail adapter. To see sent emails, visit <.link
-              href="/dev/mailbox"
-              class="underline"
-            >the mailbox page</.link>.
-          </p>
-        </div>
+        <.notice :if={local_mail_adapter?()} kind="info">
+          You are running the local mail adapter. To see sent emails, visit <.text_link href="/dev/mailbox">the mailbox page</.text_link>.
+        </.notice>
 
-        <.section_card icon="hero-envelope">
-          <:title>Email link</:title>
+        <.panel title="Email link" icon="hero-envelope">
           <.form
             :let={f}
             for={@form}
@@ -58,10 +45,9 @@ defmodule GoodFlowsWeb.UserLive.Login do
             />
             <.button variant="primary" class="w-full">Log in with email</.button>
           </.form>
-        </.section_card>
+        </.panel>
 
-        <.section_card icon="hero-lock-closed">
-          <:title>Password</:title>
+        <.panel title="Password" icon="hero-lock-closed">
           <.form
             :let={f}
             for={@form}
@@ -92,7 +78,7 @@ defmodule GoodFlowsWeb.UserLive.Login do
             </.button>
             <.button class="mt-2 w-full">Log in only this time</.button>
           </.form>
-        </.section_card>
+        </.panel>
       </div>
     </Layouts.app>
     """

@@ -65,9 +65,9 @@ defmodule GoodFlowsWeb.UserLive.Confirmation do
           <% end %>
         </.form>
 
-        <p :if={!@user.confirmed_at} class="border border-base-300 p-3 text-sm text-muted">
+        <.notice :if={!@user.confirmed_at}>
           If you prefer passwords, you can set one in your settings after logging in.
-        </p>
+        </.notice>
       </div>
     </Layouts.app>
     """

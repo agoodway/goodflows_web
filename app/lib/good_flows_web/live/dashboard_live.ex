@@ -19,9 +19,9 @@ defmodule GoodFlowsWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <div id="dashboard" class="mx-auto max-w-5xl space-y-4 lg:space-y-6">
-      <.page_header icon="hero-squares-2x2">
-        <:title>{@current_account.name}</:title>
-        <:subtitle>{@current_account.slug}</:subtitle>
+      <.header icon="hero-squares-2x2">
+        {@current_account.name}
+        <:subtitle><code>{@current_account.slug}</code></:subtitle>
         <:actions>
           <.button
             href={~p"/dashboard/accounts/#{@current_account.id}/api-keys"}
@@ -32,29 +32,30 @@ defmodule GoodFlowsWeb.DashboardLive do
             API keys
           </.button>
         </:actions>
-      </.page_header>
+      </.header>
 
       <div class="grid items-start gap-4 lg:grid-cols-3 lg:gap-6">
-        <.section_card id="get-started" icon="hero-command-line" class="lg:col-span-2">
-          <:title>Make your first API call</:title>
+        <.panel
+          id="get-started"
+          title="Make your first API call"
+          icon="hero-command-line"
+          class="lg:col-span-2"
+        >
           <ol class="space-y-5 text-sm">
-            <li class="flex gap-3">
-              <span class="tag-badge h-fit">1</span>
+            <li class="flex items-start gap-3">
+              <.tag>1</.tag>
               <div class="min-w-0 flex-1">
                 <p class="font-medium">Create an API key</p>
                 <p class="mt-1 text-muted">
                   A key authenticates requests as you, within this account.
-                  <.link
-                    href={~p"/dashboard/accounts/#{@current_account.id}/api-keys"}
-                    class="text-primary underline-offset-2 hover:underline"
-                  >
+                  <.text_link href={~p"/dashboard/accounts/#{@current_account.id}/api-keys"}>
                     Go to API keys
-                  </.link>
+                  </.text_link>
                 </p>
               </div>
             </li>
-            <li class="flex gap-3">
-              <span class="tag-badge h-fit">2</span>
+            <li class="flex items-start gap-3">
+              <.tag>2</.tag>
               <div class="min-w-0 flex-1">
                 <p class="font-medium">Check that the key works</p>
                 <p class="mt-1 text-muted">
@@ -65,43 +66,27 @@ defmodule GoodFlowsWeb.DashboardLive do
                 </.code_block>
               </div>
             </li>
-            <li class="flex gap-3">
-              <span class="tag-badge h-fit">3</span>
+            <li class="flex items-start gap-3">
+              <.tag>3</.tag>
               <div class="min-w-0 flex-1">
                 <p class="font-medium">Browse the endpoints</p>
                 <p class="mt-1 text-muted">
                   The API reference lists every endpoint and lets you try requests.
-                  <.link
-                    href={~p"/api/v1/docs"}
-                    class="text-primary underline-offset-2 hover:underline"
-                  >
-                    Open the API reference
-                  </.link>
+                  <.text_link href={~p"/api/v1/docs"}>Open the API reference</.text_link>
                 </p>
               </div>
             </li>
           </ol>
-        </.section_card>
+        </.panel>
 
-        <.section_card id="account-details" icon="hero-building-office">
-          <:title>Account</:title>
-          <.detail_row>
-            <:label>Name</:label>
-            {@current_account.name}
-          </.detail_row>
-          <.detail_row>
-            <:label>Slug</:label>
-            <code>{@current_account.slug}</code>
-          </.detail_row>
-          <.detail_row>
-            <:label>ID</:label>
-            <code>{@current_account.id}</code>
-          </.detail_row>
-          <.detail_row>
-            <:label>Signed in as</:label>
-            {@current_scope.user.email}
-          </.detail_row>
-        </.section_card>
+        <.panel id="account-details" title="Account" icon="hero-building-office">
+          <.list>
+            <:item title="Name">{@current_account.name}</:item>
+            <:item title="Slug"><code>{@current_account.slug}</code></:item>
+            <:item title="ID"><code>{@current_account.id}</code></:item>
+            <:item title="Signed in as">{@current_scope.user.email}</:item>
+          </.list>
+        </.panel>
       </div>
     </div>
     """

@@ -34,11 +34,11 @@ depends_on = ["compile"]</:source>
         <.button id="home-login-link" navigate={~p"/users/log-in"} variant="primary">
           Log in
         </.button>
-        <.button id="home-register-link" navigate={~p"/users/register"} variant="subtle">
+        <.button id="home-register-link" navigate={~p"/users/register"}>
           Create an account
         </.button>
       <% end %>
-      <.button href={~p"/api/v1/docs"} variant="subtle">API reference</.button>
+      <.button href={~p"/api/v1/docs"} variant="ghost">API reference</.button>
     </div>
   </section>
 </Layouts.app>

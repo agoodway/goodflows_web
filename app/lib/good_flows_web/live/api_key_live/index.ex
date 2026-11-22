@@ -37,8 +37,8 @@ defmodule GoodFlowsWeb.ApiKeyLive.Index do
   def render(assigns) do
     ~H"""
     <div class="mx-auto max-w-5xl space-y-4 lg:space-y-6">
-      <.page_header icon="hero-key">
-        <:title>API keys</:title>
+      <.header icon="hero-key">
+        API keys
         <:subtitle>Keys authenticate API requests as you, within {@current_account.name}.</:subtitle>
         <:actions>
           <.button
@@ -52,96 +52,82 @@ defmodule GoodFlowsWeb.ApiKeyLive.Index do
             Create key
           </.button>
         </:actions>
-      </.page_header>
+      </.header>
 
-      <div :if={@keys_empty?} class="list-table">
-        <.empty_state id="api-keys-empty" icon="hero-key">
-          <:title>No API keys yet</:title>
-          Create a key to call the API from scripts and services.
-          <:actions>
-            <.button
-              id="empty-new-key-btn"
-              variant="primary"
-              icon="hero-plus"
-              phx-click="show_create_modal"
-            >
-              Create key
-            </.button>
-          </:actions>
-        </.empty_state>
-      </div>
-
-      <div :if={!@keys_empty?} class="list-table data-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Access</th>
-              <th>Prefix</th>
-              <th>Status</th>
-              <th>Last used</th>
-              <th>Created</th>
-              <th><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody id="api-keys" phx-update="stream">
-            <tr :for={{dom_id, key} <- @streams.api_keys} id={dom_id}>
-              <td data-label="Name" class="font-medium">{key.name}</td>
-              <td data-label="Access"><.type_badge type={key.type} /></td>
-              <td data-label="Prefix">
-                <code class="tag-badge">{key.token_prefix}…</code>
-              </td>
-              <td data-label="Status"><.status_badge key={key} /></td>
-              <td data-label="Last used" class="font-mono text-xs text-muted">
-                {format_datetime(key.last_used_at) || "Never"}
-              </td>
-              <td data-label="Created" class="font-mono text-xs text-muted">
-                {format_datetime(key.inserted_at)}
-              </td>
-              <td data-label="" class="table-actions">
-                <.button
-                  :if={key.status == :active}
-                  id={"revoke-#{key.id}"}
-                  type="button"
-                  variant="danger"
-                  size="sm"
-                  phx-click="confirm_revoke"
-                  phx-value-id={key.id}
-                  aria-label={"Revoke #{key.name}"}
-                >
-                  Revoke
-                </.button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <.table id="api-keys" rows={@streams.api_keys} empty={@keys_empty?}>
+        <:col :let={{_id, key}} label="Name" class="font-medium">{key.name}</:col>
+        <:col :let={{_id, key}} label="Access">
+          <.status_badge>{access_label(key.type)}</.status_badge>
+        </:col>
+        <:col :let={{_id, key}} label="Prefix">
+          <.tag>{key.token_prefix}…</.tag>
+        </:col>
+        <:col :let={{_id, key}} label="Status"><.key_status_badge key={key} /></:col>
+        <:col :let={{_id, key}} label="Last used" class="font-mono text-xs text-muted">
+          {format_datetime(key.last_used_at) || "Never"}
+        </:col>
+        <:col :let={{_id, key}} label="Created" class="font-mono text-xs text-muted">
+          {format_datetime(key.inserted_at)}
+        </:col>
+        <:action :let={{_id, key}}>
+          <.button
+            :if={key.status == :active}
+            id={"revoke-#{key.id}"}
+            type="button"
+            variant="ghost"
+            size="sm"
+            phx-click="confirm_revoke"
+            phx-value-id={key.id}
+            aria-label={"Revoke #{key.name}"}
+          >
+            Revoke
+          </.button>
+        </:action>
+        <:empty_state>
+          <.empty_state id="api-keys-empty" icon="hero-key" title="No API keys yet">
+            Create a key to call the API from scripts and services.
+            <:actions>
+              <.button
+                id="empty-new-key-btn"
+                variant="primary"
+                icon="hero-plus"
+                phx-click="show_create_modal"
+              >
+                Create key
+              </.button>
+            </:actions>
+          </.empty_state>
+        </:empty_state>
+      </.table>
     </div>
 
     <.create_key_modal :if={@show_create_modal} form={@form} />
     <.token_display_modal :if={@raw_token} raw_token={@raw_token} />
-    <.revoke_confirm_modal :if={@revoke_key} key={@revoke_key} />
-    """
-  end
-
-  attr :type, :atom, required: true
-
-  defp type_badge(assigns) do
-    ~H"""
-    <.badge :if={@type == :private} tone="pending">Read and write</.badge>
-    <.badge :if={@type == :public} tone="info">Read only</.badge>
+    <.confirm_dialog
+      :if={@revoke_key}
+      id="revoke-confirm-modal"
+      title="Revoke API key"
+      confirm_label="Revoke key"
+      on_confirm="revoke_key"
+      on_cancel="cancel_revoke"
+    >
+      <p class="font-medium">Revoke “{@revoke_key.name}”?</p>
+      <p class="mt-2 text-muted">
+        Anything using this key loses access immediately. This can't be undone.
+      </p>
+    </.confirm_dialog>
     """
   end
 
   attr :key, ApiKey, required: true
 
-  defp status_badge(assigns) do
+  defp key_status_badge(assigns) do
     assigns = assign(assigns, :status, key_status(assigns.key))
 
     ~H"""
-    <.badge tone={status_tone(@status)} dot>
+    <.status_badge kind={status_kind(@status)} dot>
       {@status |> Atom.to_string() |> String.capitalize()}
-    </.badge>
+    </.status_badge>
     """
   end
 
@@ -149,7 +135,7 @@ defmodule GoodFlowsWeb.ApiKeyLive.Index do
 
   defp create_key_modal(assigns) do
     ~H"""
-    <.modal id="create-key-modal" title="Create API key" on_cancel="hide_create_modal">
+    <.editor_dialog id="create-key-modal" title="Create API key" on_cancel="hide_create_modal">
       <.form for={@form} id="create-key-form" phx-change="validate" phx-submit="create_key">
         <.input field={@form[:name]} type="text" label="Name" placeholder="Production worker" />
         <.input
@@ -159,14 +145,14 @@ defmodule GoodFlowsWeb.ApiKeyLive.Index do
           options={[{"Read only (public key)", :public}, {"Read and write (private key)", :private}]}
         />
         <.input field={@form[:expires_at]} type="datetime-local" label="Expires at (UTC, optional)" />
-        <div class="modal-actions">
-          <.button type="button" variant="subtle" phx-click="hide_create_modal">Cancel</.button>
+        <.dialog_actions>
+          <.button type="button" variant="ghost" phx-click="hide_create_modal">Cancel</.button>
           <.button type="submit" variant="primary" phx-disable-with="Creating…">
             Create key
           </.button>
-        </div>
+        </.dialog_actions>
       </.form>
-    </.modal>
+    </.editor_dialog>
     """
   end
 
@@ -174,11 +160,8 @@ defmodule GoodFlowsWeb.ApiKeyLive.Index do
 
   defp token_display_modal(assigns) do
     ~H"""
-    <.modal id="token-display-modal" title="Your new API key" on_cancel="dismiss_token">
-      <p class="flex items-start gap-2 border border-warning/30 bg-warning/10 p-3 text-sm">
-        <.icon name="hero-exclamation-triangle-mini" class="mt-0.5 size-4 shrink-0 text-warning" />
-        Copy the key now. It is not shown again.
-      </p>
+    <.editor_dialog id="token-display-modal" title="Your new API key" on_cancel="dismiss_token">
+      <.notice kind="warning">Copy the key now. It is not shown again.</.notice>
       <div class="mt-4 flex items-center gap-2">
         <label for="token-value" class="sr-only">API key</label>
         <input
@@ -191,23 +174,22 @@ defmodule GoodFlowsWeb.ApiKeyLive.Index do
         <.button
           id="copy-token-btn"
           type="button"
-          variant="soft"
           class="h-10"
+          icon="hero-clipboard-document"
           phx-hook=".CopyToClipboard"
           phx-update="ignore"
           data-copy-target="#token-value"
           aria-label="Copy API key"
         >
-          <.icon name="hero-clipboard-document" class="size-4" />
           <span data-copy-label>Copy</span>
         </.button>
       </div>
-      <div class="modal-actions">
+      <.dialog_actions>
         <.button id="dismiss-token-btn" type="button" variant="primary" phx-click="dismiss_token">
           Done
         </.button>
-      </div>
-    </.modal>
+      </.dialog_actions>
+    </.editor_dialog>
 
     <script :type={Phoenix.LiveView.ColocatedHook} name=".CopyToClipboard">
       export default {
@@ -227,30 +209,6 @@ defmodule GoodFlowsWeb.ApiKeyLive.Index do
         }
       }
     </script>
-    """
-  end
-
-  attr :key, ApiKey, required: true
-
-  defp revoke_confirm_modal(assigns) do
-    ~H"""
-    <.modal
-      id="revoke-confirm-modal"
-      title="Revoke API key"
-      on_cancel="cancel_revoke"
-      size="sm"
-    >
-      <p class="text-sm font-medium">Revoke “{@key.name}”?</p>
-      <p class="mt-2 text-sm text-muted">
-        Anything using this key loses access immediately. This can't be undone.
-      </p>
-      <div class="modal-actions">
-        <.button type="button" variant="subtle" phx-click="cancel_revoke">Cancel</.button>
-        <.button id="confirm-revoke-btn" type="button" variant="danger" phx-click="revoke_key">
-          Revoke key
-        </.button>
-      </div>
-    </.modal>
     """
   end
 
@@ -328,9 +286,12 @@ defmodule GoodFlowsWeb.ApiKeyLive.Index do
 
   defp key_status(%ApiKey{}), do: :active
 
-  defp status_tone(:active), do: "active"
-  defp status_tone(:expired), do: "muted"
-  defp status_tone(:revoked), do: "revoked"
+  defp status_kind(:active), do: "primary"
+  defp status_kind(:expired), do: "neutral"
+  defp status_kind(:revoked), do: "error"
+
+  defp access_label(:private), do: "Read and write"
+  defp access_label(:public), do: "Read only"
 
   defp format_datetime(nil), do: nil
   defp format_datetime(datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M UTC")

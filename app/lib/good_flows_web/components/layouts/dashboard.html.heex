@@ -13,7 +13,7 @@
   </aside>
 
   <div
-    class="sidebar-backdrop fixed inset-0 z-40 bg-black/50"
+    class="sidebar-backdrop fixed inset-0 z-40"
     aria-hidden="true"
     phx-click={hide_mobile_sidebar()}
   >
@@ -38,38 +38,36 @@
       <div class="flex shrink-0 items-center gap-3">
         <.theme_toggle />
 
-        <div class="dropdown dropdown-end">
-          <div
-            tabindex="0"
-            role="button"
-            aria-label="Your account"
-            class="flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 font-mono text-xs text-muted transition-colors hover:bg-base-200 hover:text-base-content"
-          >
+        <.menu
+          label="Your account"
+          position="end"
+          trigger_class="gap-1.5 px-1.5 py-1 font-mono text-xs text-muted hover:text-base-content"
+          panel_class="z-20 mt-1 w-52"
+        >
+          <:trigger>
             <.icon name="hero-user-circle-mini" class="size-4 sm:hidden" />
             <span class="hidden max-w-56 truncate sm:block">{@current_scope.user.email}</span>
             <.icon name="hero-chevron-down-micro" class="size-3.5" />
-          </div>
-          <ul tabindex="0" class="dropdown-content menu-panel z-20 mt-1 w-52">
-            <li class="truncate px-2.5 py-2 font-mono text-[11px] text-muted sm:hidden">
-              {@current_scope.user.email}
-            </li>
-            <li>
-              <.link href={~p"/users/settings"} class="menu-item">
-                <.icon name="hero-cog-6-tooth-mini" class="size-4 text-muted" /> Settings
-              </.link>
-            </li>
-            <li>
-              <.link href={~p"/users/log-out"} method="delete" class="menu-item">
-                <.icon name="hero-arrow-right-start-on-rectangle-mini" class="size-4 text-muted" />
-                Log out
-              </.link>
-            </li>
-          </ul>
-        </div>
+          </:trigger>
+          <li class="truncate px-2.5 py-2 font-mono text-xs text-muted sm:hidden">
+            {@current_scope.user.email}
+          </li>
+          <li>
+            <.link href={~p"/users/settings"} class="menu-item">
+              <.icon name="hero-cog-6-tooth-mini" class="size-4 text-muted" /> Settings
+            </.link>
+          </li>
+          <li>
+            <.link href={~p"/users/log-out"} method="delete" class="menu-item">
+              <.icon name="hero-arrow-right-start-on-rectangle-mini" class="size-4 text-muted" />
+              Log out
+            </.link>
+          </li>
+        </.menu>
       </div>
     </header>
 
-    <main class="bg-grid flex-1 p-4 lg:p-6">
+    <main id="main" tabindex="-1" class="bg-grid flex-1 p-4 lg:p-6">
       {@inner_content}
     </main>
   </div>

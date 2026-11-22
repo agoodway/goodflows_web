@@ -15,8 +15,7 @@ defmodule GoodFlowsWeb.UserLive.Settings do
         <:subtitle>Change the email address and password you log in with.</:subtitle>
       </.header>
 
-      <.section_card icon="hero-envelope">
-        <:title>Email</:title>
+      <.panel title="Email" icon="hero-envelope">
         <.form
           for={@email_form}
           id="email_form"
@@ -35,10 +34,9 @@ defmodule GoodFlowsWeb.UserLive.Settings do
             <.button variant="primary" phx-disable-with="Changing...">Change email</.button>
           </.form_actions>
         </.form>
-      </.section_card>
+      </.panel>
 
-      <.section_card icon="hero-lock-closed">
-        <:title>Password</:title>
+      <.panel title="Password" icon="hero-lock-closed">
         <.form
           for={@password_form}
           id="password_form"
@@ -74,7 +72,7 @@ defmodule GoodFlowsWeb.UserLive.Settings do
             <.button variant="primary" phx-disable-with="Saving...">Save password</.button>
           </.form_actions>
         </.form>
-      </.section_card>
+      </.panel>
     </Layouts.app>
     """
   end

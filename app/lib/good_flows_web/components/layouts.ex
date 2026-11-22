@@ -44,20 +44,24 @@ defmodule GoodFlowsWeb.Layouts do
           <span class="hidden font-mono text-xs text-muted sm:block">
             {@current_scope.user.email}
           </span>
-          <.button href={~p"/dashboard"} variant="subtle" size="sm">Dashboard</.button>
-          <.button href={~p"/users/settings"} variant="subtle" size="sm">Settings</.button>
-          <.button href={~p"/users/log-out"} method="delete" variant="subtle" size="sm">
+          <.button href={~p"/dashboard"} variant="ghost" size="sm">Dashboard</.button>
+          <.button href={~p"/users/settings"} variant="ghost" size="sm">Settings</.button>
+          <.button href={~p"/users/log-out"} method="delete" variant="ghost" size="sm">
             Log out
           </.button>
         <% else %>
-          <.button navigate={~p"/users/register"} variant="subtle" size="sm">Register</.button>
+          <.button navigate={~p"/users/register"} variant="ghost" size="sm">Register</.button>
           <.button navigate={~p"/users/log-in"} variant="primary" size="sm">Log in</.button>
         <% end %>
         <.theme_toggle />
       </nav>
     </header>
 
-    <main class="bg-grid min-h-[calc(100vh-3.5rem)] px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
+    <main
+      id="main"
+      tabindex="-1"
+      class="bg-grid min-h-[calc(100vh-3.5rem)] px-4 py-8 sm:px-6 sm:py-12 lg:px-8"
+    >
       <div class="mx-auto max-w-2xl space-y-4">
         {render_slot(@inner_block)}
       </div>

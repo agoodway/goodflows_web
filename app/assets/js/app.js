@@ -33,7 +33,11 @@ const liveSocket = new LiveSocket("/live", Socket, {
 })
 
 // Show progress bar on live navigation and form submits
-topbar.config({barColors: {0: "#34b85a"}, shadowColor: "rgba(0, 0, 0, .3)"})
+// The bar takes the theme's primary colour so it follows light and dark.
+const primaryColor = () => getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim()
+const configureTopbar = () => topbar.config({barColors: {0: primaryColor()}, shadowColor: "transparent"})
+configureTopbar()
+window.addEventListener("phx:set-theme", () => requestAnimationFrame(configureTopbar))
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 
