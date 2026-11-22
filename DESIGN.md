@@ -29,24 +29,42 @@ command-line interfaces, Bloomberg Terminal, Dieter Rams, and modern IDEs.
 - Improve contrast, field boundaries, focus, and error feedback within this
   system. A usability fix should not introduce a new visual identity.
 
-## Scope and source of truth
+## The rule
+
+The interface stays consistent because pages do not invent their own
+controls. Before writing markup:
+
+1. Look in `GoodFlowsWeb.CoreComponents` and `lib/good_flows_web/components/`.
+2. If a component already covers the control or layout, use it.
+3. If the same control or layout would appear in a second place, add it as a
+   shared component and use that component in every place. Do not leave the
+   first copy as one-off markup.
+
+Hand-written daisyUI or Tailwind for a control the library already has is a
+bug. A page may pass `class` to a component only to adjust layout (width,
+margin), never to restyle a variant the component already defines.
+
+## Where things live
 
 | Source | Responsibility |
 | --- | --- |
-| [app/assets/css/app.css](app/assets/css/app.css) | Theme tokens, fonts, navigation, surfaces, shared component styles |
-| [CoreComponents](app/lib/good_flows_web/components/core_components.ex) | Buttons, inputs, badges, icons, flash, modal, table, breadcrumbs |
-| [DashboardComponents](app/lib/good_flows_web/components/dashboard_components.ex) | Page headers, section cards, detail rows, command samples, empty states, form actions |
-| [Layouts](app/lib/good_flows_web/components/layouts.ex) | Public layout, dashboard shell, sidebar, theme toggle |
+| [app/assets/css/app.css](app/assets/css/app.css) | Theme tokens, fonts, and the classes the shared components use |
+| [CoreComponents](app/lib/good_flows_web/components/core_components.ex) | The app-wide primitives listed below. Imported once, in `html_helpers/0` in `good_flows_web.ex` |
+| [Layouts](app/lib/good_flows_web/components/layouts.ex) | Public layout, dashboard shell, sidebar, theme toggle, flash group. Aliased in `html_helpers/0`. `<.flash_group>` is rendered only here |
 | [AccountSwitcher](app/lib/good_flows_web/components/account_switcher.ex) | Account identity and switching at the foot of the sidebar |
+| `lib/good_flows_web/components/<name>_components.ex` | One module per repeated feature, when one is needed. Not imported globally: call it as `<FeatureComponents.widget ...>` |
 
-Use the shared component implementation for exact dimensions and behavior. If
-a shared pattern needs improvement, update it centrally and inspect its
-existing users. Explicit user direction takes precedence over this guide;
-general design skills must adapt to the established app identity.
+A feature module starts with `use Phoenix.Component` and
+`import GoodFlowsWeb.CoreComponents`. Its `@moduledoc` lists each public
+function and the pages that share it. A component that serves one page stays
+in that page.
 
-Write components by hand with Tailwind utilities and the classes in `app.css`.
-daisyUI supplies the theme tokens and the focus-driven `dropdown`; do not add
-other daisyUI components (`btn`, `badge`, `modal`, `alert`, `input`, `table`).
+Explicit user direction takes precedence over this guide; general design
+skills must adapt to the established app identity.
+
+The components are written by hand on the theme tokens. daisyUI supplies
+those tokens and the focus-driven `dropdown` behind `<.menu>`; no other
+daisyUI component class appears in a template.
 
 ## Color system
 
@@ -83,9 +101,15 @@ resolves the system preference to an explicit `data-theme` of `light` or
 `light` or `dark`). Theme switching must not leave a panel in the other theme:
 the sidebar follows the theme like every other surface.
 
-Use paired content tokens on colored backgrounds. Check the real contrast of
-muted text and subtle borders. Color supplements a visible status label or
-icon; it never carries meaning alone.
+There is one accent. `primary` marks the main action, the current item,
+links, selection, and focus. `info`, `warning` and `error` appear only in
+notices, flashes, field errors and the error badge.
+
+Templates contain no hex values and no Tailwind palette colors (`red-600`,
+`black`). Use paired content tokens on colored backgrounds. Text meets 4.5:1
+and focus rings meet 3:1 in both themes; the contrast test checks the
+pairings the components use. A status shown in color is also written in words
+or an accessible name.
 
 ## Typography
 
@@ -97,9 +121,9 @@ only `font-src 'self'`, so a font loaded from a CDN will not render.
 | --- | --- |
 | Body and page titles | DM Sans (`font-sans`), system sans-serif fallback |
 | Code, IDs, timestamps, metadata, breadcrumbs | JetBrains Mono (`font-mono`) |
-| Shared buttons | JetBrains Mono, weight 500; 12px small / 14px medium |
+| Shared buttons | JetBrains Mono, weight 500; 13px small / 14px medium |
 | Standard page title | 16px on mobile / 18px from `sm`, semibold |
-| Page subtitle | Monospace, 11px on mobile / 12px from `sm`, muted |
+| Page subtitle | 14px, muted; wrap a slug or ID in `<code>` |
 | Section card heading | Monospace, 11px, weight 600, uppercase, `0.05em` tracking |
 | Table column heading | Monospace, 11px, weight 600, uppercase, `0.08em` tracking |
 | Detail labels and values | 12px; muted labels, stronger values |
@@ -109,6 +133,11 @@ Keep small metadata secondary; do not use tiny captions for essential
 guidance. Do not introduce another font family. Use sentence case for prose
 and actions ("Create key", "API keys"); let heading and badge styles apply
 uppercase. Show timestamps in monospace as `YYYY-MM-DD HH:MM UTC`.
+
+Write every label in sentence case in the template, including badge text,
+table headers and panel titles. Button text is never all caps. The uppercase
+seen on panel titles, table headers, badges and dialog titles is applied by
+CSS (`text-transform`), so the accessible text stays sentence case.
 
 ## Layout, surfaces, and spacing
 
@@ -123,8 +152,8 @@ uppercase. Show timestamps in monospace as `YYYY-MM-DD HH:MM UTC`.
 - Page headers have no bottom border; the panel that follows owns its border.
 - Use the spacing rhythm 4, 8, 12, 16, 24, and 32px. Match the surrounding
   component instead of introducing arbitrary gaps.
-- Section cards and list tables have a 1px `--line` border and a 6px radius;
-  section cards add a lightly tinted header and 16px body padding. Shared
+- Panels and tables have a 1px `--line` border and a 6px radius; panels add a
+  lightly tinted header and 16px body padding. Shared
   buttons and modals have a 4px radius. Tags, badges, navigation items, menus
   and code samples use 2px. Form fields use square corners. These differences
   are deliberate.
@@ -134,43 +163,64 @@ uppercase. Show timestamps in monospace as `YYYY-MM-DD HH:MM UTC`.
 - Stack columns on small screens. Tables become label/value rows below `md`.
   Wide code scrolls inside its own box, never the page.
 
-## Component rules
+## Shared components
 
-| UI need | Reuse |
-| --- | --- |
-| Actions and navigation buttons | `CoreComponents.button`: `primary`, `soft`, `subtle`, `danger`; sizes `sm`, `md`; optional `icon` |
-| Labeled form controls and errors | `CoreComponents.input` |
-| Icons | `CoreComponents.icon` with `hero-*` names |
-| Status | `CoreComponents.badge`: tones `active`, `pending`, `revoked`, `info`, `muted`, `error` |
-| Short code-like values (key prefixes, counts) | `.tag-badge` |
-| Dialogs | `CoreComponents.modal`, with a `.modal-actions` row |
-| Tabular data | `CoreComponents.table`, or `.list-table.data-table` around a hand-written table with `data-label` cells |
-| Page identity and actions | `DashboardComponents.page_header` |
-| Content sections and label/value pairs | `section_card`, `detail_row` |
-| Shell commands and config files | `code_block` |
-| Save/cancel rows | `form_actions` |
-| Empty results | `empty_state` |
-| Top bar trail | `CoreComponents.breadcrumbs`, fed by the LiveView's `breadcrumbs` assign |
+Every one of these is in `GoodFlowsWeb.CoreComponents` unless noted.
 
-Use a green `primary` button for the main action, `soft` for supporting
-emphasis, `subtle` for secondary actions, and `danger` for destructive ones.
-One `primary` button per view or dialog. Preserve link versus button
-semantics, LiveView events, disabled states, and permission checks.
+| Component | Use it for | Replaces |
+| --- | --- | --- |
+| `icon/1` | Every icon, as `<.icon name="hero-x-mark" />` | Heroicons modules, inline SVG |
+| `button/1` | Every button and button-like link. Variants `primary`, `soft`, `ghost`, `outline`, `danger`; `size="sm"`; optional `icon` | `btn btn-primary` and other `btn` classes |
+| `text_link/1` | A link inside running text | `text-primary hover:underline` on a `<.link>` |
+| `input/1` | Every form field | `input`, `select`, `textarea` classes and hand-written error lines |
+| `header/1` | Page title, optional icon, subtitle, actions | A hand-written `<h1>` row |
+| `panel/1` | Every card section, with an optional title and icon | `card`, bordered `div` sections |
+| `table/1` | Every data table, including its empty state | `table table-zebra`, hand-written `<table>` |
+| `list/1` | Label/value rows | Hand-written `<dl>` or flex rows |
+| `status_badge/1` | Every status. Kinds `neutral`, `primary`, `error`; optional `dot` | `badge badge-*` |
+| `tag/1` | A short literal value that keeps its casing: a key prefix, a step number | `<code class="...">` chips |
+| `notice/1` | A message that stays on the page. Kinds `neutral`, `info`, `warning` | `alert alert-*` |
+| `flash/1`, `Layouts.flash_group/1` | Transient messages | `toast`, `alert` |
+| `editor_dialog/1`, `dialog_actions/1` | Every modal form or message | `modal modal-open`, `modal-box`, `modal-action` |
+| `confirm_dialog/1` | Every one-action confirmation | `data-confirm`, a hand-built confirm modal |
+| `menu/1` | A menu opened from a trigger | Hand-written `dropdown` markup |
+| `code_block/1` | Shell commands and config files | `<pre>` blocks |
+| `empty_state/1` | Empty results, with the action that fills them | Centered placeholder text |
+| `form_actions/1` | The button row at the end of a form | A hand-written flex row |
+| `breadcrumbs/1` | The top bar trail, fed by the LiveView's `breadcrumbs` assign | A hand-written trail |
 
-Keep field labels visible, give inputs clear boundaries, and place validation
-messages beside their fields. Prefer the shared input's defaults; a custom
-`class` replaces its default classes and requires complete styling. Do not
-use a placeholder as the only label.
+Button variants:
 
-A modal is rendered conditionally by its LiveView and names the event that
+- `primary`: the one main action of a page or dialog.
+- `soft`: the default, for secondary actions.
+- `ghost`: quiet row and header actions, and Cancel.
+- `outline`: quiet bordered actions such as pagers and retries.
+- `danger`: the confirm button of a destructive dialog. A row's "Revoke" or
+  "Delete" is `ghost`; it opens the dialog that holds the `danger` button.
+
+Preserve link versus button semantics, LiveView events, disabled states, and
+permission checks.
+
+`input/1` keeps the label visible, draws a clear boundary, and puts each
+error under its field with an icon and words. Each error line has an id that
+the field names in `aria-describedby`. Prefer the defaults; a custom `class`
+replaces the default classes and requires complete styling. Do not use a
+placeholder as the only label.
+
+`table/1` has row rules and no zebra striping. Rows react to the pointer only
+when they can be clicked. Below `md` each row stacks into label/value pairs.
+Pass `empty` with an `:empty_state` slot; the empty state renders outside the
+stream container.
+
+A dialog is rendered conditionally by its LiveView and names the event that
 closes it. Escape, the ESC button and a click outside the panel all push that
-event. Focus moves to the first control in the dialog body when it opens and
-stays inside the dialog until it closes. The modal header is a plain title bar; the window-control dots, glow
-border and scanlines of the GoodIssues modal are intentionally left out here.
+event. Focus moves to the first control in the dialog body when it opens,
+stays inside the dialog, and returns to the control that opened it on close.
+The dialog header is a plain title bar; the window-control dots, glow border
+and scanlines of the GoodIssues modal are intentionally left out here.
 
 Shared components own presentation, while their callers own resource state,
-permissions, URLs, and event handling. Add explicit, reusable variants only
-when needed; do not copy a component and retheme it for a single screen.
+permissions, URLs, and event handling.
 
 ## Writing
 
@@ -185,7 +235,12 @@ when needed; do not copy a component and retheme it for a single screen.
 ## Interaction and accessibility
 
 - Preserve visible keyboard focus: a 2px primary outline with a 2px offset on
-  links, buttons and fields.
+  every interactive element. Never use `outline-none` without another
+  visible ring.
+- Every page starts with a "Skip to main content" link to `<main id="main">`.
+  The root layout renders the link; each layout owns its `<main>`.
+- Every page works at 400px wide without horizontal page scroll.
+- Hover styles go only on things that can be clicked.
 - Give icon-only actions an accessible name. Name repeated row actions after
   their row ("Revoke Production worker").
 - Use short color and border transitions of 80–150ms. Do not add ambient
@@ -207,7 +262,12 @@ when needed; do not copy a component and retheme it for a single screen.
    Check long content, empty states, validation, and keyboard focus where the
    change affects them. In development the Tidewave toolbar sits over the
    foot of the sidebar; move or hide it to see the account switcher.
-5. Run `mix precommit`. For visual work, inspect the rendered result as well
-   as the code, and report any verification limits.
+5. Run `mix precommit`. It includes the two guards in
+   `app/test/good_flows_web/design/`: `contrast_test.exs` reads the theme
+   tokens and fails when a text or focus pairing drops below AA, and
+   `visual_system_test.exs` fails on hex or palette colors and on
+   hand-written `btn`, `badge`, `modal`, `alert` or `data-confirm` markup.
+   For visual work, inspect the rendered result as well as the code, and
+   report any verification limits.
 6. Update this guide when an approved change alters the shared design system.
    A one-off implementation must not silently redefine the app's style.
