@@ -1,15 +1,10 @@
 defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
   use GoodFlowsWeb.ConnCase, async: true
 
-  import Ecto.Query
   import GoodFlows.ChangeRequestFixtures
   import GoodFlows.GradingFixtures
   import GoodFlows.ReviewFixtures
   import GoodFlows.SpryFixtures
-
-  alias GoodFlows.Repo
-  alias GoodFlows.Review.{Answer, Task}
-  alias GoodFlows.ScenarioSets.Decision
 
   setup :api_setup
 
@@ -95,8 +90,8 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
       facts!(ctx.sk_conn, slug, 1, sha(1))
       claims!(ctx.sk_conn, slug, 1, sha(1), %{"cr" => 1})
       ctx = Map.put(ctx, :slug, slug)
-      d1 = passing_diff!(ctx, sha(1), [scenario("S1"), scenario("S3"), scenario("S5")])
-      %{slug: slug, d1: d1}
+      _ = passing_diff!(ctx, sha(1), [scenario("S1"), scenario("S3"), scenario("S5")])
+      %{slug: slug}
     end
 
     defp passing_diff!(ctx, head, scenarios, body \\ "# QA scenarios\n") do
@@ -131,8 +126,20 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
       conn |> answer(ctx.slug, 1, weakened!(ctx, id)["id"], body) |> json_response(201)
     end
 
-    defp decisions(digest),
-      do: Repo.all(from d in Decision, where: d.digest == ^digest, order_by: d.id)
+    defp decisions(ctx, version) do
+      ctx.sk_conn
+      |> get(cr_path(ctx.slug, 1, "/scenario-sets/diff/versions/#{version}"))
+      |> json_response(200)
+      |> get_in(["data", "decisions"])
+    end
+
+    defp task_states(ctx) do
+      ctx.sk_conn
+      |> get(cr_path(ctx.slug, 1, "/tasks"))
+      |> json_response(200)
+      |> Map.fetch!("data")
+      |> Enum.map(& &1["state"])
+    end
 
     defp rules(ctx), do: Enum.map(verdict(ctx.sk_conn, ctx.slug, 1)["reasons"], & &1["rule"])
 
@@ -148,12 +155,15 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
       refute "diff_set_weakened" in rules(ctx)
       assert verdict["scenarios"]["diff"]["baseline_version"] == 2
       assert verdict["scenarios"]["diff"]["accepted"]
-      assert [%Decision{decision: "approve", channel: "cli"}] = decisions(d2)
-      assert decisions(ctx.d1) == []
+
+      assert [%{"decision" => "approve", "digest" => ^d2, "channel" => "cli"}] =
+               decisions(ctx, 2)
+
+      assert decisions(ctx, 1) == []
     end
 
     test "one of two weakenings accepted records no decision", ctx do
-      d2 =
+      _ =
         passing_diff!(ctx, sha(1), [
           scenario("S1"),
           scenario("S3", "should"),
@@ -165,21 +175,30 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
       verdict = verdict(ctx.sk_conn, ctx.slug, 1)
       assert verdict["state"] == "needs_review"
       assert verdict["review"] == %{"items" => 2, "cleared" => 1}
-      assert decisions(d2) == []
+      assert decisions(ctx, 2) == []
     end
 
     test "the decision is made by the completing member", ctx do
       d2 = passing_diff!(ctx, sha(1), [scenario("S1"), scenario("S3", "should")])
       assert length(weakened(ctx)) == 2
 
-      _ = answer!(ctx, ctx.sk_conn, "S3", "approve")
+      first = answer!(ctx, ctx.sk_conn, "S3", "approve")["data"]
       completing = answer!(ctx, ctx.member_sk_conn, "S5", "approve")["data"]
 
-      assert [decision] = decisions(d2)
-      answer = Repo.get!(Answer, completing["id"])
-      assert decision.account_user_id == answer.account_user_id
-      assert decision.api_key_id == answer.api_key_id
-      assert decision.account_user_id != ctx.sk_key.account_user_id
+      assert [%{"decision" => "approve", "digest" => ^d2, "channel" => "cli"} = decision] =
+               decisions(ctx, 2)
+
+      assert decision["decided_by"]["user_id"] == completing["answered_by"]["user_id"]
+      assert decision["decided_by"]["user_id"] != first["answered_by"]["user_id"]
+
+      assert [event] =
+               Enum.filter(
+                 events(ctx.sk_conn, ctx.slug)["data"],
+                 &(&1["type"] == "scenario_set_approved")
+               )
+
+      assert event["data"] == %{"digest" => d2, "source" => "diff"}
+      assert event["actor"] == completing["answered_by"]
       assert verdict(ctx.sk_conn, ctx.slug, 1)["state"] == "mergeable"
     end
 
@@ -202,7 +221,8 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
       d2 = passing_diff!(ctx, sha(1), [scenario("S1"), scenario("S3", "should"), scenario("S5")])
       _ = answer!(ctx, ctx.sk_conn, "S3", "reject", "S3 must stay a Must")
 
-      assert [%Decision{decision: "reject", note: "S3 must stay a Must"}] = decisions(d2)
+      assert [%{"decision" => "reject", "digest" => ^d2, "note" => "S3 must stay a Must"}] =
+               decisions(ctx, 2)
 
       [task] =
         ctx.sk_conn
@@ -220,7 +240,8 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
       _ = answer!(ctx, ctx.sk_conn, "S3", "reject", "S3 must stay a Must")
       _ = answer!(ctx, ctx.sk_conn, "S3", "reject", "S3 must stay a Must")
 
-      assert [%Decision{decision: "reject"}] = decisions(d2)
+      assert [%{"decision" => "reject", "digest" => ^d2, "note" => "S3 must stay a Must"}] =
+               decisions(ctx, 2)
     end
 
     test "a re-upload at the same head resets the answers and stales their tasks", ctx do
@@ -228,14 +249,14 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
       _ = passing_diff!(ctx, sha(1), scenarios)
       _ = answer!(ctx, ctx.sk_conn, "S3", "approve")
       _ = answer!(ctx, ctx.sk_conn, "S5", "reject", "S5 must stay a Must")
-      assert Repo.one!(from t in Task, select: t.state) == "open"
+      assert task_states(ctx) == ["open"]
 
       _ = passing_diff!(ctx, sha(1), scenarios, "# v3\n")
 
       assert %{"answer" => nil} = weakened!(ctx, "S3")
       assert %{"answer" => nil} = weakened!(ctx, "S5")
       assert verdict(ctx.sk_conn, ctx.slug, 1)["state"] == "needs_review"
-      assert Repo.one!(from t in Task, select: t.state) == "stale"
+      assert task_states(ctx) == ["stale"]
     end
 
     test "an earlier answer does not complete a later version", ctx do
@@ -243,10 +264,10 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestReviewFlowTest do
       _ = passing_diff!(ctx, sha(1), scenarios)
       _ = answer!(ctx, ctx.sk_conn, "S3", "approve")
 
-      d3 = passing_diff!(ctx, sha(1), scenarios, "# v3\n")
+      _ = passing_diff!(ctx, sha(1), scenarios, "# v3\n")
       _ = answer!(ctx, ctx.sk_conn, "S5", "approve")
 
-      assert decisions(d3) == []
+      assert decisions(ctx, 3) == []
       verdict = verdict(ctx.sk_conn, ctx.slug, 1)
       assert verdict["state"] == "needs_review"
       assert verdict["review"] == %{"items" => 2, "cleared" => 1}
