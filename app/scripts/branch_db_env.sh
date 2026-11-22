@@ -45,7 +45,7 @@ dev_port() {
   local branch_id file value
   branch_id=$(read_branch_db) || return 1
   if [ -z "$branch_id" ]; then
-    printf '4000'
+    printf '7654'
     return 0
   fi
   if [ -n "${PORT+x}" ]; then

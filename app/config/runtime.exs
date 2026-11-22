@@ -235,11 +235,19 @@ if System.get_env("PHX_SERVER") do
   config :good_flows, GoodFlowsWeb.Endpoint, server: true
 end
 
+# A checkout with no BRANCH_DB is the main server. Worktrees set PORT.
+default_port =
+  if config_env() == :dev and System.get_env("BRANCH_DB") in [nil, ""] do
+    "7654"
+  else
+    "4000"
+  end
+
 config :good_flows, GoodFlowsWeb.Endpoint,
-  http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+  http: [port: String.to_integer(System.get_env("PORT", default_port))]
 
 if config_env() == :dev do
-  http_port = String.to_integer(System.get_env("PORT", "4000"))
+  http_port = String.to_integer(System.get_env("PORT", default_port))
   phx_host = System.get_env("PHX_HOST")
   remote_host? = is_binary(phx_host) and phx_host not in ["", "localhost"]
   url_host = if remote_host?, do: phx_host, else: "localhost"

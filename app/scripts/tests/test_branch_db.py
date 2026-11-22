@@ -58,7 +58,7 @@ class BranchDatabaseTest(unittest.TestCase):
         self.env["PORT"] = "9000"
         result = self.run_script("start_dev.sh")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.log.read_text(), "4000")
+        self.assertEqual(self.log.read_text(), "7654")
         (self.app / ".env.dev.local").write_text("BRANCH_DB=clinical_review\nPORT=7901\n")
         result = self.run_script("start_dev.sh")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -72,9 +72,9 @@ class BranchDatabaseTest(unittest.TestCase):
         self.env.pop("PORT", None)
         result = self.run_script("dev_port.sh")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "4000\n")
+        self.assertEqual(result.stdout, "7654\n")
         self.env["PORT"] = "9000"
-        self.assertEqual(self.run_script("dev_port.sh").stdout, "4000\n")
+        self.assertEqual(self.run_script("dev_port.sh").stdout, "7654\n")
 
         (self.app / ".env").write_text("PORT=4100\n")
         (self.app / ".env.local").write_text("PORT=4101 # ignored\n")
