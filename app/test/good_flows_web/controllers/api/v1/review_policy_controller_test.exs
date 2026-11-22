@@ -185,6 +185,21 @@ defmodule GoodFlowsWeb.Api.V1.ReviewPolicyControllerTest do
              |> put_json(rp_path(slug), body(0, %{"rules" => []}))
              |> json_response(422)
 
+    assert %{"errors" => %{"policy.scenarios.diff_only" => [_ | _]}} =
+             ctx.sk_conn
+             |> put_json(rp_path(slug), body(0, %{"scenarios" => %{"diff_only" => "blocked"}}))
+             |> json_response(422)
+
     assert ReviewPolicies.current(ctx.project).version == 0
+
+    assert %{
+             "data" => %{
+               "version" => 1,
+               "policy" => %{"scenarios" => %{"diff_only" => "weakening"}}
+             }
+           } =
+             ctx.sk_conn
+             |> put_json(rp_path(slug), body(0, %{"scenarios" => %{"diff_only" => "weakening"}}))
+             |> json_response(201)
   end
 end

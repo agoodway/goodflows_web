@@ -17,7 +17,7 @@ defmodule GoodFlowsWeb.Schemas.VerdictReason do
         enum: ~w(git_facts_missing claims_missing required_workflow_missing
           required_workflow_failed one_way_door proof_below_minimum open_items path_match
           max_changed_files max_changed_lines scenario_set_approval scenario_set_missing
-          diff_only_set diff_set_revision scenario_results_missing must_failed should_failed
+          diff_only_set diff_set_weakened diff_set_revision scenario_results_missing must_failed should_failed
           should_not_run spec_gap unmapped_area undriven_feature feature_index_missing
           parent_not_merged parent_closed merge_result_ungraded merge_result_failed)
       },

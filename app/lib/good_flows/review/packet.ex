@@ -161,6 +161,32 @@ defmodule GoodFlows.Review.Packet do
     }
   end
 
+  defp data(%{kind: "diff_set_weakened", subject: ["diff", id]}, inputs) do
+    set = inputs.verdict.scenarios["diff"] || %{}
+    current = diff_version(inputs.change_request, set["version"])
+    baseline = diff_version(inputs.change_request, set["baseline_version"])
+    changes = if current && baseline, do: ScenarioSets.changes(baseline, current), else: []
+    entry = Enum.find(changes, %{}, &(&1.id == id))
+
+    %{
+      id: id,
+      change: entry[:change],
+      from_priority: entry[:from_priority],
+      to_priority: entry[:to_priority],
+      version: set["version"],
+      digest: set["digest"],
+      baseline: %{
+        version: set["baseline_version"],
+        digest: inputs.verdict.inputs["diff_baseline_digest"]
+      },
+      edited_musts:
+        for(
+          %{id: edited, change: "changed", from_priority: "must", to_priority: "must"} <- changes,
+          do: edited
+        )
+    }
+  end
+
   defp data(%{kind: "failed_scenario", subject: [source, id]}, inputs) do
     {set, scenario, run} = scenario_run(inputs, source, id)
     result = run && result(run, id)
@@ -304,6 +330,15 @@ defmodule GoodFlows.Review.Packet do
           {:ok, %IndexVersion{} = version} -> version
           {:error, :not_found} -> nil
         end
+    end
+  end
+
+  defp diff_version(_change_request, nil), do: nil
+
+  defp diff_version(change_request, number) do
+    case ScenarioSets.get_version(change_request, "diff", number) do
+      {:ok, version} -> version
+      {:error, :not_found} -> nil
     end
   end
 

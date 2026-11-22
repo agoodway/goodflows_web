@@ -13,12 +13,23 @@ defmodule GoodFlows.Review do
   the body, then (under the change request's row lock) that `head` is the
   current head (`{:stale_head, head}`), that the item exists at the head
   (`:not_found`), that the answer and option suit the item, and, for
-  `scenario_set_approval`, the policy's `scenarios.approver`
-  (`:forbidden`). It replaces the item's earlier answer at the head (whose
-  `open` task becomes `stale`), records an `approve` or `reject` decision
-  on the set digest for a `scenario_set_approval` item, creates a task for
-  `request_change` and `reject`, records `answer_recorded` (and
-  `task_created`) and recomputes the verdict.
+  `scenario_set_approval` and `diff_set_weakened`, the policy's
+  `scenarios.approver` (`:forbidden`). It replaces the item's earlier
+  answer at the head (whose `open` task becomes `stale`), records an
+  `approve` or `reject` decision on the set digest for a
+  `scenario_set_approval` item, creates a task for `request_change` and
+  `reject`, records `answer_recorded` (and `task_created`) and recomputes
+  the verdict.
+
+  A `diff_set_weakened` answer acts on the stored verdict's diff digest
+  after it is stored: `reject` records a `reject` decision with its note,
+  and `approve` records an `approve` decision, with this answer's
+  membership and key, once every `diff_set_weakened` item of the stored
+  verdict has a current `approve`. The accepted digest becomes the diff
+  baseline, so the recompute drops those reasons. Storing a diff version
+  supersedes every `diff_set_weakened` answer
+  (`supersede_diff_answers/1`), so they count only while the diff digest
+  they were given on is current.
   """
   import Ecto.Query
 
@@ -188,10 +199,12 @@ defmodule GoodFlows.Review do
     if item == nil, do: Repo.rollback(:not_found)
     check_item_answer(item, attrs, claims)
 
-    if item.kind == "scenario_set_approval" do
+    if item.kind in ~w(scenario_set_approval diff_set_weakened) do
       with {:error, reason} <- ScenarioSets.check_approver(change_request, account_user),
            do: Repo.rollback(reason)
+    end
 
+    if item.kind == "scenario_set_approval" do
       [digest] = item.subject
 
       ScenarioSets.record_decision(change_request, account_user, api_key, %{
@@ -219,6 +232,9 @@ defmodule GoodFlows.Review do
         api_key_id: api_key.id
       })
 
+    if item.kind == "diff_set_weakened",
+      do: record_diff_decision(change_request, verdict, claims, account_user, api_key, answer)
+
     ChangeRequests.recompute(change_request)
 
     ProjectEvents.record(
@@ -240,6 +256,30 @@ defmodule GoodFlows.Review do
       do: create_task(change_request, answer, api_key)
 
     answer
+  end
+
+  defp record_diff_decision(change_request, verdict, claims, account_user, api_key, answer) do
+    digest = verdict.scenarios["diff"]["digest"]
+
+    decision =
+      case answer.answer do
+        "reject" ->
+          %{decision: "reject", digest: digest, note: answer.note}
+
+        "approve" ->
+          answers = current_answers(change_request)
+
+          if verdict.reasons
+             |> Items.build(claims)
+             |> Enum.filter(&(&1.kind == "diff_set_weakened"))
+             |> Enum.all?(&(Map.get(answers, &1.id) == "approve")),
+             do: %{decision: "approve", digest: digest, note: nil}
+      end
+
+    if decision,
+      do: ScenarioSets.record_decision(change_request, account_user, api_key, decision, "diff")
+
+    :ok
   end
 
   defp check_item_answer(item, attrs, claims) do
@@ -272,13 +312,16 @@ defmodule GoodFlows.Review do
         else: where(earlier, [a], a.head == ^head)
 
     {_count, ids} = Repo.update_all(earlier, set: [superseded_at: now, updated_at: now])
+    stale_tasks(ids, now)
+  end
 
-    if ids != [] do
-      Repo.update_all(
-        from(t in Task, where: t.answer_id in ^ids and t.state == "open"),
-        set: [state: "stale", updated_at: now]
-      )
-    end
+  defp stale_tasks([], _now), do: :ok
+
+  defp stale_tasks(answer_ids, now) do
+    Repo.update_all(
+      from(t in Task, where: t.answer_id in ^answer_ids and t.state == "open"),
+      set: [state: "stale", updated_at: now]
+    )
 
     :ok
   end
@@ -311,6 +354,30 @@ defmodule GoodFlows.Review do
     )
 
     task
+  end
+
+  @doc """
+  Supersedes every current `diff_set_weakened` answer of the change
+  request, at every head, and makes their `open` tasks `stale`. Called in
+  the transaction that stores a diff version, before its recompute, so an
+  answer given on one diff digest never counts for another.
+  """
+  @spec supersede_diff_answers(ChangeRequest.t()) :: :ok
+  def supersede_diff_answers(%ChangeRequest{id: id}) do
+    now = DateTime.utc_now()
+
+    {_count, ids} =
+      Repo.update_all(
+        from(a in Answer,
+          where:
+            a.change_request_id == ^id and a.kind == "diff_set_weakened" and
+              is_nil(a.superseded_at),
+          select: a.id
+        ),
+        set: [superseded_at: now, updated_at: now]
+      )
+
+    stale_tasks(ids, now)
   end
 
   @doc """

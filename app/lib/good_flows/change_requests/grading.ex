@@ -1,14 +1,17 @@
 defmodule GoodFlows.ChangeRequests.Grading do
   @moduledoc """
   Loads the grading inputs of a change request's verdict (design D2, D7,
-  D8): its current intent and diff set versions, whether each is approved
-  and graded, the verify runs that count at the head, and the project's
-  compiled feature index. `GoodFlows.ChangeRequests.Rules` turns them into
+  D8): its current intent and diff set versions, whether each is approved,
+  accepted and graded, the diff set's baseline and the Musts it weakens,
+  the verify runs that count at the head, and the project's compiled
+  feature index. `GoodFlows.ChangeRequests.Rules` turns them into
   reasons.
 
   The intent set is graded when its current digest is approved, or always
   when `scenarios.require_approved_intent` is false. The diff set is graded
-  when its `revision` is the head or a prefix of it.
+  when its `revision` names the head (`names_head?/4`): the head or a
+  prefix of it, or an earlier commit in the head's `git-facts.commits`
+  followed only by commits that change ignored paths.
 
   A run counts at head H (`counts?/4`) when it is `final`, clean, has no
   `merge_result`, grades a graded set's digest with that set's source, and
@@ -27,15 +30,22 @@ defmodule GoodFlows.ChangeRequests.Grading do
   alias GoodFlows.ScenarioSets.Version
   alias GoodFlows.VerifyRuns.Run
 
-  @typedoc "A set as the rules see it."
+  @typedoc """
+  A set as the rules see it. A diff set also has its `baseline` (`version`
+  and `digest`) and the `weakened` Musts: each `removed` or `demoted` Must
+  of the baseline, with `from_priority` and `to_priority`.
+  """
   @type set :: %{
-          version: pos_integer(),
-          digest: String.t(),
-          approved: boolean(),
-          graded: boolean(),
-          revision: String.t() | nil,
-          scenarios: [%{id: String.t(), priority: String.t()}],
-          coverage: [map()]
+          required(:version) => pos_integer(),
+          required(:digest) => String.t(),
+          required(:approved) => boolean(),
+          required(:accepted) => boolean(),
+          required(:graded) => boolean(),
+          required(:revision) => String.t() | nil,
+          required(:scenarios) => [%{id: String.t(), priority: String.t()}],
+          required(:coverage) => [map()],
+          optional(:baseline) => %{version: pos_integer(), digest: String.t()},
+          optional(:weakened) => [map()]
         }
 
   @typedoc "A counted run as the rules see it."
@@ -70,9 +80,14 @@ defmodule GoodFlows.ChangeRequests.Grading do
   def load(%ChangeRequest{} = change_request, facts_document, policy) do
     require? = policy.effective["scenarios"]["require_approved_intent"]
     approved = ScenarioSets.approved_digests(change_request)
-    intent = set(ScenarioSets.current(change_request, "intent"), approved, change_request.head)
-    diff = set(ScenarioSets.current(change_request, "diff"), approved, change_request.head)
+    commits = (facts_document && facts_document["commits"]) || []
+    ignore = Map.get(policy, :ignore, [])
+    head = {change_request.head, commits, ignore}
+    intent = set(ScenarioSets.current(change_request, "intent"), approved, head)
+    diff_version = ScenarioSets.current(change_request, "diff")
+    diff = set(diff_version, approved, head)
     intent = intent && Map.put(intent, :graded, intent.approved or not require?)
+    diff = diff && diff_baseline(diff, diff_version, change_request, approved)
 
     %{
       linked?: change_request.openspec_change != nil,
@@ -85,26 +100,65 @@ defmodule GoodFlows.ChangeRequests.Grading do
 
   defp set(nil, _approved, _head), do: nil
 
-  defp set(%Version{} = version, approved, head) do
+  defp set(%Version{} = version, approved, {head, commits, ignore}) do
     revision = version.front_matter["revision"]
 
     %{
       version: version.version,
       digest: version.digest,
       approved: ScenarioSets.approved?(version, approved),
-      graded: version.source == "diff" and names_head?(revision, head),
+      accepted: ScenarioSets.accepted?(version, approved),
+      graded: version.source == "diff" and names_head?(revision, head, commits, ignore),
       revision: revision,
       scenarios: Version.scenarios(version),
       coverage: version.front_matter["coverage"] || []
     }
   end
 
-  @doc "Whether a diff set `revision` is `head` or a prefix of it."
-  @spec names_head?(String.t() | nil, String.t() | nil) :: boolean()
-  def names_head?(revision, head) when is_binary(revision) and is_binary(head),
-    do: String.starts_with?(head, revision)
+  defp diff_baseline(diff, version, change_request, approved) do
+    baseline = ScenarioSets.baseline(change_request, approved)
 
-  def names_head?(_revision, _head), do: false
+    Map.merge(diff, %{
+      baseline: %{version: baseline.version, digest: baseline.digest},
+      weakened: weakened(baseline, version)
+    })
+  end
+
+  @doc """
+  The Musts of diff version `baseline` that `current` removes or demotes
+  to `should` or `could` (`ScenarioSets.changes/2`), each with `id`,
+  `change` (`removed` or `demoted`), `from_priority` and `to_priority`.
+  A renamed Must is removed; an edited Must that stays `must` is not
+  listed.
+  """
+  @spec weakened(Version.t(), Version.t()) :: [map()]
+  def weakened(%Version{} = baseline, %Version{} = current) do
+    baseline
+    |> ScenarioSets.changes(current)
+    |> Enum.filter(& &1.weakening)
+    |> Enum.map(&Map.take(&1, [:id, :change, :from_priority, :to_priority]))
+  end
+
+  @doc """
+  Whether a diff set `revision` names `head`: it is `head` or a prefix of
+  it, or else it is a prefix of exactly one commit in the head's
+  `git-facts.commits` and that commit counts at the head (`counts?/4`
+  with the `ignore_paths` regexes). Without facts (`commits` `[]`) only
+  the prefix rule applies.
+  """
+  @spec names_head?(String.t() | nil, String.t() | nil, [map()], [Regex.t()]) :: boolean()
+  def names_head?(revision, head, commits \\ [], ignore \\ [])
+
+  def names_head?(revision, head, commits, ignore)
+      when is_binary(revision) and is_binary(head) do
+    String.starts_with?(head, revision) or
+      case Enum.filter(commits, &String.starts_with?(&1["sha"], revision)) do
+        [%{"sha" => sha}] -> counts?(sha, head, commits, ignore)
+        _none_or_many -> false
+      end
+  end
+
+  def names_head?(_revision, _head, _commits, _ignore), do: false
 
   defp counted_runs(_change_request, nil, _policy, _sets), do: []
 

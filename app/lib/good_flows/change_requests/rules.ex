@@ -30,6 +30,12 @@ defmodule GoodFlows.ChangeRequests.Rules do
   scenario]`. The verdict also carries `scenarios`, `coverage` and the
   `counted_runs`.
 
+  A change request with only a diff set, under `require_approved_intent`,
+  follows `scenarios.diff_only`: `needs_review` adds `diff_only_set` on
+  every head; `weakening` adds `diff_set_weakened` (`["diff", id]`) for
+  each Must of the diff baseline that the graded current version removes
+  or demotes, when no OpenSpec change is linked; `ignore` adds neither.
+
   Merge coordination (`add-change-request-merge`) reads `inputs.parent`
   (the parent's number and state, or nil) and `inputs.merge_result` (the
   held lease's `base` and its merge-result runs, or nil when the check
@@ -217,12 +223,22 @@ defmodule GoodFlows.ChangeRequests.Rules do
     end
   end
 
-  defp grading_reasons(%{grading: grading, policy: policy} = inputs) do
-    diff_only =
-      if require?(policy) and grading.diff != nil and grading.intent == nil,
-        do: [reason("diff_only_set", "needs_review", [], "Only a diff scenario set grades this")],
-        else: []
+  defp diff_only_reasons(%{diff: diff, intent: nil} = grading, policy) when diff != nil do
+    case {require?(policy), policy.effective["scenarios"]["diff_only"]} do
+      {true, "needs_review"} ->
+        [reason("diff_only_set", "needs_review", [], "Only a diff scenario set grades this")]
 
+      {true, "weakening"} when diff.graded and not grading.linked? ->
+        Enum.map(Map.get(diff, :weakened, []), &weakened_reason(&1, diff))
+
+      _other ->
+        []
+    end
+  end
+
+  defp diff_only_reasons(_grading, _policy), do: []
+
+  defp grading_reasons(%{grading: grading, policy: policy} = inputs) do
     revision =
       if grading.diff != nil and not grading.diff.graded,
         do: [
@@ -235,10 +251,20 @@ defmodule GoodFlows.ChangeRequests.Rules do
         ],
         else: []
 
-    diff_only ++
+    diff_only_reasons(grading, policy) ++
       revision ++
       Enum.flat_map(graded_sets(grading), &set_reasons(&1, grading.runs, policy)) ++
       spec_gap_reasons(inputs) ++ coverage_reasons(inputs)
+  end
+
+  defp weakened_reason(%{id: id, change: change}, diff) do
+    reason(
+      "diff_set_weakened",
+      "needs_review",
+      ["diff", id],
+      "Diff scenario set version #{diff.version} #{change} Must scenario #{id} of " <>
+        "baseline version #{diff.baseline.version}"
+    )
   end
 
   defp graded_sets(grading) do
@@ -428,9 +454,18 @@ defmodule GoodFlows.ChangeRequests.Rules do
                  "run_id" => run && run.run_id
                }
              end)
-         }}
+         }
+         |> Map.merge(diff_view(source, set))}
     end)
   end
+
+  defp diff_view("diff", set),
+    do: %{
+      "accepted" => Map.get(set, :accepted, false),
+      "baseline_version" => set[:baseline][:version]
+    }
+
+  defp diff_view(_source, _set), do: %{}
 
   defp coverage_view(%{grading: %{index: nil}}),
     do: %{"version" => nil, "unmapped_areas" => [], "features" => []}
@@ -626,6 +661,7 @@ defmodule GoodFlows.ChangeRequests.Rules do
         Map.new(inputs.workflows, fn {name, result} -> {name, result && result.run_id} end),
       "approved_intent_digest" =>
         if(grading.intent && grading.intent.approved, do: grading.intent.digest),
+      "diff_baseline_digest" => grading.diff && grading.diff[:baseline][:digest],
       "counted_runs" => grading.runs |> Enum.map(& &1.run_id) |> Enum.sort(),
       "feature_index_version" => grading.index && grading.index.version
     }

@@ -4,18 +4,20 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetJSON do
 
   Public keys (`redact?: true`) see `content`, `front_matter` and
   `sections` as null; `source`, `version`, `digest`, `inserted_at`,
-  `approved` and each scenario's `id` and `priority` (`scenarios`) are as
-  stored. Decisions show `note` and `decided_by.user_id` as null.
+  `approved`, `accepted` and each scenario's `id` and `priority`
+  (`scenarios`) are as stored. Decisions show `note` and `decided_by.user_id` as null.
   """
 
   alias GoodFlows.Accounts.AccountUser
   alias GoodFlows.ScenarioSets.{Decision, Version}
 
   @doc "Renders one version, with its decisions when given."
-  def show(%{version: version, approved: approved, redact?: redact?} = assigns) do
+  def show(
+        %{version: version, approved: approved, accepted: accepted, redact?: redact?} = assigns
+      ) do
     data =
       version
-      |> version(approved, redact?)
+      |> version(approved, accepted, redact?)
       |> put_present(
         :decisions,
         assigns[:decisions] && Enum.map(assigns.decisions, &decision(&1, redact?))
@@ -31,20 +33,24 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetJSON do
       Map.new(sets, fn {source, listed} ->
         current =
           case listed do
-            [%{version: v, approved: a} | _rest] -> version(v, a, redact?)
-            [] -> nil
+            [%{version: v, approved: a, accepted: accepted} | _rest] ->
+              version(v, a, accepted, redact?)
+
+            [] ->
+              nil
           end
 
         {source,
          %{
            current: current,
            versions:
-             Enum.map(listed, fn %{version: v, approved: a} ->
+             Enum.map(listed, fn %{version: v, approved: a, accepted: accepted} ->
                %{
                  version: v.version,
                  digest: v.digest,
                  inserted_at: DateTime.to_iso8601(v.inserted_at),
-                 approved: a
+                 approved: a,
+                 accepted: accepted
                }
              end)
          }}
@@ -68,12 +74,13 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetJSON do
     }
   end
 
-  defp version(%Version{} = version, approved, redact?) do
+  defp version(%Version{} = version, approved, accepted, redact?) do
     %{
       source: version.source,
       version: version.version,
       digest: version.digest,
       approved: approved,
+      accepted: accepted,
       inserted_at: DateTime.to_iso8601(version.inserted_at),
       scenarios: Version.scenarios(version),
       content: if(redact?, do: nil, else: version.content),

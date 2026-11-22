@@ -803,6 +803,35 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
           do: assert(rule in rules)
     end
 
+    test "diff-only gating schemas", %{conn: conn} do
+      schemas =
+        conn
+        |> get(~p"/api/v1/openapi")
+        |> json_response(200)
+        |> get_in(["components", "schemas"])
+
+      assert get_in(schemas, [
+               "ReviewPolicyDocument",
+               "properties",
+               "scenarios",
+               "properties",
+               "diff_only",
+               "enum"
+             ]) == ~w(needs_review weakening ignore)
+
+      assert "diff_set_weakened" in schemas["VerdictReason"]["properties"]["rule"]["enum"]
+      assert "diff_set_weakened" in schemas["ReviewItem"]["properties"]["kind"]["enum"]
+
+      assert "accepted" in schemas["ScenarioSetVersion"]["required"]
+
+      assert Map.has_key?(
+               schemas["ScenarioSetSummary"]["properties"]["versions"]["items"]["properties"],
+               "accepted"
+             )
+
+      assert schemas["ProjectEvent"]["description"] =~ "`scenario_set_approved`: `source`"
+    end
+
     test "the project delete 409 names change requests and verify runs", %{conn: conn} do
       doc = conn |> get(~p"/api/v1/openapi") |> json_response(200)
       conflict = doc["paths"]["/api/v1/projects/{project}"]["delete"]["responses"]["409"]

@@ -6,6 +6,7 @@ defmodule GoodFlows.ChangeRequests.GradingRulesTest do
   alias GoodFlows.ChangeRequests.{Grading, Rules}
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ReviewPolicies.Glob
+  alias GoodFlows.ScenarioSets.Version
 
   @head sha(1)
 
@@ -102,6 +103,50 @@ defmodule GoodFlows.ChangeRequests.GradingRulesTest do
   defp reasons(verdict),
     do: Enum.map(verdict.reasons, &{&1["rule"], &1["outcome"], &1["subject"]})
 
+  defp diff_only(outcome),
+    do: strict(%{"scenarios" => %{"require_approved_intent" => true, "diff_only" => outcome}})
+
+  defp diff_version(n, scenarios, salts \\ %{}) do
+    %Version{
+      source: "diff",
+      version: n,
+      digest: "d#{n}",
+      front_matter: %{
+        "scenarios" => Enum.map(scenarios, fn {id, p} -> %{"id" => id, "priority" => p} end)
+      },
+      sections:
+        Enum.map(scenarios, fn {id, _p} ->
+          %{"id" => id, "sha256" => id <> Map.get(salts, id, "")}
+        end)
+    }
+  end
+
+  defp weakening_grading(baseline, current, attrs \\ %{}) do
+    diff =
+      Map.merge(
+        set(
+          version: current.version,
+          digest: current.digest,
+          approved: false,
+          accepted: false,
+          revision: "0000000",
+          scenarios: Version.scenarios(current),
+          baseline: %{version: baseline.version, digest: baseline.digest},
+          weakened: Grading.weakened(baseline, current)
+        ),
+        attrs
+      )
+
+    results = Map.new(Version.scenarios(current), &{&1.id, "passed"})
+
+    grading(
+      linked?: false,
+      intent: nil,
+      diff: diff,
+      runs: [run(results, %{source: "diff", digest: current.digest})]
+    )
+  end
+
   test "a fully graded change request is mergeable" do
     verdict = evaluate([])
     assert verdict.state == "mergeable"
@@ -153,6 +198,76 @@ defmodule GoodFlows.ChangeRequests.GradingRulesTest do
       verdict = evaluate(grading: only)
       assert {"diff_only_set", "needs_review", []} in reasons(verdict)
       refute Enum.any?(reasons(verdict), &(elem(&1, 0) == "scenario_set_missing"))
+    end
+
+    test "diff_only follows scenarios.diff_only" do
+      v1 = diff_version(1, [{"S1", "must"}, {"S3", "must"}])
+      g = weakening_grading(v1, diff_version(2, [{"S1", "must"}, {"S3", "should"}]))
+
+      assert {"diff_only_set", "needs_review", []} in reasons(evaluate(grading: g))
+      refute Enum.any?(reasons(evaluate(grading: g)), &(elem(&1, 0) == "diff_set_weakened"))
+
+      ignore = evaluate(policy: diff_only("ignore"), grading: g)
+      assert ignore.state == "mergeable"
+      refute Enum.any?(reasons(ignore), &(elem(&1, 0) in ~w(diff_only_set diff_set_weakened)))
+
+      kept = weakening_grading(v1, diff_version(2, [{"S1", "must"}, {"S3", "must"}]))
+      verdict = evaluate(policy: diff_only("weakening"), grading: kept)
+      assert verdict.state == "mergeable"
+      assert reasons(verdict) == []
+    end
+
+    test "diff_set_weakened: demotion, kept on a later version, renamed Must" do
+      v1 = diff_version(1, [{"S1", "must"}, {"S3", "must"}])
+      demoted = diff_version(2, [{"S1", "must"}, {"S3", "should"}])
+      verdict = evaluate(policy: diff_only("weakening"), grading: weakening_grading(v1, demoted))
+
+      assert verdict.state == "needs_review"
+      assert reasons(verdict) == [{"diff_set_weakened", "needs_review", ["diff", "S3"]}]
+      refute Enum.any?(reasons(verdict), &(elem(&1, 0) == "diff_only_set"))
+
+      later = diff_version(3, [{"S1", "must"}, {"S3", "should"}])
+
+      assert {"diff_set_weakened", "needs_review", ["diff", "S3"]} in reasons(
+               evaluate(policy: diff_only("weakening"), grading: weakening_grading(v1, later))
+             )
+
+      renamed = diff_version(2, [{"S1", "must"}, {"S7", "must"}])
+
+      assert reasons(
+               evaluate(policy: diff_only("weakening"), grading: weakening_grading(v1, renamed))
+             ) == [{"diff_set_weakened", "needs_review", ["diff", "S3"]}]
+    end
+
+    test "diff_set_weakened: edited Must and accepted weakening add none" do
+      v1 = diff_version(1, [{"S1", "must"}, {"S3", "must"}])
+      edited = diff_version(2, [{"S1", "must"}, {"S3", "must"}], %{"S3" => "x"})
+
+      assert evaluate(policy: diff_only("weakening"), grading: weakening_grading(v1, edited)).state ==
+               "mergeable"
+
+      accepted = diff_version(2, [{"S1", "must"}, {"S3", "should"}])
+      v3 = diff_version(3, [{"S1", "must"}, {"S3", "should"}])
+      verdict = evaluate(policy: diff_only("weakening"), grading: weakening_grading(accepted, v3))
+      assert verdict.state == "mergeable"
+      assert verdict.scenarios["diff"]["baseline_version"] == 2
+      assert verdict.inputs["diff_baseline_digest"] == "d2"
+    end
+
+    test "diff_set_weakened: not for an ungraded set or a linked change" do
+      v1 = diff_version(1, [{"S1", "must"}, {"S3", "must"}])
+      demoted = diff_version(2, [{"S1", "must"}, {"S3", "should"}])
+
+      ungraded = weakening_grading(v1, demoted, %{graded: false, revision: "aaaa123"})
+      r = reasons(evaluate(policy: diff_only("weakening"), grading: ungraded))
+      assert {"diff_set_revision", "pending", ["aaaa123"]} in r
+      refute Enum.any?(r, &(elem(&1, 0) == "diff_set_weakened"))
+
+      linked = %{weakening_grading(v1, demoted) | linked?: true}
+      verdict = evaluate(policy: diff_only("weakening"), grading: linked)
+      assert verdict.state == "pending"
+      assert {"scenario_set_approval", "pending", []} in reasons(verdict)
+      refute Enum.any?(reasons(verdict), &(elem(&1, 0) == "diff_set_weakened"))
     end
 
     test "diff_set_revision when the revision does not name the head" do
@@ -428,6 +543,47 @@ defmodule GoodFlows.ChangeRequests.GradingRulesTest do
       refute Grading.counts?(sha(10), sha(12), commits, @ignore)
       refute Grading.counts?(sha(11), sha(12), commits, @ignore)
       refute Grading.counts?(sha(99), sha(12), commits, @ignore)
+    end
+  end
+
+  describe "names_head?" do
+    @docs_ignore Enum.map(["docs/**"], &Glob.compile/1)
+
+    defp named(sha, files),
+      do: %{"sha" => sha, "parents" => [], "changed_files" => Enum.map(files, &file/1)}
+
+    defp hex(prefix, fill), do: prefix <> String.duplicate(fill, 40 - byte_size(prefix))
+
+    test "an earlier commit followed by a docs-only push names the head" do
+      earlier = hex("aaaa123", "2")
+      head = hex("bbbb123", "1")
+      commits = [named(earlier, ["lib/a.ex"]), named(head, ["docs/usage.md"])]
+
+      assert Grading.names_head?("aaaa123", head, commits, @docs_ignore)
+      assert Grading.names_head?(earlier, head, commits, @docs_ignore)
+      assert Grading.names_head?("bbbb123", head, [named(earlier, ["lib/a.ex"])], @docs_ignore)
+      refute Grading.names_head?("aaaa123", head)
+      refute Grading.names_head?("aaaa123", head, commits, [])
+    end
+
+    test "a pre-rebase commit not in the facts does not" do
+      head = hex("bbbb123", "1")
+      commits = [named(hex("cccc123", "2"), ["lib/a.ex"]), named(head, ["docs/usage.md"])]
+
+      refute Grading.names_head?("aaaa123", head, commits, @docs_ignore)
+    end
+
+    test "an ambiguous short SHA does not" do
+      head = hex("bbbb123", "1")
+
+      commits = [
+        named(hex("aaaa123", "2"), ["lib/a.ex"]),
+        named(hex("aaaa123", "3"), ["docs/a.md"]),
+        named(head, ["docs/usage.md"])
+      ]
+
+      refute Grading.names_head?("aaaa123", head, commits, @docs_ignore)
+      assert Grading.names_head?(hex("aaaa123", "2"), head, commits, @docs_ignore)
     end
   end
 end

@@ -24,7 +24,15 @@ defmodule GoodFlowsWeb.Schemas.ReviewPolicyDocument do
           require_approved_intent: %Schema{type: :boolean},
           should_failures: @review,
           spec_gaps: @review,
-          approver: %Schema{type: :string, enum: ~w(any other_member admin)}
+          approver: %Schema{type: :string, enum: ~w(any other_member admin)},
+          diff_only: %Schema{
+            type: :string,
+            enum: ~w(needs_review weakening ignore),
+            description:
+              "With `require_approved_intent` true, how a change request with only a diff " <>
+                "set is reviewed: `needs_review` on every head, `weakening` only when the " <>
+                "diff set removes or demotes a Must of its baseline, or `ignore`"
+          }
         }
       },
       evidence: %Schema{

@@ -19,7 +19,8 @@ defmodule GoodFlowsWeb.Schemas.ScenarioSetSummary do
             version: %Schema{type: :integer},
             digest: %Schema{type: :string},
             inserted_at: %Schema{type: :string, format: :"date-time"},
-            approved: %Schema{type: :boolean}
+            approved: %Schema{type: :boolean},
+            accepted: %Schema{type: :boolean}
           }
         }
       }

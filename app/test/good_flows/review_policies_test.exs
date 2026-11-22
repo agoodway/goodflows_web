@@ -73,6 +73,39 @@ defmodule GoodFlows.ReviewPoliciesTest do
     assert ReviewPolicies.current(ctx.project).version == 0
   end
 
+  describe "scenarios.diff_only" do
+    test "is accepted and stored as written", ctx do
+      assert {:ok, :created, v1} =
+               write(ctx, body(0, %{"scenarios" => %{"diff_only" => "weakening"}}))
+
+      assert v1.document["scenarios"] == %{"diff_only" => "weakening"}
+
+      assert ReviewPolicies.compiled(ctx.project.id).effective["scenarios"]["diff_only"] ==
+               "weakening"
+    end
+
+    test "cannot block, and a refused write stores nothing", ctx do
+      assert {:error, {:invalid_body, errors}} =
+               write(ctx, body(0, %{"scenarios" => %{"diff_only" => "blocked"}}))
+
+      assert errors["policy.scenarios.diff_only"]
+      assert ReviewPolicies.current(ctx.project).version == 0
+    end
+
+    test "an older policy and version 0 read needs_review", ctx do
+      assert ReviewPolicies.current(ctx.project).document["scenarios"]["diff_only"] ==
+               "needs_review"
+
+      assert "scenarios.diff_only" in Document.active_settings()
+
+      assert {:ok, :created, v1} =
+               write(ctx, body(0, %{"scenarios" => %{"require_approved_intent" => true}}))
+
+      refute Map.has_key?(v1.document["scenarios"], "diff_only")
+      assert Document.effective(v1.document)["scenarios"]["diff_only"] == "needs_review"
+    end
+  end
+
   test "lists newest first with keyset pages", ctx do
     for n <- 0..2, do: {:ok, :created, _} = write(ctx, body(n, %{}, "v#{n + 1}"))
 

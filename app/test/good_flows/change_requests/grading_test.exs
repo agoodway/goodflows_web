@@ -127,6 +127,29 @@ defmodule GoodFlows.ChangeRequests.GradingTest do
       assert verdict(ctx).counted_runs == []
     end
 
+    test "a diff-set run counts after a docs-only push", ctx do
+      {:ok, cr} =
+        ChangeRequests.create(ctx.account, ctx.project, ctx.key, %{
+          "title" => "Diff only",
+          "source_branch" => "feat/diff"
+        })
+
+      dctx = %{ctx | cr: cr}
+      body = set_body(diff_fm(sha(10), [scenario("S1")]))
+      {:ok, :created, version} = ScenarioSets.upload(cr, ctx.key, body)
+      doc = run_doc(version.digest, "diff", sha(10), [result("S1")])
+      {:ok, %{run: run}} = VerifyRuns.ingest(ctx.account, ctx.project, ctx.key, doc)
+
+      facts!(dctx, sha(10), sha(11), ["docs/usage.md"])
+      assert verdict(dctx).counted_runs == [run.run_id]
+      assert verdict(dctx).scenarios["diff"]["graded"]
+      refute Enum.any?(rules(dctx), &match?({"diff_set_revision", _}, &1))
+
+      facts!(dctx, sha(10), sha(12), ["app/lib/good_flows/caches.ex"])
+      assert verdict(dctx).counted_runs == []
+      assert {"diff_set_revision", [sha(10)]} in rules(dctx)
+    end
+
     test "a commit not in the facts (rebase) does not count", ctx do
       _ = run!(ctx, ctx.digest, sha(20))
       facts!(ctx, sha(10), sha(11), ["docs/usage.md"])

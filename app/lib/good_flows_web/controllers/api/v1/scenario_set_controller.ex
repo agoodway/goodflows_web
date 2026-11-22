@@ -109,13 +109,14 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetController do
 
     with {:ok, status, version} <-
            ScenarioSets.upload(change_request, api_key, conn.private.json_body) do
-      approved = ScenarioSets.approved?(version, ScenarioSets.approved_digests(change_request))
+      approved_digests = ScenarioSets.approved_digests(change_request)
 
       conn
       |> put_status(if(status == :created, do: :created, else: :ok))
       |> render(:show,
         version: version,
-        approved: approved,
+        approved: ScenarioSets.approved?(version, approved_digests),
+        accepted: ScenarioSets.accepted?(version, approved_digests),
         duplicate: status == :duplicate,
         redact?: false
       )
@@ -126,7 +127,7 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetController do
     summary: "List scenario sets",
     description:
       "For `intent` and `diff`: the current version and every version, newest first, " <>
-        "with `approved`.",
+        "with `approved` and `accepted`.",
     parameters: ApiParams.project() ++ @number_param,
     responses: [
       ok: {"The sets", "application/json", ScenarioSetListResponse},
@@ -172,11 +173,12 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetController do
 
     with {:ok, number} <- parse_version(version),
          {:ok, found} <- ScenarioSets.get_version(change_request, source, number) do
-      approved = ScenarioSets.approved?(found, ScenarioSets.approved_digests(change_request))
+      approved_digests = ScenarioSets.approved_digests(change_request)
 
       render(conn, :show,
         version: found,
-        approved: approved,
+        approved: ScenarioSets.approved?(found, approved_digests),
+        accepted: ScenarioSets.accepted?(found, approved_digests),
         decisions: ScenarioSets.decisions(change_request, found.digest),
         redact?: redact?(conn)
       )
@@ -216,7 +218,8 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetController do
     intent version's digest (`409` otherwise). The project's
     `scenarios.approver` decides who may (`any`, `other_member` than the
     opener, or `admin`). The approval binds to the digest, not the head.
-    Only `intent` takes decisions; `diff` is `404`.
+    Only `intent` takes decisions here; `diff` is `404`, and diff digests
+    take decisions only through `diff_set_weakened` review answers.
     """,
     parameters: ApiParams.project() ++ @number_param ++ @source_param,
     request_body: {"Approval", "application/json", ScenarioSetDecisionRequest, required: true},

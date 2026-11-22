@@ -20,7 +20,9 @@ defmodule GoodFlowsWeb.Schemas.Verdict do
         type: :object,
         description:
           "Per set (`intent`, `diff`, null when absent): `version`, `digest`, `approved`, " <>
-            "`graded`, and per scenario `id`, `priority`, `result` and the `run_id` it came from",
+            "`graded`, and per scenario `id`, `priority`, `result` and the `run_id` it came " <>
+            "from. The diff set also has `accepted` (its digest's latest decision is " <>
+            "`approve`) and `baseline_version` (the newest accepted diff version, else 1)",
         properties: %{
           intent: %Schema{type: :object, nullable: true},
           diff: %Schema{type: :object, nullable: true}
