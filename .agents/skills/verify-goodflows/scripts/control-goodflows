@@ -149,7 +149,7 @@ cmd_login() {
   ab fill '#login_form_password input[type=password]' "$password" >/dev/null
   ab find role button click --name "Log in only this time" >/dev/null
   # Login goes to the page that bounced the user to log in, else `/`. Every
-  # signed-in layout links to /users/log-out (`Log out` or `Sign out`).
+  # signed-in layout links to /users/log-out (`Log out`).
   ab wait --fn "location.pathname !== '/users/log-in' && !!document.querySelector('a[href=\"/users/log-out\"]')" >/dev/null
   ab get url
 }
@@ -157,7 +157,7 @@ cmd_login() {
 cmd_api() {
   load_run
   [[ $# -ge 3 ]] || die "usage: api <name> <METHOD> <path> [json-body]"
-  [[ -n ${GF_API_KEY:-} ]] || die "GF_API_KEY is not set; create a key through the API Keys page first"
+  [[ -n ${GF_API_KEY:-} ]] || die "GF_API_KEY is not set; create a key through the API keys page first"
   local name=$1 method=$2 path=$3 body=${4:-}
   local out="$run_dir/api/$name"
   mkdir -p "$run_dir/api"

@@ -1,13 +1,13 @@
 ---
 name: verify-goodflows
-description: Launches an isolated GoodFlows Web (Phoenix app in app/) instance on a fresh seeded database, drives its dashboard in agent-browser and its JSON API with curl, and captures proof under .verify/goodflows/. Use to prove a change to sign-in, the account dashboard, API keys, or the /api/v1 endpoints works end to end in the running app, not just in mix test.
+description: Launches an isolated GoodFlows Web (Phoenix app in app/) instance on a fresh seeded database, drives its dashboard in agent-browser and its JSON API with curl, and captures proof under .verify/goodflows/. Use to prove a change to sign-in, registration, the account dashboard, API keys, the projects page, or the /api/v1 endpoints works end to end in the running app, not just in mix test.
 ---
 
 # Verify GoodFlows Web
 
 GoodFlows Web is the Phoenix app in `app/`. Users reach it through two surfaces:
 
-- **Browser dashboard** (primary): sign in, account dashboard and switcher, API key management, user settings. LiveView pages driven with `agent-browser`.
+- **Browser dashboard** (primary): sign in, registration, account dashboard and switcher, project management, API key management, user settings. LiveView pages driven with `agent-browser`.
 - **JSON API** at `/api/v1`: projects, recipes, runs, workflow-run history, and caches, authenticated with a dashboard-created key (`Authorization: Bearer sk_…` or `pk_…`). Driven with `curl`. Swagger UI is at `/api/v1/docs`.
 
 The goodflows CLI's upload path has its own end-to-end script, `scripts/e2e-cli-smoke.sh` (see `.agents/README.md`). Use it for CLI proofs; this skill covers the app.
@@ -58,14 +58,21 @@ $C login                                   # password login; prints http://127.0
 $C browser open "$GF_URL/dashboard"        # redirects to /dashboard/accounts/<account-id>
 $C browser wait --url '**/dashboard/accounts/*'
 $C browser snapshot -i                     # refs and accessible names
-$C browser find role link click --name "API Keys"
+$C browser click '#sidebar a[href$="/api-keys"]'
 $C browser click '#empty-new-key-btn'
 $C browser screenshot "$GF_RUN_DIR/<feature>/<step>.png"
 ```
 
 `login` sets a 1280×800 viewport at 2x after the first `open`, since the session must exist before `set viewport` works. It fills `#login_form_password` and chooses `Log in only this time`, then waits until it leaves `/users/log-in` and the page has a `/users/log-out` link. It prints the landing URL: the page that sent the user to log in, or `/`.
 
-Use stable handles in this order: the element IDs the templates define (`#create-key-form`, `#token-display-modal`, `#confirm-revoke-btn`, `#api-keys`, `#login_form_password`), then ARIA role and name, then form field names (`input[name="api_key[name]"]`).
+Use stable handles in this order: the element IDs the templates define (`#create-key-form`, `#token-display-modal`, `#revoke-confirm-modal-confirm`, `#api-keys`, `#login_form_password`), then ARIA role and name, then form field names (`input[name="api_key[name]"]`).
+
+Two things on every dev page get in the way of clicks. Both were seen in proof runs:
+
+- The Tidewave dev toolbar sits over the bottom of the sidebar, so clicks on the account switcher fail with `covered by <div#tidewave-toolbar>`. Use the keyboard instead: `$C browser focus '#account-switcher [role=button]'`, then `$C browser focus '#account-switcher a'` and `$C browser press Enter`.
+- A flash (`#flash-info`, `#flash-error`) covers the top-right of the header for a few seconds, including the `Log out` link on `/`. Click the flash to dismiss it before the next click there.
+
+Read flashes by ID (`#flash-info`, `#flash-error`), not `[role=alert]`: the hidden `#client-error` and `#server-error` notices also carry that role.
 
 API calls use the key a feature created through the dashboard:
 
@@ -88,7 +95,7 @@ $C db "select name, type, status from api_keys" api-keys/db-row.txt
 Every run writes to `.verify/goodflows/$RUN_ID/`, where `RUN_ID` is `<UTC yyyymmddThhmmssZ>-<short sha>`. `.verify/` is gitignored, so evidence is never committed. `run.md` holds the full commit SHA, the branch, whether the working tree was clean or dirty (with the changed files), the start time, the URL, and the database. Record each feature or sub-feature you drive, then the outcome:
 
 ```bash
-$C record keys-create "API Keys page → Create key (empty state)" pass api-keys/03-token-shown.png api/me-active.json
+$C record keys-create "API keys page → Create key (empty state)" pass api-keys/03-token-shown.png api/me-active.json
 $C finish pass "one-line summary"      # or fail / partial
 ```
 
@@ -96,7 +103,7 @@ Keep screenshots, ARIA snapshots (`$C browser snapshot -s '<selector>' > file.ar
 
 Proof standards:
 
-- Drive the real user path: dashboard clicks and API calls with a key made in the UI. Do not call context functions with `mix run`, insert rows, or mint keys directly. The smoke script's `mix run` key is setup for a CLI proof, not proof of the API Keys feature.
+- Drive the real user path: dashboard clicks and API calls with a key made in the UI. Do not call context functions with `mix run`, insert rows, or mint keys directly. The smoke script's `mix run` key is setup for a CLI proof, not proof of the API keys feature.
 - Capture the action and the resulting state: the form before submit, the modal or flash after, and a second view (a reloaded table, an API call, or a `db` row).
 - Check side effects next to what is visible: a key that shows `Revoked` must also return 401 from the API.
 - The dev server sends mail to the in-memory Swoosh mailbox at `$GF_URL/dev/mailbox`. That is the production mail boundary, so magic-link and registration mail is read there, never faked. Mailed links say `localhost`; open them with `127.0.0.1` so they use the browser session's cookies.

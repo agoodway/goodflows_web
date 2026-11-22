@@ -38,5 +38,6 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Sign in and sign out](./sign-in.md) covers password login, the magic-link email, wrong passwords, and sign-out.
 - [Account dashboard](./account-dashboard.md) covers the `/dashboard` redirect, the sidebar, and switching between Acme Corp and Globex Industries.
 - [API keys](./api-keys.md) covers creating public and private keys, the one-time token, revoking, and the API's response to each key.
-- [Projects API](./projects-api.md) covers creating, listing, reading, updating, and deleting projects with a dashboard-created key.
+- [Projects API](./projects-api.md) covers creating, listing, reading, updating, and deleting projects with a dashboard-created key, including the owner-or-admin rule for writes.
+- [Projects page](./projects-page.md) covers listing, creating, editing, and deleting projects in the dashboard, and the read-only view for members.
 - [Registration](./registration.md) covers creating an account and confirming it from the dev mailbox.
