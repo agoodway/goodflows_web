@@ -42,4 +42,6 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [API keys](./api-keys.md) covers creating public and private keys, the one-time token, revoking, and the API's response to each key.
 - [Projects API](./projects-api.md) covers creating, listing, reading, updating, and deleting projects with a dashboard-created key, including the owner-or-admin rule for writes.
 - [Projects page](./projects-page.md) covers listing, creating, editing, and deleting projects in the dashboard, and the read-only view for members.
+- [Change requests API](./change-requests-api.md) covers opening a change request with the goodflows CLI, Git facts, a diff scenario set, claims, the review packet and answers, the merge lease, and the merge report.
+- [Verify runs API](./verify-runs-api.md) covers uploading a run folder, how it counts in the verdict, repeat uploads, an unknown scenario set, and the 503 for evidence without object storage.
 - [Registration](./registration.md) covers creating an account and confirming it from the dev mailbox.
