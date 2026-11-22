@@ -7,7 +7,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Launch with `eval "$(.agents/skills/verify-goodflows/scripts/control-goodflows launch)"` from the repository root. This exports `RUN_ID`, `GF_URL` (`http://127.0.0.1:44xx`), and `GF_RUN_DIR`.
 - `C=.agents/skills/verify-goodflows/scripts/control-goodflows` is set in the shell.
 - `$C doctor` prints only `ok` lines.
-- The run database is freshly seeded: `user@example.com` / `password1234password1234` is the owner of `Acme Corp` and a member of `Globex Industries`. Neither account has API keys or projects yet.
+- The run database is freshly seeded: `user@example.com` / `password1234password1234` is the owner of `Acme Corp` and a member of `Globex Industries`. Neither account has API keys. Acme Corp has no projects; Globex Industries has one, `globex-api` (default branch `main`), so the member views have a row.
 - Never drive an instance this run did not launch, including the `web` portal service.
 
 ## Driving conventions

@@ -9,7 +9,7 @@ A signed-in owner or admin lists, creates, edits, and deletes the current accoun
 - `projects-page-validate` keeps the dialog open with the slug rule as the visitor types an invalid slug, and `has already been taken by another project in this account` after submitting a used one.
 - `projects-page-edit` changes only the default branch from `#edit-project-form`, with the flash `Project “<slug>” updated.`
 - `projects-page-delete` deletes a project after the `Delete project` confirmation, with the flash `Project “<slug>” deleted.` A project that still has recipes, test reports, workflow runs, change requests, or verify runs stays, and `#flash-error` reads `“<slug>” still has recipes, so it can't be deleted.` (or the matching blocker).
-- `projects-page-member-readonly` shows a member the list with no create, edit, or delete buttons, and `#projects-read-only` reads `Only account owners and admins can create, edit, or delete projects.` The empty state reads `An account owner or admin can create projects.` without a button.
+- `projects-page-member-readonly` shows a member the list with no create, edit, or delete buttons, and `#projects-read-only` reads `Only account owners and admins can create, edit, or delete projects.` When the account has no projects, the empty state reads `An account owner or admin can create projects.` without a button.
 
 ## How to get to it (user POV)
 
@@ -30,7 +30,7 @@ Preconditions:
 - **Edit.** Run `$C browser find role button click --name "Edit verify-ui"`, `$C browser fill '#edit-project-form #project_default_branch' trunk`, and `$C browser click '#edit-project-form button[type=submit]'`. `#flash-info` reads `Project “verify-ui” updated.` With an Acme `sk_` key exported, `$C api page-show GET /api/v1/projects/verify-ui` returns `default_branch` `trunk`.
 - **Blocked delete.** Create a recipe with `$C api page-recipe POST /api/v1/projects/verify-ui/recipes '{"name":"verify-recipe"}'`. Run `$C browser find role button click --name "Delete verify-ui"`, `$C browser wait '#delete-confirm-modal'`, and `$C browser click '#delete-confirm-modal-confirm'`. `#flash-error` reads `“verify-ui” still has recipes, so it can't be deleted.` and the row stays.
 - **Delete.** Delete the recipe through the API (204), dismiss the flash, and confirm the delete again. `#flash-info` reads `Project “verify-ui” deleted.`, `#projects-empty` returns, and `$C api page-gone GET /api/v1/projects/verify-ui` returns 404.
-- **Member view.** Switch to Globex Industries (see [Account dashboard](./account-dashboard.md)) and open `Projects`. `#projects-read-only` is shown, and `#new-project-btn` and `#empty-new-project-btn` are both absent.
+- **Member view.** Switch to Globex Industries (see [Account dashboard](./account-dashboard.md)) and open `Projects`. The seeded `globex-api` row is listed with default branch `main`, `#projects-read-only` is shown, and `#new-project-btn`, `#empty-new-project-btn`, and every `Edit` or `Delete` button (`[id^=edit-]`, `[id^=delete-]`) are absent.
 - **Proof.** Keep screenshots of the empty state, the invalid and duplicate errors, the created row, the edit dialog, the delete confirmation, the blocked and deleted flashes, and the member view, plus `$C db "select slug, default_branch from projects order by slug" projects-page/db-rows.txt`.
 
 ## Gotchas
@@ -40,5 +40,5 @@ Preconditions:
 - The create and edit dialogs both use the field ID `project_default_branch`. Scope it to the open form.
 - Row, edit, and delete IDs use the project UUID. Use the accessible names `Edit <slug>` and `Delete <slug>` instead.
 - The page cannot add recipes, so a blocked delete needs a recipe made through the API first.
-- Globex has no projects and a member cannot create one, so the member view shows only the empty state. Read-only rows cannot be reached from seed data.
+- Only Globex Industries is seeded with a project. Acme Corp starts empty so the owner recipe can check the empty state first.
 - Flashes cover the top-right of the header for a few seconds. Click the flash before clicking near it.
