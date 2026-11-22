@@ -53,6 +53,7 @@ fi
 cat > "$toolchains/env" <<'ENV'
 export PATH="$HOME/.local/share/goodflows/elixir-1.19.4/bin:$HOME/.local/share/goodflows/otp-28.1.1/bin:$PATH"
 export HEX_CACERTS_PATH=/etc/ssl/certs/ca-certificates.crt
+export MIX_OS_DEPS_COMPILE_PARTITION_COUNT="$(nproc)"
 ENV
 # The supervised postgres service starts this cluster version.
 echo "export GOODFLOWS_PG_MAJOR=$pg_major" >> "$toolchains/env"
@@ -77,6 +78,9 @@ fi
 time mix deps.get --check-locked
 
 echo 'Warming development and test builds and asset tools'
+# Cold builds are dominated by ~80 deps compiled one at a time; Elixir 1.19
+# can spread them over OS processes (dev deps: 80s -> 50s on 4 CPUs).
+export MIX_OS_DEPS_COMPILE_PARTITION_COUNT="$(nproc)"
 time mix compile
 time mix assets.setup
 time mix assets.build
