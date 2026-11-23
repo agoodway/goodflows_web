@@ -72,6 +72,7 @@ config :good_flows,
 # For production it's recommended to configure a different adapter
 # at the `config/runtime.exs`.
 config :good_flows, GoodFlows.Mailer, adapter: Swoosh.Adapters.Local
+config :good_flows, :mailer_from, {"GoodFlows", "contact@example.com"}
 
 # Configure esbuild (the version is required)
 config :esbuild,
