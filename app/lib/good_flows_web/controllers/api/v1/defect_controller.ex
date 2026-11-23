@@ -39,8 +39,10 @@ defmodule GoodFlowsWeb.Api.V1.DefectController do
     description: """
     Records a defect found after a merge, naming exactly one of
     `change_request` (a number of the project) or `commit`. A commit is
-    attributed to the earliest merged change request whose merged head's
-    `git-facts` commits list it, else stored with `change_request: null`
+    attributed to the earliest merged change request whose `merged_commit`
+    is that SHA or whose merged head's `git-facts` commits list it, so the
+    commit a squash or rebase merge created on the target also matches,
+    else stored with `change_request: null`
     and `attribution: "unattributed"`; attribution never changes later.
     Recording a defect changes no policy and recomputes no verdict.
     Strict JSON, 64 KiB.

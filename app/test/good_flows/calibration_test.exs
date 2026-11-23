@@ -144,6 +144,29 @@ defmodule GoodFlows.CalibrationTest do
       assert id == cr.id and commit == sha(1)
     end
 
+    test "a merged commit the Git facts do not list matches, with or without a head", ctx do
+      rebased = merged(ctx, 42, commits: [sha(1)])
+
+      {:ok, headless} =
+        GoodFlows.ChangeRequests.create(ctx.account, ctx.project, ctx.api_key, %{
+          "title" => "t",
+          "source_branch" => "b"
+        })
+
+      {:ok, headless} =
+        GoodFlows.ChangeRequests.report_merge(headless, ctx.api_key, %{
+          "merged_commit" => sha(500),
+          "target_branch" => headless.target_branch
+        })
+
+      for {commit, cr} <- [{rebased.merged_commit, rebased}, {sha(500), headless}] do
+        assert {:ok, %Defect{attribution: "commit", change_request_id: id}} =
+                 Calibration.record_defect(ctx.project, ctx.api_key, %{"commit" => commit})
+
+        assert id == cr.id
+      end
+    end
+
     test "several matches pick the earliest merged", ctx do
       _late = merged(ctx, 41, commits: [sha(1)], merged_at: ~U[2026-11-03 09:00:00.000000Z])
       early = merged(ctx, 42, commits: [sha(1)], merged_at: ~U[2026-11-02 10:00:00.000000Z])
@@ -321,13 +344,21 @@ defmodule GoodFlows.CalibrationTest do
       sweep = file("app/lib/good_flows/caches/sweep.ex")
       by_commit = merged(ctx, 42, commits: [sha(1)], files: [migration], policy_version: 1)
       by_number = merged(ctx, 43, files: [sweep], policy_version: 1)
+      by_merged_commit = merged(ctx, 44, files: [migration], policy_version: 1)
 
       {:ok, _} = Calibration.record_defect(ctx.project, ctx.api_key, %{"commit" => sha(1)})
+
+      {:ok, _} =
+        Calibration.record_defect(ctx.project, ctx.api_key, %{
+          "commit" => by_merged_commit.merged_commit
+        })
+
       defect!(by_number)
       assert Repo.get_by!(Defect, change_request_id: by_commit.id).attribution == "commit"
+      assert Repo.get_by!(Defect, change_request_id: by_merged_commit.id).attribution == "commit"
 
       report = report!(ctx)
-      assert [%{glob: "app/priv/repo/migrations/**", defect_count: 1}] = report.globs
+      assert [%{glob: "app/priv/repo/migrations/**", defect_count: 2}] = report.globs
       assert report.unmatched_defect_count == 1
     end
 

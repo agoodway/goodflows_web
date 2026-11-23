@@ -8,8 +8,8 @@ defmodule GoodFlows.Calibration do
 
   `record_defect/3` stores a defect naming exactly one change request
   number or commit SHA. A commit is attributed, once, to the earliest
-  `merged_at` merged change request whose merged head's `git-facts`
-  commits list it, or stored unattributed. The `defect_recorded` event is
+  `merged_at` merged change request whose `merged_commit` is that SHA or
+  whose merged head's `git-facts` commits list it, or stored unattributed. The `defect_recorded` event is
   recorded in the same transaction, with the attributed change request's
   number (or nil). `list_defects/2` pages a project's defects newest
   first. `report/2` is computed on read for a `[from, to)` window of
@@ -138,15 +138,16 @@ defmodule GoodFlows.Calibration do
   defp attribute(project, %{commit: commit}) do
     query =
       from c in ChangeRequest,
-        join: f in GitFacts,
+        left_join: f in GitFacts,
         on: f.change_request_id == c.id and f.head == c.merged_head,
         where:
           c.project_id == ^project.id and c.state == "merged" and
-            fragment(
-              "?->'commits' @> jsonb_build_array(jsonb_build_object('sha', ?::text))",
-              f.document,
-              ^commit
-            ),
+            (c.merged_commit == ^commit or
+               fragment(
+                 "?->'commits' @> jsonb_build_array(jsonb_build_object('sha', ?::text))",
+                 f.document,
+                 ^commit
+               )),
         order_by: [asc: c.merged_at, asc: c.number],
         limit: 1
 
@@ -470,9 +471,11 @@ defmodule GoodFlows.Calibration do
 
   defp defect_files(_defect, nil), do: []
 
+  # A commit matched as the merged commit, not in `commits`, gets the diff:
+  # a squash or merge commit holds all of it, and the merge method is unknown.
   defp defect_files(%Defect{attribution: "commit", commit: commit}, document) do
     case Enum.find(document["commits"], &(&1["sha"] == commit)) do
-      nil -> []
+      nil -> paths(document["diff"]["files"])
       found -> paths(found["changed_files"])
     end
   end

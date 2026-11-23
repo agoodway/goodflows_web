@@ -65,11 +65,16 @@ A defect body SHALL carry exactly one of `change_request` (a change request numb
 
 ### Requirement: A commit is attributed to the earliest merged change request that contains it
 
-For a defect naming `commit`, the server SHALL search the commits of the `git-facts` report for the merged head of every `merged` change request of the project. One match attributes the defect to that change request; several match the one with the earliest `merged_at`; none stores it with `change_request: null` and `attribution: "unattributed"`. Attribution is fixed when the defect is stored.
+For a defect naming `commit`, the server SHALL search the `merged_commit` and the commits of the `git-facts` report for the merged head of every `merged` change request of the project, so the commit a squash or rebase merge created on the target branch also matches. One match attributes the defect to that change request; several match the one with the earliest `merged_at`; none stores it with `change_request: null` and `attribution: "unattributed"`. Attribution is fixed when the defect is stored.
 
 #### Scenario: One match
 
 - **WHEN** CR 42 is `merged` and its merged head's `git-facts` lists commit `c3d4e5f`, and a client posts `{"commit": "c3d4e5f…"}`
+- **THEN** the API responds `201` with `change_request: 42` and `attribution: "commit"`
+
+#### Scenario: Merged commit of a rebase merge
+
+- **WHEN** CR 42 was rebase merged and reported with `merged_commit` `f6a7b8c`, which its `git-facts` does not list, and a client posts `{"commit": "f6a7b8c…"}`
 - **THEN** the API responds `201` with `change_request: 42` and `attribution: "commit"`
 
 #### Scenario: Several matches
@@ -169,7 +174,7 @@ For each `rule` in the `merge.reasons` of a change request merged in the window,
 
 ### Requirement: The report breaks defects down by path glob
 
-For each `paths` glob of the policy versions that judged change requests in the window, the report SHALL count defects whose files match the glob. A defect's files are its commit's `changed_files` when attributed by commit, else the merged head's diff files. Defects with no file matching any glob MUST be counted as `unmatched_defect_count`.
+For each `paths` glob of the policy versions that judged change requests in the window, the report SHALL count defects whose files match the glob. A defect's files are its commit's `changed_files` when attributed by a commit its `git-facts` lists, else the merged head's diff files. Defects with no file matching any glob MUST be counted as `unmatched_defect_count`.
 
 #### Scenario: Matched glob
 
