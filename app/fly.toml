@@ -1,0 +1,37 @@
+# Fly.io configuration: one always-on machine in Ashburn (iad).
+# Deploy from app/ with `fly deploy --ha=false`.
+
+app = "goodflows"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "60s"
+
+[build]
+
+[deploy]
+  release_command = "/app/bin/migrate"
+
+[env]
+  PHX_HOST = "goodflows.fly.dev"
+  PORT = "8080"
+  # Fly Postgres and the private network are IPv6 only.
+  ECTO_IPV6 = "true"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # PgFlow workers and schedulers run in this machine, so it never stops.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 1000
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
