@@ -40,6 +40,7 @@ npm-debug.log
 .env
 .env.local
 .env.*.local
+.env.prod
 !.env.sample
 
 # Dialyzer PLT files

@@ -305,6 +305,7 @@ if config_env() == :prod do
       """
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
+  db_ssl? = System.get_env("ECTO_SSL", "true") in ~w(true 1)
 
   pool_size = String.to_integer(System.get_env("POOL_SIZE") || "10")
   upload_cap = String.to_integer(System.get_env("TEST_REPORT_MAX_CONCURRENT_UPLOADS", "2"))
@@ -317,7 +318,7 @@ if config_env() == :prod do
   end
 
   config :good_flows, GoodFlows.Repo,
-    # ssl: true,
+    ssl: db_ssl?,
     url: database_url,
     pool_size: pool_size,
     # For machines with several cores, consider starting multiple pools of `pool_size`
@@ -383,21 +384,17 @@ if config_env() == :prod do
   #
   # Check `Plug.SSL` for all available options in `force_ssl`.
 
-  # ## Configuring the mailer
-  #
-  # In production you need to configure the mailer to use a different adapter.
-  # Here is an example configuration for Mailgun:
-  #
-  #     config :good_flows, GoodFlows.Mailer,
-  #       adapter: Swoosh.Adapters.Mailgun,
-  #       api_key: System.get_env("MAILGUN_API_KEY"),
-  #       domain: System.get_env("MAILGUN_DOMAIN")
-  #
-  # Most non-SMTP adapters require an API client. Swoosh supports Req, Hackney,
-  # and Finch out-of-the-box. This configuration is typically done at
-  # compile-time in your config/prod.exs:
-  #
-  #     config :swoosh, :api_client, Swoosh.ApiClient.Req
-  #
-  # See https://swoosh.hexdocs.pm/Swoosh.html#module-installation for details.
+  # Postmark mailer adapter
+  config :good_flows, GoodFlows.Mailer,
+    adapter: Swoosh.Adapters.Postmark,
+    api_key:
+      System.get_env("POSTMARK_API_KEY") ||
+        raise("environment variable POSTMARK_API_KEY is missing.")
+
+  # Mailer from address
+  config :good_flows,
+         :mailer_from,
+         {System.get_env("MAILER_FROM_NAME", "GoodFlows"),
+          System.get_env("MAILER_FROM_EMAIL") ||
+            raise("environment variable MAILER_FROM_EMAIL is missing.")}
 end

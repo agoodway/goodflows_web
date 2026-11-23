@@ -26,3 +26,7 @@ build:
 clean:
     mix clean
     rm -rf _build deps
+
+# Sync .env.prod to Fly secrets (dry-run by default, pass --execute to apply)
+fly-secrets *args:
+    ./scripts/env-to-fly-secrets.sh -f .env.prod {{args}}

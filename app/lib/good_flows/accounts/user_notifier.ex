@@ -12,7 +12,7 @@ defmodule GoodFlows.Accounts.UserNotifier do
     email =
       new()
       |> to(recipient)
-      |> from({"GoodFlows", "contact@example.com"})
+      |> from(Application.fetch_env!(:good_flows, :mailer_from))
       |> subject(subject)
       |> text_body(body)
 
