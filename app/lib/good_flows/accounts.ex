@@ -327,6 +327,21 @@ defmodule GoodFlows.Accounts do
   end
 
   @doc """
+  The email of each membership of the account, as `%{account_user_id =>
+  email}`, for pages that name who did something.
+  """
+  @spec member_emails(Account.t()) :: %{Ecto.UUID.t() => String.t()}
+  def member_emails(%Account{id: account_id}) do
+    Repo.all(
+      from au in AccountUser,
+        join: u in assoc(au, :user),
+        where: au.account_id == ^account_id,
+        select: {au.id, u.email}
+    )
+    |> Map.new()
+  end
+
+  @doc """
   Creates an account.
   """
   def create_account(attrs \\ %{}) do

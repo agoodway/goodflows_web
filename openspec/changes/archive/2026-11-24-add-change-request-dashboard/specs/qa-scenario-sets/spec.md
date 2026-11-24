@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Decisions record who decided and how
-Each decision SHALL store `decision` (`approve` or `reject`), the membership, the key, the digest, the `note` (null for approvals), the time, and the `channel`: `cli` for every decision made through the API, and `dashboard`, with the key null, for a decision recorded by a review answer made in the dashboard. A decision with the `decision` and `note` of the digest's latest decision, when that was made by the same membership, MUST respond `200` and add no row. Decision responses MUST include `decision`, `digest`, `note`, `decided_by` (with `user_id`), `decided_at` and `channel`.
+Each decision SHALL store `decision` (`approve` or `reject`), the membership, the key, the digest, the `note` (null for approvals), the time, and the `channel`. A decision with the `decision` and `note` of the digest's latest decision, when that was made by the same membership, MUST respond `200` and add no row. Decision responses MUST include `decision`, `digest`, `note`, `decided_by` (with `user_id`), `decided_at` and `channel`.
 
 #### Scenario: Approval record
 - **WHEN** membership M approves digest `d2` with key K
@@ -26,6 +26,11 @@ Each decision SHALL store `decision` (`approve` or `reject`), the membership, th
 #### Scenario: Public key reads decisions
 - **WHEN** a client with a `pk_` key reads a version with a rejection
 - **THEN** that decision has `note` null and `decided_by.user_id` null
+
+## ADDED Requirements
+
+### Requirement: Decisions record their channel
+A decision's `channel` SHALL be `cli` for every decision made through the API, and `dashboard`, with the key null, for a decision recorded by a review answer made in the dashboard.
 
 #### Scenario: Approval from the dashboard
 - **WHEN** membership M approves the `scenario_set_approval` item for digest `d2` in the dashboard

@@ -27,14 +27,16 @@ defmodule GoodFlows.ProjectEvents do
   """
   import Ecto.Query
 
-  alias GoodFlows.Accounts.ApiKey
+  alias GoodFlows.Accounts.AccountUser
   alias GoodFlows.ProjectEvents.{Event, Listener}
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
+  alias GoodFlows.Review
 
-  @types ~w(cr_state_changed verdict_changed scenario_set_uploaded scenario_set_approved
-            scenario_set_rejected answer_recorded task_created policy_version_created
-            lease_acquired lease_renewed lease_expired lease_released defect_recorded)
+  @types ~w(cr_state_changed cr_retargeted cr_parent_changed verdict_changed
+            scenario_set_uploaded scenario_set_approved scenario_set_rejected answer_recorded
+            task_created task_completed policy_version_created lease_acquired lease_renewed
+            lease_expired lease_released defect_recorded)
   @default_limit 100
   @max_limit 200
   @max_wait 30
@@ -59,8 +61,9 @@ defmodule GoodFlows.ProjectEvents do
 
   @doc """
   Inserts an event of `type` for the project inside the caller's
-  transaction. `number` is the change request number or nil; `api_key`
-  (with its membership) is the actor, or nil for a server-made event.
+  transaction. `number` is the change request number or nil; `actor`
+  (`t:GoodFlows.Review.actor/0`) is who caused it, or nil for a
+  server-made event. The event records the actor's membership and key.
 
   Lock order: call it after the transaction's change request row locks.
   It takes the per-project event advisory lock, held until commit, so a
@@ -69,9 +72,11 @@ defmodule GoodFlows.ProjectEvents do
   the project row, so a transaction that locks the project row and then
   change request rows must use `FOR NO KEY UPDATE`, never `FOR UPDATE`.
   """
-  @spec record(Ecto.UUID.t(), pos_integer() | nil, String.t(), map(), ApiKey.t() | nil) ::
+  @spec record(Ecto.UUID.t(), pos_integer() | nil, String.t(), map(), Review.actor() | nil) ::
           Event.t()
-  def record(project_id, number, type, data, api_key) when type in @types do
+  def record(project_id, number, type, data, actor) when type in @types do
+    {membership_id, key_id} = actor_ids(actor)
+
     Repo.query!(
       "SELECT pg_advisory_xact_lock(hashtextextended('project_events:' || $1, 0))",
       [project_id],
@@ -85,8 +90,8 @@ defmodule GoodFlows.ProjectEvents do
           change_request_number: number,
           type: type,
           data: data,
-          actor_membership_id: api_key && api_key.account_user_id,
-          actor_key_id: api_key && api_key.id,
+          actor_membership_id: membership_id,
+          actor_key_id: key_id,
           inserted_at: DateTime.utc_now()
         },
         log: false
@@ -95,6 +100,11 @@ defmodule GoodFlows.ProjectEvents do
     Repo.query!("SELECT pg_notify($1, $2)", [Listener.channel(), project_id], log: false)
     event
   end
+
+  defp actor_ids(nil), do: {nil, nil}
+
+  defp actor_ids(%{account_user: %AccountUser{id: membership_id}, api_key: api_key}),
+    do: {membership_id, api_key && api_key.id}
 
   @doc """
   Reads one page of the project's events, oldest first. Params: `"after"`

@@ -25,6 +25,7 @@ defmodule GoodFlows.ReviewPolicies do
   alias GoodFlows.ProjectEvents
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
+  alias GoodFlows.Review
   alias GoodFlows.ReviewPolicies.{Document, Glob, Version}
 
   @default_page_size 50
@@ -181,7 +182,7 @@ defmodule GoodFlows.ReviewPolicies do
           nil,
           "policy_version_created",
           %{"version" => version.version, "note" => version.note},
-          api_key
+          Review.cli_actor(account_user, api_key)
         )
 
         {:created, version}

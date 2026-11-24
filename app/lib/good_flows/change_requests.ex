@@ -32,9 +32,12 @@ defmodule GoodFlows.ChangeRequests do
 
   A recompute resolves a `needs_review` verdict with the review answers at
   the head (`GoodFlows.Review.Items.resolve/3`) and records a
-  `verdict_changed` event when the state, head or policy version changed.
-  State changes and merge reports record `cr_state_changed`, and a new
-  head makes the change request's `open` review tasks `stale`.
+  `verdict_changed` event when anything the verdict shows changed: its
+  state, head, policy version, reasons, scenarios, coverage, counted runs
+  or review counts. State changes and merge reports record
+  `cr_state_changed`, a retarget `cr_retargeted` and a parent change
+  `cr_parent_changed`, and a new head makes the change request's `open`
+  review tasks `stale`.
   """
   import Ecto.Query
 
@@ -138,21 +141,27 @@ defmodule GoodFlows.ChangeRequests do
   One page of `project`'s change requests, `number` descending. Params:
   `"limit"` (1 to #{@max_page_size}, default #{@default_page_size}),
   `"cursor"`, and the exact filters `"state"` and `"source_branch"`.
+
+  Options, which the API never sets: `states:` keeps only change requests
+  in one of the given states (the dashboard's Active filter passes
+  `~w(draft open)`), and `preload:` adds associations to preload, such as
+  `[:verdict]`.
   """
-  @spec list(Project.t(), map()) ::
+  @spec list(Project.t(), map(), keyword()) ::
           {:ok, %{change_requests: [ChangeRequest.t()], next_cursor: String.t() | nil}}
           | {:error, Ecto.Changeset.t()}
-  def list(%Project{id: project_id}, params) do
+  def list(%Project{id: project_id}, params, opts \\ []) do
     with {:ok, filters} <- list_params(params) do
       change_requests =
         ChangeRequest
         |> where(project_id: ^project_id)
         |> filter(:state, filters.state)
+        |> filter_states(Keyword.get(opts, :states))
         |> filter(:source_branch, filters.source_branch)
         |> after_cursor(filters.cursor)
         |> order_by(desc: :number)
         |> limit(^(filters.limit + 1))
-        |> preload([:opened_by_account_user, :parent])
+        |> preload(^([:opened_by_account_user, :parent] ++ Keyword.get(opts, :preload, [])))
         |> Repo.all()
 
       {page, rest} = Enum.split(change_requests, filters.limit)
@@ -163,6 +172,9 @@ defmodule GoodFlows.ChangeRequests do
 
   defp filter(query, _field, nil), do: query
   defp filter(query, field, value), do: where(query, [c], field(c, ^field) == ^value)
+
+  defp filter_states(query, nil), do: query
+  defp filter_states(query, states), do: where(query, [c], c.state in ^states)
 
   defp after_cursor(query, nil), do: query
   defp after_cursor(query, number), do: where(query, [c], c.number < ^number)
@@ -298,7 +310,7 @@ defmodule GoodFlows.ChangeRequests do
       change_request.number,
       "cr_state_changed",
       %{"from" => change_request.state, "to" => to},
-      api_key
+      Review.cli_actor(api_key)
     )
   end
 
@@ -403,13 +415,13 @@ defmodule GoodFlows.ChangeRequests do
   @spec set_parent(ChangeRequest.t(), ApiKey.t(), term()) ::
           {:ok, ChangeRequest.t()}
           | {:error, {:invalid_body, map()} | {:coded_conflict, String.t(), map()}}
-  def set_parent(%ChangeRequest{} = change_request, %ApiKey{}, body) do
+  def set_parent(%ChangeRequest{} = change_request, %ApiKey{} = api_key, body) do
     with :ok <- require_editable(change_request),
          {:ok, number} <- Params.parent(body),
          {:ok, parent} <- parent_by_number(change_request, number) do
       Repo.transaction(fn ->
         Repo.one!(from c in ChangeRequest, where: c.id == ^parent.id, lock: "FOR SHARE")
-        relink(change_request, parent.id)
+        relink(change_request, parent.id, api_key)
       end)
     end
   end
@@ -420,22 +432,37 @@ defmodule GoodFlows.ChangeRequests do
   """
   @spec clear_parent(ChangeRequest.t(), ApiKey.t()) ::
           {:ok, ChangeRequest.t()} | {:error, {:coded_conflict, String.t(), map()}}
-  def clear_parent(%ChangeRequest{} = change_request, %ApiKey{}) do
+  def clear_parent(%ChangeRequest{} = change_request, %ApiKey{} = api_key) do
     with :ok <- require_editable(change_request) do
-      Repo.transaction(fn -> relink(change_request, nil) end)
+      Repo.transaction(fn -> relink(change_request, nil, api_key) end)
     end
   end
 
-  defp relink(change_request, parent_id) do
+  defp relink(change_request, parent_id, api_key) do
     change_request = lock(change_request)
     if require_active(change_request) != :ok, do: Repo.rollback(not_editable())
 
     updated =
       change_request |> ChangeRequest.parent_changeset(parent_id) |> Repo.update!()
 
+    if change_request.parent_id != parent_id do
+      ProjectEvents.record(
+        change_request.project_id,
+        change_request.number,
+        "cr_parent_changed",
+        %{"from" => parent_number(change_request.parent_id), "to" => parent_number(parent_id)},
+        Review.cli_actor(api_key)
+      )
+    end
+
     recompute(updated)
     updated
   end
+
+  defp parent_number(nil), do: nil
+
+  defp parent_number(parent_id),
+    do: Repo.one!(from c in ChangeRequest, where: c.id == ^parent_id, select: c.number)
 
   defp parent_by_number(change_request, number) when number < change_request.number do
     case get(%Project{id: change_request.project_id}, number) do
@@ -472,10 +499,10 @@ defmodule GoodFlows.ChangeRequests do
   @spec retarget(ChangeRequest.t(), ApiKey.t(), term()) ::
           {:ok, ChangeRequest.t()}
           | {:error, {:invalid_body, map()} | {:coded_conflict, String.t(), map()}}
-  def retarget(%ChangeRequest{} = change_request, %ApiKey{}, body) do
+  def retarget(%ChangeRequest{} = change_request, %ApiKey{} = api_key, body) do
     with :ok <- require_editable(change_request),
          {:ok, target} <- Params.retarget(body) do
-      retarget_attempt(change_request, target, @retarget_attempts)
+      retarget_attempt(change_request, target, api_key, @retarget_attempts)
     end
   end
 
@@ -484,10 +511,11 @@ defmodule GoodFlows.ChangeRequests do
   # back and restarts from a fresh read, so no parent is ever locked while
   # the child's lock is held. A link that changes under every attempt is
   # `not_editable`: the change request is being edited concurrently.
-  defp retarget_attempt(change_request, target, attempts) do
-    case Repo.transaction(fn -> retarget_locked(change_request, target) end) do
+  defp retarget_attempt(change_request, target, api_key, attempts) do
+    case Repo.transaction(fn -> retarget_locked(change_request, target, api_key) end) do
       {:error, :parent_moved} when attempts > 1 ->
-        retarget_attempt(Repo.get!(ChangeRequest, change_request.id), target, attempts - 1)
+        change_request = Repo.get!(ChangeRequest, change_request.id)
+        retarget_attempt(change_request, target, api_key, attempts - 1)
 
       {:error, :parent_moved} ->
         {:error, not_editable()}
@@ -497,7 +525,7 @@ defmodule GoodFlows.ChangeRequests do
     end
   end
 
-  defp retarget_locked(change_request, target) do
+  defp retarget_locked(change_request, target, api_key) do
     parent = change_request.parent_id && lock_parent(change_request.parent_id)
     change_request = lock(change_request)
 
@@ -516,6 +544,16 @@ defmodule GoodFlows.ChangeRequests do
 
         updated =
           change_request |> ChangeRequest.target_changeset(target) |> Repo.update!()
+
+        if change_request.target_branch != target do
+          ProjectEvents.record(
+            change_request.project_id,
+            change_request.number,
+            "cr_retargeted",
+            %{"from" => change_request.target_branch, "to" => target},
+            Review.cli_actor(api_key)
+          )
+        end
 
         recompute(updated)
         updated
@@ -796,26 +834,27 @@ defmodule GoodFlows.ChangeRequests do
 
     previous = Repo.get(Verdict, change_request.id)
 
-    Repo.insert!(
-      %Verdict{
-        change_request_id: change_request.id,
-        state: verdict_state,
-        head: verdict.head,
-        policy_version: verdict.policy_version,
-        reasons: verdict.reasons,
-        inputs: verdict.inputs,
-        scenarios: verdict.scenarios,
-        coverage: verdict.coverage,
-        counted_runs: verdict.counted_runs,
-        review: review,
-        computed_at: DateTime.utc_now()
-      },
+    stored = %Verdict{
+      change_request_id: change_request.id,
+      state: verdict_state,
+      head: verdict.head,
+      policy_version: verdict.policy_version,
+      reasons: verdict.reasons,
+      inputs: verdict.inputs,
+      scenarios: verdict.scenarios,
+      coverage: verdict.coverage,
+      counted_runs: verdict.counted_runs,
+      review: review,
+      computed_at: DateTime.utc_now()
+    }
+
+    Repo.insert!(stored,
       on_conflict: {:replace_all_except, [:change_request_id]},
       conflict_target: :change_request_id
     )
 
     record_counted_runs(change_request, grading.runs)
-    record_verdict_changed(change_request, previous, verdict_state, verdict)
+    record_verdict_changed(change_request, previous, stored)
     :ok
   end
 
@@ -846,27 +885,39 @@ defmodule GoodFlows.ChangeRequests do
     end
   end
 
-  defp record_verdict_changed(_change_request, %Verdict{} = previous, state, verdict)
-       when previous.state == state and previous.head == verdict.head and
-              previous.policy_version == verdict.policy_version,
-       do: :ok
+  @verdict_changed_fields [
+    :state,
+    :head,
+    :policy_version,
+    :reasons,
+    :scenarios,
+    :coverage,
+    :counted_runs,
+    :review
+  ]
 
-  defp record_verdict_changed(change_request, previous, state, verdict) do
-    ProjectEvents.record(
-      change_request.project_id,
-      change_request.number,
-      "verdict_changed",
-      %{
-        "from" => previous && previous.state,
-        "to" => state,
-        "head" => verdict.head,
-        "policy_version" => verdict.policy_version
-      },
-      nil
-    )
+  defp record_verdict_changed(change_request, previous, %Verdict{} = verdict) do
+    if previous == nil or
+         verdict_changed_fields_as_stored(previous) != verdict_changed_fields_as_stored(verdict) do
+      ProjectEvents.record(
+        change_request.project_id,
+        change_request.number,
+        "verdict_changed",
+        %{
+          "from" => previous && previous.state,
+          "to" => verdict.state,
+          "head" => verdict.head,
+          "policy_version" => verdict.policy_version
+        },
+        nil
+      )
+    end
 
     :ok
   end
+
+  defp verdict_changed_fields_as_stored(%Verdict{} = verdict),
+    do: verdict |> Map.take(@verdict_changed_fields) |> Jason.encode!() |> Jason.decode!()
 
   defp record_counted_runs(_change_request, []), do: :ok
 

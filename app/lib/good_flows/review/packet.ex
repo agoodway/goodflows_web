@@ -113,23 +113,46 @@ defmodule GoodFlows.Review.Packet do
           scenario["result"] == "passed",
           do: scenario["priority"]
 
-    failing =
-      for %{"rule" => rule, "subject" => [name]} <- verdict.reasons,
-          rule in ~w(required_workflow_missing required_workflow_failed),
-          into: MapSet.new(),
-          do: name
-
-    workflows =
-      for {name, run_id} <- verdict.inputs["required_workflows"] || %{},
-          run_id != nil,
-          not MapSet.member?(failing, name),
-          do: name
-
     %{
       must: Enum.count(scenarios, &(&1 == "must")),
       should: Enum.count(scenarios, &(&1 == "should")),
-      workflows: Enum.sort(workflows)
+      workflows: for({name, "passed"} <- workflows(verdict), do: name)
     }
+  end
+
+  @doc """
+  Each required workflow of `verdict` with its status at the head, by
+  name: `failed` or `missing` when a `required_workflow_failed` or
+  `required_workflow_missing` reason names it, else `passed` when the
+  verdict counted a run of it. The packet's `passed.workflows` are the
+  `passed` names.
+  """
+  @spec workflows(Verdict.t()) :: [{String.t(), String.t()}]
+  def workflows(%Verdict{} = verdict) do
+    subjects = fn rule ->
+      for %{"rule" => ^rule, "subject" => [name]} <- verdict.reasons,
+          into: MapSet.new(),
+          do: name
+    end
+
+    failed = subjects.("required_workflow_failed")
+    missing = subjects.("required_workflow_missing")
+    required = verdict.inputs["required_workflows"] || %{}
+
+    names =
+      required |> Map.keys() |> Enum.concat(failed) |> Enum.concat(missing) |> Enum.uniq()
+
+    for name <- Enum.sort(names) do
+      status =
+        cond do
+          MapSet.member?(failed, name) -> "failed"
+          MapSet.member?(missing, name) -> "missing"
+          required[name] != nil -> "passed"
+          true -> "missing"
+        end
+
+      {name, status}
+    end
   end
 
   defp data(%{kind: "scenario_set_approval", subject: [digest]}, inputs) do

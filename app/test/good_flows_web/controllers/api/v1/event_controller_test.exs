@@ -4,6 +4,7 @@ defmodule GoodFlowsWeb.Api.V1.EventControllerTest do
   import Ecto.Query
   import GoodFlows.ChangeRequestFixtures
   import GoodFlows.GradingFixtures
+  import GoodFlows.MergeFixtures
   import GoodFlows.ReviewFixtures
   import GoodFlows.SpryFixtures
   import OpenApiSpex.TestAssertions
@@ -167,21 +168,46 @@ defmodule GoodFlowsWeb.Api.V1.EventControllerTest do
       assert hd(changes)["actor"]["user_id"]
     end
 
-    test "verdict_changed only when the state, head or policy version changes", ctx do
+    test "verdict_changed when the reasons change under the same state, none for a retry",
+         ctx do
       slug = ctx.project.slug
-      _ = create_cr(ctx.sk_conn, slug)
+      _ = create_cr(ctx.sk_conn, slug, %{"openspec_change" => "add-export"})
       facts!(ctx.sk_conn, slug, 1, sha(1))
       claims!(ctx.sk_conn, slug, 1, sha(1), %{"cr" => 1, "door" => "one_way"})
+
+      digest =
+        ctx.sk_conn
+        |> post_json(cr_path(slug, 1, "/scenario-sets"), set_body(intent_fm("add-export")))
+        |> json_response(201)
+        |> get_in(["data", "digest"])
+
+      _ =
+        ctx.sk_conn
+        |> post_json(cr_path(slug, 1, "/scenario-sets/intent/approvals"), %{"digest" => digest})
+        |> json_response(201)
+
+      runs = "/api/v1/projects/#{slug}/verify-runs"
+      not_run = run_doc(digest, "intent", sha(1), [result("S1"), result("S2", "not_run")])
+      _ = ctx.sk_conn |> post_json(runs, not_run) |> json_response(201)
+      assert "should_not_run" in rules(verdict(ctx.sk_conn, slug, 1))
       before = length(of_type(ctx.sk_conn, ctx, "verdict_changed"))
 
       # A retry of the same facts recomputes with nothing changed.
       facts!(ctx.sk_conn, slug, 1, sha(1))
       assert length(of_type(ctx.sk_conn, ctx, "verdict_changed")) == before
 
-      [event] = ctx.sk_conn |> of_type(ctx, "verdict_changed") |> Enum.take(-1)
+      passed =
+        run_doc(digest, "intent", sha(1), [result("S1"), result("S2")],
+          finished_at: "2026-11-20T11:00:00Z"
+        )
+
+      _ = ctx.sk_conn |> post_json(runs, passed) |> json_response(201)
+      assert rules(verdict(ctx.sk_conn, slug, 1)) == ["one_way_door"]
+
+      assert [event] = ctx.sk_conn |> of_type(ctx, "verdict_changed") |> Enum.drop(before)
 
       assert event["data"] == %{
-               "from" => "pending",
+               "from" => "needs_review",
                "to" => "needs_review",
                "head" => sha(1),
                "policy_version" => 0
@@ -189,6 +215,44 @@ defmodule GoodFlowsWeb.Api.V1.EventControllerTest do
 
       assert event["actor"] == nil
       assert event["number"] == 1
+    end
+
+    test "cr_retargeted, cr_parent_changed and task_completed; pk_ sees no actor", ctx do
+      slug = ctx.project.slug
+      _ = create_cr(ctx.sk_conn, slug)
+      _ = create_cr(ctx.sk_conn, slug)
+      facts!(ctx.sk_conn, slug, 2, sha(1))
+      claims!(ctx.sk_conn, slug, 2, sha(1), %{"cr" => 2, "door" => "one_way"})
+
+      [door] = packet(ctx.sk_conn, slug, 2)["items"]
+      body = %{"head" => sha(1), "answer" => "request_change", "note" => "split it"}
+      _ = ctx.sk_conn |> answer(slug, 2, door["id"], body) |> json_response(201)
+
+      [task] =
+        ctx.sk_conn |> get(cr_path(slug, 2, "/tasks")) |> json_response(200) |> Map.fetch!("data")
+
+      done = cr_path(slug, 2, "/tasks/#{task["id"]}/done")
+      _ = ctx.sk_conn |> post(done) |> json_response(200)
+      _ = ctx.sk_conn |> post(done) |> json_response(200)
+      _ = ctx.sk_conn |> put_parent(slug, 2, 1) |> json_response(200)
+      _ = ctx.sk_conn |> delete(cr_path(slug, 2, "/parent")) |> json_response(200)
+      _ = ctx.sk_conn |> retarget(slug, 2, "release/2") |> json_response(200)
+
+      expected = %{
+        "cr_parent_changed" => [%{"from" => nil, "to" => 1}, %{"from" => 1, "to" => nil}],
+        "cr_retargeted" => [%{"from" => "main", "to" => "release/2"}],
+        "task_completed" => [%{"task_id" => task["id"], "item_id" => door["id"]}]
+      }
+
+      for {type, data} <- expected do
+        events = of_type(ctx.sk_conn, ctx, type)
+        assert Enum.map(events, & &1["data"]) == data
+        assert Enum.all?(events, &(&1["number"] == 2 and &1["actor"]["key_id"] == ctx.sk_key.id))
+
+        public = of_type(ctx.pk_conn, ctx, type)
+        assert Enum.map(public, & &1["data"]) == data
+        assert Enum.all?(public, &(&1["actor"] == nil))
+      end
     end
 
     test "scenario set upload, approval and rejection", ctx do

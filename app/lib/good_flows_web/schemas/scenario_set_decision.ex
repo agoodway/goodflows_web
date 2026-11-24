@@ -19,7 +19,7 @@ defmodule GoodFlowsWeb.Schemas.ScenarioSetDecision do
         properties: %{user_id: %Schema{type: :string, nullable: true}}
       },
       decided_at: %Schema{type: :string, format: :"date-time"},
-      channel: %Schema{type: :string, enum: ["cli"]}
+      channel: %Schema{type: :string, enum: ["cli", "dashboard"]}
     }
   })
 end

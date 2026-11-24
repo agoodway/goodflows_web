@@ -27,6 +27,7 @@ defmodule GoodFlows.Calibration do
   alias GoodFlows.ProjectEvents
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
+  alias GoodFlows.Review
   alias GoodFlows.Review.Answer
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ReviewPolicies.{Document, Glob}
@@ -81,7 +82,7 @@ defmodule GoodFlows.Calibration do
             "severity" => defect.severity,
             "ticket" => defect.ticket
           },
-          api_key
+          Review.cli_actor(api_key)
         )
 
         %{defect | change_request: change_request}

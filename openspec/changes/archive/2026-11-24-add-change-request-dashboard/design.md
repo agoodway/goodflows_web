@@ -50,7 +50,7 @@ Alternative considered: a sidebar item "Change requests" with a project switcher
 
 `ChangeRequests.list/2` becomes `list/3` with an options keyword list that the API never sets: `states: [String.t()]` (the dashboard's Active filter passes `~w(draft open)`) and `preload: [:verdict]`. The API keeps calling it with params only, so its `state` filter still accepts exactly the four states.
 
-`list` already preloads the opener and parent, so a page is a single query for the rows plus one for each preload. The review count is the stored verdict's `review` map (`items`, `cleared`). The packet is not built per row.
+`list` already preloads the opener and parent, so a page is a single query for the rows plus one for each preload. The review count is the stored verdict's `review` map (`items`, `cleared`) on every row, merged and closed rows included, because the merge report stores no review counts. The packet is not built per row.
 
 A merged row shows `merged_verdict_state` and `merged_without_mergeable_verdict`, not the stored verdict. Recompute skips merged and closed change requests, but the stored verdict can still predate the merge report, and the merge-time verdict is the one that matters. A closed row shows no verdict, because nothing keeps it current.
 
@@ -62,7 +62,7 @@ A merged row shows `merged_verdict_state` and `merged_without_mergeable_verdict`
 - `panel/1` with `list/1`: Verdict reasons, Review items, Evidence at head, Details, Merge and History
 - `notice kind="warning"`: merged without a mergeable verdict
 
-The evidence rows come from the packet's `passed.workflows` plus the `required_workflow_failed` and `required_workflow_missing` reasons, the verdict's `scenarios` and `counted_runs`, and the claims front matter's `door`, `safe_because`, `questions` and `left_open` counts.
+The evidence rows come from the packet's `passed.workflows` plus the `required_workflow_failed` and `required_workflow_missing` reasons, the verdict's `scenarios` and `counted_runs`, and the claims front matter's `door`, `safe_because`, `questions` and `left_open` counts. Both the packet's `passed.workflows` and the page's workflow rows come from one function, `Review.Packet.workflows/1`, so they cannot drift apart. A merged or closed change request has no packet: its panel reads the same function on the stored verdict and is titled "Last computed evidence", with a line saying nothing updates it and a "Review count" row with the stored count (the same count the list row shows; no review items are listed), so it is not mistaken for the reasons kept with the merge report.
 
 Item kinds and verdict states get readable names in one map in the page (`sensitive_path` → "Sensitive path", `needs_review` → "Needs review"). Verdict badges use the existing `status_badge` kinds: `mergeable` is `primary`, `blocked` is `error`, and `pending` and `needs_review` are `neutral` with a dot. They are told apart by their words, as DESIGN.md requires. No new badge kind is added.
 
@@ -93,7 +93,7 @@ Alternative considered: mint a hidden per-user API key for dashboard writes. Rej
 
 ### D6. Answers post the head the page showed
 
-The answer dialog stores the packet `head` the page rendered and passes it in the answer body. `{:stale_head, head}` sets the error flash and runs the D3 refresh. `:not_found` means the item is gone at the head, and gets the same treatment. `{:invalid_body, errors}` is shown under the matching field (`note`, `option`). `:forbidden` gets the flash `You can't answer this item` plus a refresh. `:not_active` gets the flash `This change request is no longer open` plus a refresh. The confirm button uses `phx-disable-with`.
+The answer dialog stores the packet `head` the page rendered and passes it in the answer body. `{:stale_head, head}` sets the error flash and runs the D3 refresh. `:not_found` means the item is gone at the current head (a verify run, a diff version or a policy write cleared its reason without a new head), and gets the same refresh, with its own flash `This item no longer needs an answer at this head.` `{:invalid_body, errors}` is shown under the matching field (`note`, `option`). `:forbidden` gets the flash `You can't answer this item` plus a refresh. `:not_active` gets the flash `This change request is no longer open` plus a refresh. The confirm button uses `phx-disable-with`.
 
 ### D7. Every change the pages show records an event
 

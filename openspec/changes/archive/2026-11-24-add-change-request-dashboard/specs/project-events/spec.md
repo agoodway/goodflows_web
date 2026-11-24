@@ -105,16 +105,26 @@ The `data` of each event type SHALL hold the fields in this requirement's scenar
 ## ADDED Requirements
 
 ### Requirement: Change request edits are recorded in the project feed
-The feed SHALL record `cr_retargeted` when a retarget changes a change request's target branch, `cr_parent_changed` when setting or clearing a parent changes it, and `task_completed` when a task moves to `done`. Each is written in the transaction that makes the change, with the change request's `number`. Its `actor` is the request's key and that key's membership. A call that changes nothing, such as a retarget to the current target, a parent set to the current parent, or completing a task that is already `done`, MUST record no event. The OpenAPI document SHALL list the three types among the feed's event types, with the payload fields of each.
+The feed SHALL record `cr_retargeted` when a retarget changes a change request's target branch, `cr_parent_changed` when setting or clearing a parent changes it, and `task_completed` when a task moves to `done`. Each is written in the transaction that makes the change, with the change request's `number`. Its `actor` is the request's key and that key's membership.
 
 #### Scenario: Retarget records one event
 - **WHEN** an `sk_` key retargets change request 42 from `main` to `release/2`
 - **THEN** the feed gains one `cr_retargeted` event with `number` `42` and that key as `actor`
 
+#### Scenario: Rejected retarget
+- **WHEN** a retarget responds with an error
+- **THEN** no `cr_retargeted` event is recorded
+
+### Requirement: Edits that change nothing record no event
+A call that changes nothing, such as a retarget to the current target, a parent set to the current parent, or completing a task that is already `done`, MUST record no event.
+
 #### Scenario: Completing a done task again
 - **WHEN** task `T1` is already `done` and a client completes it again
 - **THEN** no `task_completed` event is recorded
 
-#### Scenario: Rejected retarget
-- **WHEN** a retarget responds with an error
-- **THEN** no `cr_retargeted` event is recorded
+### Requirement: The OpenAPI document lists the edit events
+The OpenAPI document SHALL list the three types among the feed's event types, with the payload fields of each.
+
+#### Scenario: Edit event types in the OpenAPI document
+- **WHEN** a client reads the OpenAPI document
+- **THEN** the project event types include `cr_retargeted`, `cr_parent_changed` and `task_completed`, with the payload fields of each

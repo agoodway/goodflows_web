@@ -8,7 +8,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewController do
   resolves `:number` first. An answer to a change request that is not
   `draft` or `open` is `409` before its body is read
   (`GoodFlowsWeb.Plugs.JsonBody`), so a closed or merged change request is
-  always `409`; see `GoodFlows.Review.answer/5` for the order of the other
+  always `409`; see `GoodFlows.Review.answer/4` for the order of the other
   checks.
   """
   use GoodFlowsWeb, :controller
@@ -132,8 +132,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewController do
     with {:ok, answer} <-
            Review.answer(
              change_request,
-             conn.assigns.current_account_user,
-             api_key,
+             Review.cli_actor(conn.assigns.current_account_user, api_key),
              item_id,
              conn.private.json_body
            ) do
@@ -200,7 +199,12 @@ defmodule GoodFlowsWeb.Api.V1.ReviewController do
     change_request = conn.assigns.change_request
 
     with {:ok, task} <-
-           Review.complete_task(change_request, conn.assigns.current_account_user, task_id) do
+           Review.complete_task(
+             change_request,
+             conn.assigns.current_account_user,
+             conn.assigns.current_api_key,
+             task_id
+           ) do
       render(conn, :task, task: task, number: change_request.number)
     end
   end

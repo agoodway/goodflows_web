@@ -58,7 +58,14 @@ defmodule GoodFlowsWeb.ProjectLive.Index do
 
       <.table id="projects" rows={@streams.projects} empty={@project_count == 0}>
         <:col :let={{_id, project}} label="Slug" class="font-mono font-medium">
-          {project.slug}
+          <.text_link
+            id={"change-requests-#{project.id}"}
+            navigate={
+              ~p"/dashboard/accounts/#{@current_account.id}/projects/#{project.slug}/change-requests"
+            }
+          >
+            {project.slug}
+          </.text_link>
         </:col>
         <:col :let={{_id, project}} label="Default branch">
           <.tag>{project.default_branch}</.tag>
