@@ -10,7 +10,9 @@ services:
   web:
     platforms: [linux]
     cwd: app
+    # Source the toolchain env directly: restoring an orb snapshot rewrites the login profile.
     command: >-
+      . "$HOME/.local/share/goodflows/env" &&
       ../.agents/resume &&
       PHX_HOST="$(printf '%s' "$PUBLIC_URL" | cut -d/ -f3)" exec mix phx.server
     health: /users/log-in
