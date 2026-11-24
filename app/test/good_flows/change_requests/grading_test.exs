@@ -45,6 +45,13 @@ defmodule GoodFlows.ChangeRequests.GradingTest do
   defp verdict(ctx), do: ChangeRequests.verdict(reload(ctx))
   defp rules(ctx), do: Enum.map(verdict(ctx).reasons, &{&1["rule"], &1["subject"]})
 
+  defp explained_with_counts_asserted(ctx) do
+    runs = ctx |> reload() |> ChangeRequests.verify_runs()
+    counts = for %{explanation: :counts, run_id: run_id} <- runs, do: run_id
+    assert Enum.sort(counts) == Enum.sort(verdict(ctx).counted_runs)
+    Map.new(runs, &{&1.run_id, &1.explanation})
+  end
+
   defp upload_set!(ctx, opts \\ []) do
     fm =
       intent_fm(
@@ -106,25 +113,38 @@ defmodule GoodFlows.ChangeRequests.GradingTest do
       run = run!(ctx, ctx.digest, sha(1))
       assert verdict(ctx).counted_runs == [run.run_id]
       assert verdict(ctx).state == "mergeable"
+      assert explained_with_counts_asserted(ctx) == %{run.run_id => :counts}
     end
 
     test "dirty, merge-result and uploading runs do not count", ctx do
       head_facts!(ctx, sha(1))
-      _ = run!(ctx, ctx.digest, sha(1), dirty: true)
-      _ = run!(ctx, ctx.digest, sha(1), merge_result: %{"base" => sha(3), "commit" => sha(4)})
-      _ = run!(ctx, ctx.digest, sha(1), artifacts: [artifact("a", "x")])
+      dirty = run!(ctx, ctx.digest, sha(1), dirty: true)
+
+      merge =
+        run!(ctx, ctx.digest, sha(1), merge_result: %{"base" => sha(3), "commit" => sha(4)})
+
+      uploading = run!(ctx, ctx.digest, sha(1), artifacts: [artifact("a", "x")], dirty: true)
 
       assert verdict(ctx).counted_runs == []
       assert {"scenario_results_missing", ["intent"]} in rules(ctx)
+
+      assert explained_with_counts_asserted(ctx) == %{
+               dirty.run_id => :dirty,
+               merge.run_id => :merge_result,
+               uploading.run_id => :uploading
+             }
     end
 
     test "docs-only commit after the run counts; a code commit does not", ctx do
       run = run!(ctx, ctx.digest, sha(10))
+      assert explained_with_counts_asserted(ctx) == %{run.run_id => :no_git_facts}
       facts!(ctx, sha(10), sha(11), ["docs/usage.md"])
       assert verdict(ctx).counted_runs == [run.run_id]
+      assert explained_with_counts_asserted(ctx) == %{run.run_id => :counts}
 
       facts!(ctx, sha(10), sha(12), ["app/lib/good_flows/caches.ex"])
       assert verdict(ctx).counted_runs == []
+      assert explained_with_counts_asserted(ctx) == %{run.run_id => :commit_not_counted}
     end
 
     test "a diff-set run counts after a docs-only push", ctx do
@@ -144,24 +164,28 @@ defmodule GoodFlows.ChangeRequests.GradingTest do
       assert verdict(dctx).counted_runs == [run.run_id]
       assert verdict(dctx).scenarios["diff"]["graded"]
       refute Enum.any?(rules(dctx), &match?({"diff_set_revision", _}, &1))
+      assert explained_with_counts_asserted(dctx) == %{run.run_id => :counts}
 
       facts!(dctx, sha(10), sha(12), ["app/lib/good_flows/caches.ex"])
       assert verdict(dctx).counted_runs == []
       assert {"diff_set_revision", [sha(10)]} in rules(dctx)
+      assert explained_with_counts_asserted(dctx) == %{run.run_id => :diff_not_at_head}
     end
 
     test "a commit not in the facts (rebase) does not count", ctx do
-      _ = run!(ctx, ctx.digest, sha(20))
+      run = run!(ctx, ctx.digest, sha(20))
       facts!(ctx, sha(10), sha(11), ["docs/usage.md"])
       assert verdict(ctx).counted_runs == []
+      assert explained_with_counts_asserted(ctx) == %{run.run_id => :commit_not_counted}
     end
 
     test "a stale digest does not count even if approved", ctx do
       head_facts!(ctx, sha(1))
-      _ = run!(ctx, ctx.digest, sha(1))
+      run = run!(ctx, ctx.digest, sha(1))
       d2 = upload_set!(ctx, body: "edited\n")
       approve!(ctx, d2)
       assert verdict(ctx).counted_runs == []
+      assert explained_with_counts_asserted(ctx) == %{run.run_id => :older_version}
     end
 
     test "runs counted at an earlier head stay recorded", ctx do
@@ -172,6 +196,53 @@ defmodule GoodFlows.ChangeRequests.GradingTest do
 
       assert Repo.all(from c in "verify_run_counts", select: c.verify_run_id) ==
                [Ecto.UUID.dump!(run.id)]
+    end
+  end
+
+  describe "explain_runs/4" do
+    test "a run on an unapproved intent set; runs on another change request's set", ctx do
+      digest = upload_set!(ctx)
+      head_facts!(ctx, sha(1))
+      run = run!(ctx, digest, sha(1))
+      assert explained_with_counts_asserted(ctx) == %{run.run_id => :intent_not_approved}
+
+      approve!(ctx, digest)
+      assert explained_with_counts_asserted(ctx) == %{run.run_id => :counts}
+
+      {:ok, other} =
+        ChangeRequests.create(ctx.account, ctx.project, ctx.key, %{
+          "title" => "Other",
+          "source_branch" => "feat/other",
+          "openspec_change" => "add-other"
+        })
+
+      assert ChangeRequests.verify_runs(other) == []
+    end
+
+    test "a listed run names its set version and counts its results", ctx do
+      digest = upload_set!(ctx, scenarios: [scenario("S1"), scenario("S2", "should")])
+      approve!(ctx, digest)
+      head_facts!(ctx, sha(1))
+
+      doc =
+        run_doc(digest, "intent", sha(1), [result("S1", "failed"), result("S2", "not_run")],
+          finished_at: "2026-11-20T10:00:00Z"
+        )
+
+      {:ok, %{run: older}} = VerifyRuns.ingest(ctx.account, ctx.project, ctx.key, doc)
+
+      doc =
+        run_doc(digest, "intent", sha(1), [result("S1"), result("S2")],
+          finished_at: "2026-11-20T11:00:00Z"
+        )
+
+      {:ok, %{run: newer}} = VerifyRuns.ingest(ctx.account, ctx.project, ctx.key, doc)
+
+      assert [first, second] = ChangeRequests.verify_runs(reload(ctx))
+      assert first.run_id == newer.run_id and second.run_id == older.run_id
+      assert %{source: "intent", version: 1, commit: _, explanation: :counts} = first
+      assert first.counts == %{"passed" => 2, "failed" => 0, "not_run" => 0}
+      assert second.counts == %{"passed" => 0, "failed" => 1, "not_run" => 1}
     end
   end
 
@@ -214,9 +285,20 @@ defmodule GoodFlows.ChangeRequests.GradingTest do
 
       assert verdict(ctx).counted_runs == [run.run_id]
 
+      assert explained_with_counts_asserted(ctx) == %{
+               run.run_id => :counts,
+               uploading.run_id => :uploading
+             }
+
       :ok = Fake.put(u.upload_url, u.upload_headers, bytes)
       {:ok, _} = VerifyRuns.commit(ctx.project, ctx.key, uploading.run_id)
       assert Enum.sort(verdict(ctx).counted_runs) == Enum.sort([run.run_id, uploading.run_id])
+
+      assert explained_with_counts_asserted(ctx) == %{
+               run.run_id => :counts,
+               uploading.run_id => :counts
+             }
+
       assert verdict(ctx).state == "mergeable"
     end
 

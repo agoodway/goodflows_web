@@ -14,7 +14,9 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
   alias GoodFlows.ChangeRequests.Verdict
   alias GoodFlows.ProjectEvents
   alias GoodFlows.Repo
+  alias GoodFlows.Review
   alias GoodFlows.Review.Answer
+  alias GoodFlows.ScenarioSets
 
   setup :api_setup
   setup :register_and_log_in_user
@@ -723,6 +725,319 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       refute has_element?(view, "##{path_id}")
       assert has_element?(view, "#details-panel", String.slice(sha(1), 0, 7))
       assert Repo.aggregate(Answer, :count) == 0
+    end
+  end
+
+  describe "evidence panels" do
+    defp head!(ctx, attrs \\ %{}) do
+      cr = create!(ctx, attrs)
+      facts!(ctx.sk_conn, ctx.slug, cr.number, sha(1))
+      claims!(ctx.sk_conn, ctx.slug, cr.number, sha(1), %{"cr" => cr.number})
+      cr
+    end
+
+    defp set!(ctx, number, body) do
+      ctx.sk_conn
+      |> post_json(cr_path(ctx.slug, number, "/scenario-sets"), body)
+      |> json_response(201)
+      |> get_in(["data", "digest"])
+    end
+
+    defp approve_set!(ctx, number, digest) do
+      ctx.sk_conn
+      |> post_json(cr_path(ctx.slug, number, "/scenario-sets/intent/approvals"), %{
+        "digest" => digest
+      })
+      |> json_response(201)
+    end
+
+    defp verify!(ctx, digest, source, results, opts \\ []) do
+      doc = run_doc(digest, source, sha(1), results, opts)
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{ctx.slug}/verify-runs", doc)
+        |> json_response(201)
+
+      doc["run_id"]
+    end
+
+    defp workflow!(ctx, workflow, outcome, started_at, extra \\ %{}, opts \\ []) do
+      doc =
+        sha(1)
+        |> run_document(outcome, [workflow: workflow, started_at: started_at] ++ opts)
+        |> Map.merge(extra)
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{ctx.slug}/workflow-runs", doc)
+        |> json_response(201)
+
+      doc["run_id"]
+    end
+
+    defp short_id(id), do: String.slice(id, 0, 7)
+
+    test "graded sets show status, revision, baseline, the run and each result", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "scenarios" => %{"require_approved_intent" => true, "approver" => "any"}
+      })
+
+      cr = head!(ctx, %{"openspec_change" => "add-export"})
+      intent = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
+      approve_set!(ctx, cr.number, intent)
+
+      diff =
+        set!(
+          ctx,
+          cr.number,
+          set_body(diff_fm(sha(1), [scenario("retry-backoff"), scenario("D2", "should")]))
+        )
+
+      intent_run = verify!(ctx, intent, "intent", [result("S1")])
+      diff_run = verify!(ctx, diff, "diff", [result("retry-backoff", "failed"), result("D2")])
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      assert has_element?(view, "#qa-set-intent-status", "Approved")
+      refute has_element?(view, "#qa-set-intent-not-graded")
+      assert has_element?(view, "#qa-set-intent-version", "v1")
+      assert has_element?(view, "#qa-set-intent-run", short_id(intent_run))
+      assert has_element?(view, "#qa-set-intent-uploaded", "Key #{ctx.sk_key.name}")
+      assert has_element?(view, "#qa-set-diff-status", "Not accepted")
+      assert has_element?(view, "#qa-set-diff-revision", "Names the head")
+      assert has_element?(view, "#qa-set-diff-revision", "baseline v1")
+      assert has_element?(view, "#qa-set-diff-run", short_id(diff_run))
+      assert has_element?(view, "#qa-set-diff", "Must 0/1")
+      assert has_element?(view, "#scenario-diff-retry-backoff", "Scenario retry-backoff")
+      assert has_element?(view, "#scenario-diff-retry-backoff", "Must")
+      assert has_element?(view, "#scenario-diff-retry-backoff", "Failed")
+      assert has_element?(view, "#scenario-diff-D2", "Passed")
+      assert has_element?(view, "#qa-set-diff-decisions", "No decisions on this version.")
+
+      for run_id <- [intent_run, diff_run] do
+        assert has_element?(view, "#verify-run-#{run_id} [data-mark=counts]", "Counts")
+      end
+    end
+
+    test "an unapproved intent set is not graded and lists a dashboard rejection", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{"scenarios" => %{"require_approved_intent" => true}})
+      cr = head!(ctx, %{"openspec_change" => "add-export"})
+      digest = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
+      run_id = verify!(ctx, digest, "intent", [result("S1")])
+
+      {:ok, {:created, _decision}} =
+        Repo.transaction(fn ->
+          ScenarioSets.record_decision(
+            ChangeRequests.lock_active(cr),
+            Review.dashboard_actor(ctx.membership),
+            %{decision: "reject", digest: digest, note: "Check Retry-After"}
+          )
+        end)
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      assert has_element?(view, "#qa-set-intent-status", "Not approved")
+      assert has_element?(view, "#qa-set-intent-not-graded", "Not graded")
+      assert has_element?(view, "#qa-set-intent-not-graded-note", "approved")
+      assert has_element?(view, "#scenario-intent-S1", "No result")
+      assert has_element?(view, "#qa-set-intent-run", "No counted run")
+      assert has_element?(view, "#verify-run-#{run_id}", "Intent set not approved")
+
+      decisions = "#qa-set-intent-decisions"
+      assert has_element?(view, decisions, "Rejected by #{ctx.user.email}")
+      assert has_element?(view, decisions, "dashboard")
+      assert has_element?(view, decisions, "Check Retry-After")
+    end
+
+    test "a graded intent set with only a dirty run shows No result", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "scenarios" => %{"require_approved_intent" => true, "approver" => "any"}
+      })
+
+      cr = head!(ctx, %{"openspec_change" => "add-export"})
+      digest = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
+      approve_set!(ctx, cr.number, digest)
+      dirty = verify!(ctx, digest, "intent", [result("S1")], dirty: true)
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      assert has_element?(view, "#qa-set-intent-status", "Approved")
+      refute has_element?(view, "#qa-set-intent-not-graded")
+      assert has_element?(view, "#scenario-intent-S1", "No result")
+      assert has_element?(view, "#qa-set-intent-run", "No counted run")
+      assert has_element?(view, "#verify-run-#{dirty}", "Dirty tree")
+    end
+
+    test "verify runs: Counts, Dirty tree and Older set version, newest first", ctx do
+      cr = head!(ctx, %{"openspec_change" => "add-export"})
+      fm = intent_fm("add-export", [scenario("S1")])
+      v1 = set!(ctx, cr.number, set_body(fm))
+      older = verify!(ctx, v1, "intent", [result("S1")], finished_at: "2026-11-20T09:00:00Z")
+      v2 = set!(ctx, cr.number, set_body(fm, body: "edited\n"))
+      counted = verify!(ctx, v2, "intent", [result("S1")], finished_at: "2026-11-20T10:00:00Z")
+
+      dirty =
+        verify!(ctx, v2, "intent", [result("S1", "failed")],
+          finished_at: "2026-11-20T11:00:00Z",
+          dirty: true
+        )
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      assert has_element?(view, "#verify-run-#{counted} [data-mark=counts]", "Counts")
+      assert has_element?(view, "#verify-run-#{dirty}", "Dirty tree")
+      assert has_element?(view, "#verify-run-#{dirty}", "0 passed · 1 failed · 0 not run")
+      assert has_element?(view, "#verify-run-#{older}", "Older set version")
+      assert has_element?(view, "#verify-run-#{older}", "Intent v1")
+      assert has_element?(view, "#verify-run-#{counted}", "Intent v2")
+
+      ids =
+        view
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("#verify-runs tr")
+        |> LazyHTML.attribute("id")
+
+      assert ids == Enum.map([dirty, counted, older], &"verify-run-#{&1}")
+    end
+
+    test "workflow runs: required, missing and other rows, and the CI link", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "evidence" => %{"required_workflows" => ["ci", "e2e", "lint"]}
+      })
+
+      cr = head!(ctx)
+      url = "https://github.com/acme/web/actions/runs/1"
+      ci = %{"provider" => "github_actions", "event" => "push", "attempt" => 2, "url" => url}
+      _failed = workflow!(ctx, "ci", "failed", "2026-11-05T10:00:00Z")
+      passed = workflow!(ctx, "ci", "passed", "2026-11-05T11:00:00Z", %{"ci" => ci})
+      _dirty = workflow!(ctx, "ci", "failed", "2026-11-05T12:00:00Z", %{}, dirty: true)
+      _lint = workflow!(ctx, "lint", "passed", "2026-11-05T10:00:00Z")
+
+      _perf =
+        workflow!(ctx, "nightly-perf", "passed", "2026-11-05T10:00:00Z", %{
+          "ci" => %{"provider" => "github_actions", "event" => "schedule"}
+        })
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      ids =
+        view
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("#workflow-runs tr")
+        |> LazyHTML.attribute("id")
+
+      assert ids ==
+               ~w(workflow-run-ci workflow-run-e2e workflow-run-lint workflow-run-nightly-perf)
+
+      assert has_element?(view, "#workflow-run-ci", "Required")
+      assert has_element?(view, "#workflow-run-ci", "Passed")
+      assert has_element?(view, "#workflow-run-ci", "push · attempt 2")
+      assert has_element?(view, ~s(#workflow-run-ci-ci[href="#{url}"]))
+      assert has_element?(view, "#workflow-run-e2e", "Required")
+      assert has_element?(view, "#workflow-run-e2e", "Missing")
+      assert has_element?(view, "#workflow-run-e2e-missing", "No clean run of this workflow")
+      refute has_element?(view, "#workflow-run-e2e", "None")
+      assert has_element?(view, "#workflow-runs-summary", "2 of 3 required passed")
+      assert has_element?(view, "#workflow-runs-summary", String.slice(sha(1), 0, 7))
+      assert has_element?(view, "#workflow-run-lint", "Local run")
+      assert has_element?(view, "#workflow-run-nightly-perf", "Not required")
+      assert has_element?(view, "#workflow-run-nightly-perf", "No CI link")
+      assert passed in (ChangeRequests.verdict(cr).inputs["required_workflows"] |> Map.values())
+    end
+
+    test "a merged change request shows frozen panels with Counts and Not counted", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{"evidence" => %{"required_workflows" => ["ci"]}})
+      cr = head!(ctx)
+      diff = set!(ctx, cr.number, set_body(diff_fm(sha(1), [scenario("D1")])))
+      counted = verify!(ctx, diff, "diff", [result("D1")], finished_at: "2026-11-20T10:00:00Z")
+
+      dirty =
+        verify!(ctx, diff, "diff", [result("D1")],
+          finished_at: "2026-11-20T11:00:00Z",
+          dirty: true
+        )
+
+      _ci = workflow!(ctx, "ci", "passed", "2026-11-05T10:00:00Z")
+      merge!(ctx, cr.number)
+
+      late = verify!(ctx, diff, "diff", [result("D1")], finished_at: "2026-11-20T12:00:00Z")
+      _perf = workflow!(ctx, "nightly-perf", "passed", "2026-11-05T11:00:00Z")
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      refute has_element?(view, "#verify-run-#{late}")
+      refute has_element?(view, "#workflow-run-nightly-perf")
+
+      assert has_element?(view, "#qa-frozen", "Nothing updates it now")
+      assert has_element?(view, "#workflow-runs-frozen", "Nothing updates them now")
+      assert has_element?(view, "#qa-set-diff-version", "v1")
+      assert has_element?(view, "#scenario-diff-D1", "Passed")
+      assert has_element?(view, "#verify-run-#{counted} [data-mark=counts]", "Counts")
+      assert has_element?(view, "#verify-run-#{dirty} [data-mark=not_counted]", "Not counted")
+      refute has_element?(view, "#verify-runs", "Dirty tree")
+      assert has_element?(view, "#workflow-run-ci", "Passed")
+    end
+
+    test "a frozen panel keeps its runs after more than 50 later runs on its digest", ctx do
+      cr = head!(ctx)
+      diff = set!(ctx, cr.number, set_body(diff_fm(sha(1), [scenario("D1")])))
+      counted = verify!(ctx, diff, "diff", [result("D1")], finished_at: "2026-11-20T10:00:00Z")
+      merge!(ctx, cr.number)
+
+      for i <- 1..51 do
+        second = String.pad_leading("#{i}", 2, "0")
+        _ = verify!(ctx, diff, "diff", [result("D1")], finished_at: "2026-11-21T10:00:#{second}Z")
+      end
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      assert has_element?(view, "#verify-run-#{counted} [data-mark=counts]", "Counts")
+      refute has_element?(view, "#no-verify-runs")
+      assert has_element?(view, "#qa-set-diff-run", "Finished")
+    end
+
+    test "a closed change request shows frozen panels with Counts and Not counted", ctx do
+      cr = head!(ctx)
+      diff = set!(ctx, cr.number, set_body(diff_fm(sha(1), [scenario("D1")])))
+      counted = verify!(ctx, diff, "diff", [result("D1")], finished_at: "2026-11-20T10:00:00Z")
+
+      dirty =
+        verify!(ctx, diff, "diff", [result("D1")],
+          finished_at: "2026-11-20T11:00:00Z",
+          dirty: true
+        )
+
+      _smoke = workflow!(ctx, "smoke", "passed", "2026-11-05T10:00:00Z")
+      close!(ctx, cr.number)
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      assert has_element?(view, "#qa-frozen", "closed")
+      assert has_element?(view, "#workflow-runs-frozen")
+      assert has_element?(view, "#scenario-diff-D1", "Passed")
+      assert has_element?(view, "#verify-run-#{counted} [data-mark=counts]", "Counts")
+      assert has_element?(view, "#verify-run-#{dirty} [data-mark=not_counted]", "Not counted")
+      refute has_element?(view, "#verify-runs", "Dirty tree")
+      assert has_element?(view, "#workflow-run-smoke", "Not required")
+    end
+
+    test "a non-required workflow run and a dirty verify run appear without a reload", ctx do
+      cr = head!(ctx)
+      diff = set!(ctx, cr.number, set_body(diff_fm(sha(1), [scenario("D1")])))
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      assert has_element?(view, "#no-workflow-runs")
+      assert has_element?(view, "#no-verify-runs")
+
+      _perf = workflow!(ctx, "nightly-perf", "passed", "2026-11-05T10:00:00Z")
+      _ = project_event(view, ctx)
+      assert has_element?(view, "#workflow-run-nightly-perf", "Not required")
+
+      dirty = verify!(ctx, diff, "diff", [result("D1")], dirty: true)
+      _ = project_event(view, ctx)
+      assert has_element?(view, "#verify-run-#{dirty}", "Dirty tree")
     end
   end
 end

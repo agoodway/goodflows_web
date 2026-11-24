@@ -245,6 +245,29 @@ defmodule GoodFlows.ChangeRequests do
   def verdict(%ChangeRequest{id: id}), do: Repo.get(Verdict, id)
 
   @doc """
+  The change request's verify runs (`Grading.runs_on_sets/2`). For a
+  `draft` or `open` change request each has the `explanation` of
+  `Grading.explain_runs/4` at the current head and policy. A `merged` or
+  `closed` one's policy, facts and approvals may have changed since its
+  stored verdict, so its runs have no `explanation`, and only runs stored
+  at or before `frozen_at` (its verdict's `computed_at`) are listed.
+  """
+  @spec verify_runs(ChangeRequest.t(), DateTime.t() | nil) :: [map()]
+  def verify_runs(change_request, frozen_at \\ nil)
+
+  def verify_runs(%ChangeRequest{state: state} = change_request, _frozen_at)
+      when state in @active_states do
+    policy = ReviewPolicies.compiled(change_request.project_id)
+    facts = current_facts(change_request)
+    document = facts && facts.document
+    grading = Grading.load(change_request, document, policy)
+    Grading.explain_runs(change_request, document, policy, grading)
+  end
+
+  def verify_runs(%ChangeRequest{} = change_request, frozen_at),
+    do: Grading.runs_on_sets(change_request, frozen_at)
+
+  @doc """
   Applies a state change. Asking for the current state is `{:ok, cr}`
   with nothing recorded; any other move the lifecycle does not allow is
   `{:error, :invalid_transition}`. Reopen restores the state from before
@@ -1193,14 +1216,21 @@ defmodule GoodFlows.ChangeRequests do
     Map.new(names, &{&1, Map.get(found, &1)})
   end
 
+  @typedoc """
+  The project event a stored run records for each change request it
+  recomputes: its type, data and actor.
+  """
+  @type run_event :: {String.t(), map(), ApiKey.t() | nil}
+
   @doc """
   Recomputes every `draft` or `open` change request of the project whose
-  head is `commit`. Called in the transaction that stores a workflow run.
+  head is `commit`, and records `run_event` for each. Called in the
+  transaction that stores a workflow run.
   """
-  @spec recompute_for_commit(Ecto.UUID.t(), String.t() | nil) :: :ok
-  def recompute_for_commit(_project_id, nil), do: :ok
+  @spec recompute_for_commit(Ecto.UUID.t(), String.t() | nil, run_event()) :: :ok
+  def recompute_for_commit(_project_id, nil, _run_event), do: :ok
 
-  def recompute_for_commit(project_id, commit) do
+  def recompute_for_commit(project_id, commit, run_event) do
     lock_head(project_id, commit)
 
     change_requests =
@@ -1214,14 +1244,21 @@ defmodule GoodFlows.ChangeRequests do
     if change_requests != [] do
       policy = ReviewPolicies.compiled(project_id)
       Enum.each(change_requests, &recompute(&1, policy))
+      record_run_events(change_requests, run_event)
     end
 
     :ok
   end
 
+  defp record_run_events(change_requests, {type, data, api_key}) do
+    actor = api_key && Review.cli_actor(api_key)
+
+    Enum.each(change_requests, &ProjectEvents.record(&1.project_id, &1.number, type, data, actor))
+  end
+
   # Serializes a Git facts report that moves a head to `commit` with a
   # workflow run stored on `commit`. Without it, under READ COMMITTED, the
-  # run's `recompute_for_commit/2` skips a change request whose head update
+  # run's `recompute_for_commit/3` skips a change request whose head update
   # is not committed yet, while the facts report cannot see the uncommitted
   # run, and neither recomputes with both. Taken before any change request
   # row lock in both paths, so the lock order is the same and cannot
@@ -1238,12 +1275,12 @@ defmodule GoodFlows.ChangeRequests do
 
   @doc """
   Recomputes every `draft` or `open` change request of the project that
-  has a scenario set version with `digest`. Called in the transaction that
-  makes a verify run on that digest `final`, after
-  `GoodFlows.ScenarioSets.lock_digest/2`.
+  has a scenario set version with `digest`, and records `run_event` for
+  each. Called in the transaction that makes a verify run on that digest
+  `final`, after `GoodFlows.ScenarioSets.lock_digest/2`.
   """
-  @spec recompute_for_scenario_digest(Ecto.UUID.t(), String.t()) :: :ok
-  def recompute_for_scenario_digest(project_id, digest) do
+  @spec recompute_for_scenario_digest(Ecto.UUID.t(), String.t(), run_event()) :: :ok
+  def recompute_for_scenario_digest(project_id, digest, run_event) do
     with_set =
       from v in GoodFlows.ScenarioSets.Version,
         where: v.project_id == ^project_id and v.digest == ^digest,
@@ -1262,6 +1299,7 @@ defmodule GoodFlows.ChangeRequests do
     if change_requests != [] do
       policy = ReviewPolicies.compiled(project_id)
       Enum.each(change_requests, &recompute(&1, policy))
+      record_run_events(change_requests, run_event)
     end
 
     :ok

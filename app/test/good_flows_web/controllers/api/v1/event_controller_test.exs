@@ -396,5 +396,54 @@ defmodule GoodFlowsWeb.Api.V1.EventControllerTest do
 
       assert "verdict_changed" in types(ctx.sk_conn, ctx)
     end
+
+    test "workflow_run_stored and verify_run_stored; pk_ sees data as stored, no actor", ctx do
+      slug = ctx.project.slug
+      _ = create_cr(ctx.sk_conn, slug, %{"openspec_change" => "add-export"})
+      facts!(ctx.sk_conn, slug, 1, sha(1))
+
+      digest =
+        ctx.sk_conn
+        |> post_json(cr_path(slug, 1, "/scenario-sets"), set_body(intent_fm("add-export")))
+        |> json_response(201)
+        |> get_in(["data", "digest"])
+
+      workflow = run_document(sha(1), "passed")
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{slug}/workflow-runs", workflow)
+        |> json_response(201)
+
+      verify = run_doc(digest, "intent", sha(1), [result("S1"), result("S2")])
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{slug}/verify-runs", verify)
+        |> json_response(201)
+
+      expected = %{
+        "workflow_run_stored" => %{
+          "run_id" => workflow["run_id"],
+          "workflow" => "ci",
+          "outcome" => "passed",
+          "commit" => sha(1)
+        },
+        "verify_run_stored" => %{
+          "run_id" => verify["run_id"],
+          "commit" => sha(1),
+          "source" => "intent",
+          "digest" => digest
+        }
+      }
+
+      for {type, data} <- expected do
+        assert [%{"number" => 1, "data" => ^data, "actor" => actor}] =
+                 of_type(ctx.sk_conn, ctx, type)
+
+        assert actor["key_id"] == ctx.sk_key.id
+        assert [%{"data" => ^data, "actor" => nil}] = of_type(ctx.pk_conn, ctx, type)
+      end
+    end
   end
 end

@@ -214,6 +214,144 @@ defmodule GoodFlows.ChangeRequests.Grading do
     )
   end
 
+  @typedoc """
+  Why grading ignores a verify run at the head, in the order
+  `explain_runs/4` checks them, or `:counts`.
+  """
+  @type run_status ::
+          :counts
+          | :uploading
+          | :dirty
+          | :merge_result
+          | :older_version
+          | :intent_not_approved
+          | :diff_not_at_head
+          | :no_git_facts
+          | :commit_not_counted
+
+  @typedoc """
+  A verify run on one of a change request's set digests: summary columns,
+  the set `version` its digest belongs to, and the number of results of
+  each outcome.
+  """
+  @type listed_run :: %{
+          id: Ecto.UUID.t(),
+          run_id: String.t(),
+          status: String.t(),
+          dirty: boolean(),
+          merge_result: boolean(),
+          commit: String.t(),
+          inserted_at: DateTime.t(),
+          source: String.t(),
+          digest: String.t(),
+          version: pos_integer() | nil,
+          finished_at: DateTime.t(),
+          counts: %{String.t() => non_neg_integer()}
+        }
+
+  @max_listed_runs 50
+
+  @doc """
+  Up to #{@max_listed_runs} verify runs of the project on the digest of
+  any of the change request's intent or diff set versions, newest
+  `finished_at` first, then `run_id`. With `stored_by`, only runs stored
+  at or before it, applied before the limit. Result counts are summed in
+  SQL, so documents are not loaded.
+  """
+  @spec runs_on_sets(ChangeRequest.t(), DateTime.t() | nil) :: [listed_run()]
+  def runs_on_sets(%ChangeRequest{id: id, project_id: project_id}, stored_by \\ nil) do
+    versions =
+      Repo.all(
+        from v in Version,
+          where: v.change_request_id == ^id,
+          select: {v.source, v.digest, v.version}
+      )
+
+    version_of =
+      Enum.reduce(versions, %{}, fn {source, digest, version}, acc ->
+        Map.update(acc, {source, digest}, version, &max(&1, version))
+      end)
+
+    digests = versions |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+
+    if digests == [] do
+      []
+    else
+      on_sets =
+        from r in Run,
+          where: r.project_id == ^project_id and r.scenario_set_digest in ^digests
+
+      on_sets =
+        if stored_by, do: where(on_sets, [r], r.inserted_at <= ^stored_by), else: on_sets
+
+      Repo.all(
+        from r in on_sets,
+          order_by: [desc: r.finished_at, desc: r.run_id],
+          limit: @max_listed_runs,
+          select: %{
+            id: r.id,
+            run_id: type(r.run_id, :string),
+            status: r.status,
+            dirty: r.dirty,
+            merge_result: r.merge_result,
+            commit: r.source_commit,
+            inserted_at: r.inserted_at,
+            source: r.scenario_set_source,
+            digest: r.scenario_set_digest,
+            finished_at: r.finished_at,
+            counts:
+              fragment(
+                """
+                (SELECT jsonb_build_object(
+                   'passed', count(*) FILTER (WHERE e->>'result' = 'passed'),
+                   'failed', count(*) FILTER (WHERE e->>'result' = 'failed'),
+                   'not_run', count(*) FILTER (WHERE e->>'result' = 'not_run'))
+                 FROM jsonb_array_elements(?->'results') AS e)
+                """,
+                r.document
+              )
+          }
+      )
+      |> Enum.map(&Map.put(&1, :version, Map.get(version_of, {&1.source, &1.digest})))
+    end
+  end
+
+  @doc """
+  `runs_on_sets/2` with each run's `explanation`: `:counts` when the run
+  counts at the head (exactly the runs `load/3` counts), or else the first
+  reason that applies, in the order of `t:run_status/0`. `grading` is
+  `load/3` of the same change request, facts document and policy.
+  """
+  @spec explain_runs(ChangeRequest.t(), map() | nil, map(), t()) :: [
+          %{required(:explanation) => run_status(), optional(atom()) => term()}
+        ]
+  def explain_runs(%ChangeRequest{} = change_request, facts_document, policy, grading) do
+    commits = (facts_document && facts_document["commits"]) || []
+    ignore = Map.get(policy, :ignore, [])
+    sets = %{"intent" => grading.intent, "diff" => grading.diff}
+    explain = &explain(&1, change_request.head, facts_document, commits, ignore, sets)
+
+    change_request
+    |> runs_on_sets()
+    |> Enum.map(&Map.put(&1, :explanation, explain.(&1)))
+  end
+
+  defp explain(run, head, facts_document, commits, ignore, sets) do
+    set = sets[run.source]
+
+    [
+      uploading: fn -> run.status != "final" end,
+      dirty: fn -> run.dirty end,
+      merge_result: fn -> run.merge_result end,
+      older_version: fn -> set == nil or set.digest != run.digest end,
+      intent_not_approved: fn -> not set.graded and run.source == "intent" end,
+      diff_not_at_head: fn -> not set.graded end,
+      no_git_facts: fn -> facts_document == nil end,
+      commit_not_counted: fn -> not counts?(run.commit, head, commits, ignore) end
+    ]
+    |> Enum.find_value(:counts, fn {reason, applies?} -> if applies?.(), do: reason end)
+  end
+
   @doc """
   The verify runs that decide the merge-result check for a lease `base`:
   `final`, clean runs with a `merge_result` whose `base` is `base`, on a

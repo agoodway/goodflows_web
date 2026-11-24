@@ -491,6 +491,11 @@ defmodule GoodFlowsWeb.CoreComponents do
   Pass `empty` with an `:empty_state` slot to show an empty state in place
   of the table. It renders outside the stream container.
 
+  Pass `span_from` (a function of the row returning a column index or nil)
+  with a `:span` slot to replace a row's columns from that index on with
+  one cell that spans them, such as a note for a row with nothing to
+  show there. Below `md` the cell shows without a label.
+
   ## Examples
 
       <.table id="users" rows={@users}>
@@ -504,6 +509,10 @@ defmodule GoodFlowsWeb.CoreComponents do
   attr :row_click, :any, default: nil, doc: "the function for handling phx-click on each row"
   attr :empty, :boolean, default: false, doc: "whether there are no rows to show"
 
+  attr :span_from, :any,
+    default: nil,
+    doc: "the function returning the column index a row's :span cell starts at, or nil"
+
   attr :row_item, :any,
     default: &Function.identity/1,
     doc: "the function for mapping each row before calling the :col and :action slots"
@@ -515,6 +524,7 @@ defmodule GoodFlowsWeb.CoreComponents do
 
   slot :action, doc: "the slot for showing user actions in the last table column"
   slot :empty_state, doc: "shown in place of the table when `empty` is true"
+  slot :span, doc: "the cell that spans the columns from `span_from` on"
 
   def table(assigns) do
     assigns =
@@ -543,12 +553,19 @@ defmodule GoodFlowsWeb.CoreComponents do
             class={@row_click && "data-table-row-link"}
           >
             <td
-              :for={col <- @col}
+              :for={col <- Enum.take(@col, span_index(@span_from, @row_item.(row), @col))}
               data-label={col[:label]}
               phx-click={@row_click && @row_click.(row)}
               class={col[:class]}
             >
               {render_slot(col, @row_item.(row))}
+            </td>
+            <td
+              :if={span_index(@span_from, @row_item.(row), @col) < length(@col)}
+              colspan={length(@col) - span_index(@span_from, @row_item.(row), @col)}
+              data-label=""
+            >
+              {render_slot(@span, @row_item.(row))}
             </td>
             <td :if={@action != []} class="table-actions">
               <div class="flex justify-end gap-2">
@@ -563,6 +580,9 @@ defmodule GoodFlowsWeb.CoreComponents do
     </div>
     """
   end
+
+  defp span_index(nil, _item, cols), do: length(cols)
+  defp span_index(span_from, item, cols), do: span_from.(item) || length(cols)
 
   @doc """
   Renders label/value rows. Long values wrap.

@@ -210,7 +210,11 @@ placeholder as the only label.
 `table/1` has row rules and no zebra striping. Rows react to the pointer only
 when they can be clicked. Below `md` each row stacks into label/value pairs.
 Pass `empty` with an `:empty_state` slot; the empty state renders outside the
-stream container.
+stream container. To replace a row's trailing columns with one note, such as a
+required workflow with no run, pass `span_from` (a function of the row that
+returns a column index, or nil for a normal row) with a `:span` slot; the slot
+renders in one cell spanning the columns from that index on, and below `md` it
+shows without a label. Do not hand-write `colspan` cells in a page.
 
 A dialog is rendered conditionally by its LiveView and names the event that
 closes it. Escape, the ESC button and a click outside the panel all push that

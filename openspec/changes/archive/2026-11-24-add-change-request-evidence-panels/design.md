@@ -28,7 +28,7 @@ What is stored and readable today:
 
 ### D1. Scenario rows come from the verdict, names from the graded version
 
-Rows are `verdict.scenarios[source]["scenarios"]`, in order. Names come from the version the verdict names (`ScenarioSets.get_version/3` with `verdict.scenarios[source]["version"]`, preloading `account_user` and `api_key`), matched by ID. Reading the current version instead could show a name from a version uploaded after the verdict; uploads recompute in the same transaction, so the two only differ for a frozen verdict, where the graded version is the right one. A scenario missing from the version's front matter (not possible today) shows its ID with no name.
+Rows are `verdict.scenarios[source]["scenarios"]`, in order. Names come from the version the verdict names (`ScenarioSets.get_version/3` with `verdict.scenarios[source]["version"]`, which preloads `account_user`; the page preloads `api_key` and shows the uploader's email from the account's member emails it already loads), matched by ID. Reading the current version instead could show a name from a version uploaded after the verdict; uploads recompute in the same transaction, so the two only differ for a frozen verdict, where the graded version is the right one. A scenario missing from the version's front matter (not possible today) shows its ID with no name.
 
 The grading run's finish time and commit come from the `run_id` in the rows, looked up with the verify runs of D3, so no extra query.
 
@@ -44,7 +44,7 @@ The digest set is read from `scenario_set_versions` by change request. Selecting
 
 Alternative considered: compute the reasons in the LiveView from the columns. Rejected because the ignore-path and revision rules would be duplicated and drift.
 
-For a merged or closed change request the policy, facts and approvals may have changed since the stored verdict, so `explain_runs/4` is not called. The page lists the same runs with `Counts` when the run ID is in the stored `counted_runs`, else `Not counted`.
+For a merged or closed change request the policy, facts and approvals may have changed since the stored verdict, so `explain_runs/4` is not called. Its verify runs and non-required workflow runs are limited to those stored at or before the verdict's `computed_at`, so later runs do not appear in the frozen panels. The page lists the same runs with `Counts` when the run ID is in the stored `counted_runs`, else `Not counted`.
 
 ### D4. Workflow rows reuse the verdict's counted run
 
@@ -62,7 +62,7 @@ Alternative considered: one project-level event with `number` null per run. Reje
 
 ### D6. Refresh needs no page change
 
-The page already reloads on any project event of its project. A run that also changes the verdict writes `verdict_changed` in the same transaction; the 500 ms debounce reloads once.
+The page already reloads on any project event of its project. A run that also changes the verdict writes `verdict_changed` in the same transaction; the 500 ms debounce reloads once. LiveView tests send the PubSub message by hand, since the SQL sandbox never commits and `pg_notify` never fires; the end-to-end path (commit, listener, PubSub, refresh) is covered by the verify-goodflows run.
 
 ## Risks / Trade-offs
 

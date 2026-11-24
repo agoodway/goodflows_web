@@ -4,6 +4,15 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   current head with open tasks, the evidence at the head, the merge status
   and the state history. Every account member can view it.
 
+  Below the evidence summary, the QA scenarios panel shows each scenario
+  set the verdict graded, with each scenario's result from the run grading
+  used, the decisions on the set, and the change request's verify runs
+  with why each counts or not (`GoodFlows.ChangeRequests.verify_runs/2`).
+  The workflow runs panel shows one clean run per workflow at the
+  verdict's head, the counted run for a required workflow. A merged or
+  closed change request shows them from its stored verdict, marked as
+  frozen, with only `Counts` or `Not counted` for verify runs.
+
   On a `draft` or `open` change request, a member answers review items
   here (`GoodFlows.Review.answer/4` with a `dashboard` actor). The answer
   is bound to the head the page showed. Actions a member may not take,
@@ -27,6 +36,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   alias GoodFlows.Review.Packet
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ScenarioSets
+  alias GoodFlows.WorkflowRuns
 
   @refresh_ms 500
 
@@ -55,6 +65,21 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   }
 
   @approval_kinds ~w(scenario_set_approval diff_set_weakened)
+
+  @run_marks %{
+    counts: "Counts",
+    not_counted: "Not counted",
+    uploading: "Still uploading",
+    dirty: "Dirty tree",
+    merge_result: "Merge-result run",
+    older_version: "Older set version",
+    intent_not_approved: "Intent set not approved",
+    diff_not_at_head: "Diff set does not name the head",
+    no_git_facts: "No Git facts at the head",
+    commit_not_counted: "Commit does not count at the head"
+  }
+
+  @results %{"passed" => "Passed", "failed" => "Failed", "not_run" => "Not run"}
 
   @impl true
   def mount(%{"slug" => slug, "number" => number}, _session, socket) do
@@ -135,8 +160,87 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
       tasks: tasks,
       lease: lease && Repo.preload(lease, :api_key),
       claims: Packet.claims(change_request),
-      emails: Accounts.member_emails(account)
+      emails: Accounts.member_emails(account),
+      evidence: evidence(socket.assigns.project, change_request, loaded.verdict, active?)
     )
+  end
+
+  defp evidence(_project, _change_request, nil, _active?), do: nil
+
+  defp evidence(project, change_request, verdict, active?) do
+    frozen_at = if active?, do: nil, else: verdict.computed_at
+
+    runs =
+      change_request
+      |> ChangeRequests.verify_runs(frozen_at)
+      |> Enum.map(&Map.put(&1, :mark, run_mark(&1, verdict, active?)))
+
+    %{
+      sets:
+        for(
+          {source, set} <- scenario_sets(verdict),
+          do: set_evidence(change_request, source, set, runs)
+        ),
+      runs: runs,
+      workflows: workflow_rows(project, verdict, frozen_at)
+    }
+  end
+
+  defp run_mark(%{explanation: explanation}, _verdict, true), do: explanation
+
+  defp run_mark(run, verdict, false),
+    do: if(run.run_id in counted_runs(verdict), do: :counts, else: :not_counted)
+
+  defp set_evidence(change_request, source, set, runs) do
+    version =
+      case ScenarioSets.get_version(change_request, source, set["version"]) do
+        {:ok, version} -> Repo.preload(version, :api_key)
+        {:error, :not_found} -> nil
+      end
+
+    rows = set["scenarios"] || []
+    run_id = Enum.find_value(rows, & &1["run_id"])
+
+    %{
+      source: source,
+      set: set,
+      version: version,
+      rows: rows,
+      names: names(version),
+      decisions: ScenarioSets.decisions(change_request, set["digest"]),
+      run_id: run_id,
+      run: run_id && Enum.find(runs, &(&1.run_id == run_id))
+    }
+  end
+
+  defp names(nil), do: %{}
+
+  defp names(version),
+    do: Map.new(version.front_matter["scenarios"] || [], &{&1["id"], &1["name"]})
+
+  defp workflow_rows(_project, %{head: nil}, _frozen_at), do: []
+
+  defp workflow_rows(project, verdict, frozen_at) do
+    required = (verdict.inputs || %{})["required_workflows"] || %{}
+    latest = WorkflowRuns.latest_clean_by_workflow(project, verdict.head, frozen_at)
+    required_rows(project, required, latest) ++ other_rows(required, latest)
+  end
+
+  defp required_rows(project, required, latest) do
+    counted_ids = required |> Map.values() |> Enum.reject(&is_nil/1)
+    not_latest_ids = counted_ids -- Enum.map(latest, & &1.run_id)
+
+    by_id =
+      Map.new(latest ++ WorkflowRuns.summaries(project, not_latest_ids), &{&1.run_id, &1})
+
+    for {name, run_id} <- Enum.sort(required),
+        do: %{workflow: name, required: true, run: run_id && by_id[run_id]}
+  end
+
+  defp other_rows(required, latest) do
+    for run <- latest,
+        not Map.has_key?(required, run.workflow),
+        do: %{workflow: run.workflow, required: false, run: run}
   end
 
   @impl true
@@ -344,6 +448,135 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             </span>
           </:item>
         </.list>
+      </.panel>
+
+      <.panel :if={@evidence} id="qa-panel" title="QA scenarios" icon="hero-clipboard-document-check">
+        <p :if={!@active?} id="qa-frozen" class="mb-4 text-sm text-muted">
+          From the verdict last computed before the change request was {@change_request.state}. Nothing updates it now.
+        </p>
+        <p :if={@evidence.sets == []} id="no-sets" class="text-sm text-muted">
+          No scenario set has been uploaded.
+        </p>
+        <div class="space-y-8">
+          <.qa_set :for={set <- @evidence.sets} set={set} emails={@emails} />
+        </div>
+        <div id="verify-runs-section" class="mt-8 space-y-3">
+          <h3 class="font-mono text-xs font-semibold uppercase tracking-wide text-muted">
+            Verify runs
+          </h3>
+          <.table
+            id="verify-runs"
+            rows={@evidence.runs}
+            row_id={&"verify-run-#{&1.run_id}"}
+            empty={@evidence.runs == []}
+          >
+            <:col :let={run} label="Run">
+              <.tag>{short(run.run_id)}</.tag>
+            </:col>
+            <:col :let={run} label="Set">
+              <span class="whitespace-nowrap">{set_version_label(run)}</span>
+            </:col>
+            <:col :let={run} label="Commit">
+              <.tag>{short(run.commit)}</.tag>
+            </:col>
+            <:col :let={run} label="Finished">
+              <span class="whitespace-nowrap font-mono text-xs">{format_time(run.finished_at)}</span>
+            </:col>
+            <:col :let={run} label="Results">
+              <span class="whitespace-nowrap font-mono text-xs">{result_counts(run.counts)}</span>
+            </:col>
+            <:col :let={run} label="Grading">
+              <span data-mark={run.mark}>
+                <.status_badge kind={if run.mark == :counts, do: "primary", else: "neutral"}>
+                  {run_mark_label(run.mark)}
+                </.status_badge>
+              </span>
+            </:col>
+            <:empty_state>
+              <p id="no-verify-runs" class="p-4 text-sm text-muted">
+                No verify run grades a set of this change request.
+              </p>
+            </:empty_state>
+          </.table>
+        </div>
+      </.panel>
+
+      <.panel
+        :if={@evidence}
+        id="workflow-runs-panel"
+        title="Workflow runs at head"
+        icon="hero-play-circle"
+      >
+        <:actions>
+          <span
+            :if={@loaded.verdict.head}
+            id="workflow-runs-summary"
+            class="block text-right font-normal normal-case tracking-normal text-muted"
+          >
+            {required_passed(@evidence.workflows)} · newest clean run of each workflow on {short(
+              @loaded.verdict.head
+            )}
+          </span>
+        </:actions>
+        <p :if={!@active?} id="workflow-runs-frozen" class="mb-4 text-sm text-muted">
+          The runs the last computed verdict saw on its head. Nothing updates them now.
+        </p>
+        <.table
+          id="workflow-runs"
+          rows={@evidence.workflows}
+          row_id={&"workflow-run-#{&1.workflow}"}
+          empty={@evidence.workflows == []}
+          span_from={&if(&1.run, do: nil, else: 2)}
+        >
+          <:col :let={row} label="Workflow">
+            <span class="flex flex-col items-end gap-0.5 md:items-start">
+              <.tag>{row.workflow}</.tag>
+              <span class="text-xs text-muted">
+                {if row.required, do: "Required", else: "Not required"}
+              </span>
+            </span>
+          </:col>
+          <:col :let={row} label="Outcome">
+            <.status_badge kind={outcome_kind(row.run)}>{outcome_label(row.run)}</.status_badge>
+          </:col>
+          <:col :let={row} label="Started">
+            <span :if={row.run} class="whitespace-nowrap font-mono text-xs">
+              {format_time(row.run.started_at)}
+            </span>
+          </:col>
+          <:col :let={row} label="Duration">
+            <span :if={row.run} class="whitespace-nowrap font-mono text-xs">
+              {format_duration(row.run.duration_ms)}
+            </span>
+          </:col>
+          <:col :let={row} label="Trigger">
+            <span :if={row.run} class="flex flex-col items-end gap-0.5 md:items-start">
+              <span class="text-xs">{trigger(row.run.ci)}</span>
+              <.text_link
+                :if={ci_url(row.run.ci)}
+                id={"workflow-run-#{row.workflow}-ci"}
+                href={ci_url(row.run.ci)}
+              >
+                <span class="text-xs">CI run</span>
+              </.text_link>
+              <span :if={row.run.ci && !ci_url(row.run.ci)} class="text-xs text-muted">
+                No CI link
+              </span>
+            </span>
+          </:col>
+          <:span :let={row}>
+            <span id={"workflow-run-#{row.workflow}-missing"} class="text-xs text-muted">
+              No clean run of this workflow on the head
+            </span>
+          </:span>
+          <:empty_state>
+            <p id="no-workflow-runs" class="p-4 text-sm text-muted">
+              {if @loaded.verdict.head,
+                do: "No clean workflow run on this head.",
+                else: "No head yet."}
+            </p>
+          </:empty_state>
+        </.table>
       </.panel>
 
       <.panel id="details-panel" title="Details" icon="hero-document-text">
@@ -652,6 +885,219 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
 
   defp counted_runs(nil), do: []
   defp counted_runs(verdict), do: verdict.counted_runs || []
+
+  attr :set, :map, required: true
+  attr :emails, :map, required: true
+
+  defp qa_set(assigns) do
+    assigns =
+      assign(assigns,
+        source: assigns.set.source,
+        data: assigns.set.set,
+        version: assigns.set.version
+      )
+
+    ~H"""
+    <section id={"qa-set-#{@source}"} class="space-y-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <h3 class="text-sm font-semibold">{set_title(@source)}</h3>
+        <span id={"qa-set-#{@source}-status"}>
+          <.status_badge kind={if set_ok?(@source, @data), do: "primary", else: "neutral"}>
+            {set_status_label(@source, @data)}
+          </.status_badge>
+        </span>
+        <span :if={!@data["graded"]} id={"qa-set-#{@source}-not-graded"}>
+          <.status_badge dot>Not graded</.status_badge>
+        </span>
+        <span id={"qa-set-#{@source}-tallies"} class="ml-auto flex flex-wrap items-center gap-2">
+          <.status_badge :for={{priority, passed, total, kind} <- tallies(@set.rows)} kind={kind}>
+            {String.capitalize(priority)} {passed}/{total}
+          </.status_badge>
+        </span>
+      </div>
+
+      <dl class="grid grid-cols-1 gap-4 border-y border-base-300 py-3 sm:grid-cols-2 lg:grid-cols-4">
+        <.fact label="Version" id={"qa-set-#{@source}-version"}>
+          <span class="inline-flex flex-wrap items-center gap-1">
+            <.tag>v{@data["version"]}</.tag>
+            <.tag>{short(@data["digest"])}</.tag>
+          </span>
+        </.fact>
+        <.fact :if={@source == "diff"} label="Revision" id="qa-set-diff-revision">
+          <.tag :if={@version && @version.front_matter["revision"]}>
+            {short(@version.front_matter["revision"])}
+          </.tag>
+          <:sub>
+            {if @data["graded"], do: "Names the head", else: "Does not name the head"}
+            <span :if={@data["baseline_version"]}>· baseline v{@data["baseline_version"]}</span>
+          </:sub>
+        </.fact>
+        <.fact label="Uploaded" id={"qa-set-#{@source}-uploaded"}>
+          <span :if={@version} class="font-mono">{format_time(@version.inserted_at)}</span>
+          <:sub :if={@version}>
+            {email(@emails, @version.account_user_id)}
+            <span :if={@version.api_key}>· Key {@version.api_key.name}</span>
+          </:sub>
+        </.fact>
+        <.fact label="Results from" id={"qa-set-#{@source}-run"}>
+          <span :if={!@set.run_id} class="text-muted">No counted run</span>
+          <span :if={@set.run_id} class="inline-flex flex-wrap items-center gap-1">
+            <.tag>{short(@set.run_id)}</.tag>
+            <span :if={@set.run}>on</span>
+            <.tag :if={@set.run}>{short(@set.run.commit)}</.tag>
+          </span>
+          <:sub :if={@set.run}>
+            Finished <span class="font-mono">{format_time(@set.run.finished_at)}</span>
+          </:sub>
+        </.fact>
+      </dl>
+
+      <div :if={!@data["graded"]} id={"qa-set-#{@source}-not-graded-note"}>
+        <.notice kind="info">{not_graded_note(@source)}</.notice>
+      </div>
+
+      <.table
+        id={"qa-set-#{@source}-scenarios"}
+        rows={@set.rows}
+        row_id={&"scenario-#{@source}-#{&1["id"]}"}
+      >
+        <:col :let={row} label="ID">
+          <.tag>{row["id"]}</.tag>
+        </:col>
+        <:col :let={row} label="Scenario">
+          <span class="break-words">{@set.names[row["id"]]}</span>
+        </:col>
+        <:col :let={row} label="Priority">{String.capitalize(row["priority"] || "")}</:col>
+        <:col :let={row} label="Result">
+          <.status_badge kind={result_kind(row["result"])}>
+            {result_label(row["result"])}
+          </.status_badge>
+        </:col>
+      </.table>
+
+      <div id={"qa-set-#{@source}-decisions"} class="space-y-2">
+        <h4 class="font-mono text-xs font-semibold uppercase tracking-wide text-muted">
+          Decisions on v{@data["version"]}
+        </h4>
+        <p :if={@set.decisions == []} class="text-sm text-muted">No decisions on this version.</p>
+        <ul :if={@set.decisions != []} class="space-y-2">
+          <li :for={decision <- @set.decisions} id={"decision-#{decision.id}"} class="text-sm">
+            {decision_verb(@source, decision.decision)} by {email(@emails, decision.account_user_id)}
+            <span class="whitespace-nowrap font-mono text-xs text-muted">
+              · {decision.channel} · {format_time(decision.inserted_at)}
+            </span>
+            <span :if={decision.note} class="block break-words text-muted">“{decision.note}”</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+    """
+  end
+
+  attr :label, :string, required: true
+  attr :rest, :global
+  slot :inner_block, required: true
+  slot :sub
+
+  defp fact(assigns) do
+    ~H"""
+    <div class="min-w-0" {@rest}>
+      <dt class="font-mono text-[0.6875rem] font-semibold uppercase tracking-wider text-muted">
+        {@label}
+      </dt>
+      <dd class="mt-1 break-words text-xs">{render_slot(@inner_block)}</dd>
+      <dd :for={sub <- @sub} class="mt-1 break-words text-xs text-muted">{render_slot(sub)}</dd>
+    </div>
+    """
+  end
+
+  defp set_title("intent"), do: "Intent set"
+  defp set_title("diff"), do: "Diff set"
+
+  defp set_ok?("intent", set), do: set["approved"] == true
+  defp set_ok?("diff", set), do: set["accepted"] == true
+
+  defp set_status_label("intent", set),
+    do: if(set["approved"], do: "Approved", else: "Not approved")
+
+  defp set_status_label("diff", set),
+    do: if(set["accepted"], do: "Accepted", else: "Not accepted")
+
+  defp not_graded_note("intent"),
+    do:
+      "Not graded. No verify run counts until the current version of the intent set is approved."
+
+  defp not_graded_note("diff"),
+    do:
+      "Not graded. The set's revision does not name the head, so no verify run counts until a diff set for the head is uploaded."
+
+  defp tallies(rows) do
+    for priority <- ~w(must should could),
+        of_priority = Enum.filter(rows, &(&1["priority"] == priority)),
+        of_priority != [] do
+      passed = Enum.count(of_priority, &(&1["result"] == "passed"))
+      total = length(of_priority)
+      {priority, passed, total, tally_kind(of_priority, passed, total)}
+    end
+  end
+
+  defp tally_kind(rows, passed, total) do
+    cond do
+      Enum.any?(rows, &(&1["result"] == "failed")) -> "error"
+      passed == total -> "primary"
+      true -> "neutral"
+    end
+  end
+
+  defp result_label(result), do: Map.get(@results, result, "No result")
+
+  defp result_kind("passed"), do: "primary"
+  defp result_kind("failed"), do: "error"
+  defp result_kind(_result), do: "neutral"
+
+  defp decision_verb(_source, "reject"), do: "Rejected"
+  defp decision_verb("diff", "approve"), do: "Accepted"
+  defp decision_verb(_source, "approve"), do: "Approved"
+
+  defp run_mark_label(mark), do: Map.fetch!(@run_marks, mark)
+
+  defp set_version_label(%{source: source, version: nil}), do: String.capitalize(source)
+  defp set_version_label(%{source: source, version: v}), do: "#{String.capitalize(source)} v#{v}"
+
+  defp result_counts(counts),
+    do: "#{counts["passed"]} passed · #{counts["failed"]} failed · #{counts["not_run"]} not run"
+
+  defp required_passed(rows) do
+    required = Enum.filter(rows, & &1.required)
+    passed = Enum.count(required, &match?(%{run: %{outcome: "passed"}}, &1))
+    "#{passed} of #{length(required)} required passed"
+  end
+
+  defp outcome_label(nil), do: "Missing"
+  defp outcome_label(run), do: run.outcome |> String.replace("_", " ") |> String.capitalize()
+
+  defp outcome_kind(%{outcome: "passed"}), do: "primary"
+  defp outcome_kind(%{outcome: "failed"}), do: "error"
+  defp outcome_kind(_run), do: "neutral"
+
+  defp format_duration(nil), do: nil
+  defp format_duration(ms) when ms < 1_000, do: "#{ms}ms"
+  defp format_duration(ms) when ms < 60_000, do: "#{Float.round(ms / 1_000, 1)}s"
+
+  defp format_duration(ms) do
+    seconds = div(ms, 1_000)
+    "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
+  end
+
+  defp trigger(nil), do: "Local run"
+
+  defp trigger(ci) do
+    event = ci["event"] || ci["provider"]
+    if ci["attempt"], do: "#{event} · attempt #{ci["attempt"]}", else: event
+  end
+
+  defp ci_url(%{"url" => url}) when is_binary(url), do: url
+  defp ci_url(_ci), do: nil
 
   defp door_label("one_way"), do: "One-way door"
   defp door_label("two_way"), do: "Two-way door"

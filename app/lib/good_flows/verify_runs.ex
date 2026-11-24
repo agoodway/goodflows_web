@@ -18,8 +18,8 @@ defmodule GoodFlows.VerifyRuns do
 
   A run becoming `final` recomputes, in the same transaction, the verdict
   of every `draft` or `open` change request of the project with a set
-  version of its digest. Presigned URLs are credentials and are never
-  logged.
+  version of its digest, and records a `verify_run_stored` event for
+  each. Presigned URLs are credentials and are never logged.
   """
   import Ecto.Query
 
@@ -185,8 +185,7 @@ defmodule GoodFlows.VerifyRuns do
         })
       end)
 
-    if final?,
-      do: ChangeRequests.recompute_for_scenario_digest(project.id, run.scenario_set_digest)
+    if final?, do: recompute_and_record_stored(project, run, api_key)
 
     %{run: %{run | artifacts: artifacts}, duplicate: false, uploads: presign(artifacts)}
   end
@@ -240,11 +239,11 @@ defmodule GoodFlows.VerifyRuns do
           {:ok, Run.t()}
           | {:error,
              :not_found | :object_store_unavailable | {:invalid_body, DocumentErrors.errors()}}
-  def commit(%Project{} = project, %ApiKey{id: api_key_id}, run_id) do
+  def commit(%Project{} = project, %ApiKey{id: api_key_id} = api_key, run_id) do
     with {:ok, run} <- fetch_own(project, api_key_id, run_id) do
       case run.status do
         "final" -> {:ok, run}
-        "uploading" -> verify_and_finalize(project, run)
+        "uploading" -> verify_and_finalize(project, api_key, run)
       end
     end
   end
@@ -260,7 +259,7 @@ defmodule GoodFlows.VerifyRuns do
     end
   end
 
-  defp verify_and_finalize(project, run) do
+  defp verify_and_finalize(project, api_key, run) do
     artifacts = Repo.all(from a in Artifact, where: a.verify_run_id == ^run.id)
     checks = Enum.map(artifacts, &{&1, check_object(&1)})
 
@@ -277,7 +276,7 @@ defmodule GoodFlows.VerifyRuns do
         })
 
       true ->
-        finalize(project, run)
+        finalize(project, api_key, run)
     end
   end
 
@@ -293,7 +292,7 @@ defmodule GoodFlows.VerifyRuns do
     end
   end
 
-  defp finalize(project, run) do
+  defp finalize(project, api_key, run) do
     Repo.transaction(fn ->
       ScenarioSets.lock_digest(project.id, run.scenario_set_digest)
       now = DateTime.utc_now()
@@ -304,12 +303,27 @@ defmodule GoodFlows.VerifyRuns do
         |> Repo.update_all(set: [status: "final", finalized_at: now, expires_at: nil])
 
       if count == 1 do
-        ChangeRequests.recompute_for_scenario_digest(project.id, run.scenario_set_digest)
+        recompute_and_record_stored(project, run, api_key)
         %{run | status: "final", finalized_at: now, expires_at: nil}
       else
         already_final(run)
       end
     end)
+  end
+
+  defp recompute_and_record_stored(project, run, api_key) do
+    data = %{
+      "run_id" => run.run_id,
+      "commit" => run.source_commit,
+      "source" => run.scenario_set_source,
+      "digest" => run.scenario_set_digest
+    }
+
+    ChangeRequests.recompute_for_scenario_digest(
+      project.id,
+      run.scenario_set_digest,
+      {"verify_run_stored", data, api_key}
+    )
   end
 
   defp already_final(run) do

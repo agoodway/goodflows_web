@@ -12,6 +12,7 @@ defmodule GoodFlows.ChangeRequests.EventsTest do
   import GoodFlows.SpryFixtures
 
   alias GoodFlows.Accounts
+  alias GoodFlows.Caches.ObjectStore.Fake
   alias GoodFlows.ChangeRequests
   alias GoodFlows.ChangeRequests.ChangeRequest
   alias GoodFlows.MergeLeases
@@ -19,6 +20,8 @@ defmodule GoodFlows.ChangeRequests.EventsTest do
   alias GoodFlows.Review
   alias GoodFlows.ScenarioSets
   alias GoodFlows.ScenarioSets.Decision
+  alias GoodFlows.VerifyRuns
+  alias GoodFlows.WorkflowRuns
 
   setup do
     user = user_fixture()
@@ -152,6 +155,95 @@ defmodule GoodFlows.ChangeRequests.EventsTest do
       assert [%Decision{channel: "dashboard", api_key_id: nil} = decision] = Repo.all(Decision)
       assert decision.account_user_id == ctx.account_user.id
       assert ScenarioSets.approved?(version, ScenarioSets.approved_digests(cr))
+    end
+  end
+
+  describe "workflow_run_stored" do
+    test "a run on an active head records one event per change request with the key", ctx do
+      cr = ctx |> create!() |> facts!(ctx, sha(1))
+      doc = run_document(sha(1), "passed")
+
+      {:ok, %{duplicate: false}} = WorkflowRuns.ingest(ctx.account, ctx.project, ctx.api_key, doc)
+
+      assert [event] = events(ctx, "workflow_run_stored")
+      assert event.change_request_number == cr.number
+
+      assert event.data == %{
+               "run_id" => doc["run_id"],
+               "workflow" => "ci",
+               "outcome" => "passed",
+               "commit" => sha(1)
+             }
+
+      assert event.actor_key_id == ctx.api_key.id
+      assert event.actor_membership_id == ctx.account_user.id
+
+      {:ok, %{duplicate: true}} = WorkflowRuns.ingest(ctx.account, ctx.project, ctx.api_key, doc)
+      assert length(events(ctx, "workflow_run_stored")) == 1
+    end
+
+    test "a run on no active head, or on a closed one, records none", ctx do
+      cr = ctx |> create!() |> facts!(ctx, sha(1))
+      {:ok, _closed} = ChangeRequests.transition(cr, ctx.api_key, :close)
+
+      for commit <- [sha(1), sha(2)] do
+        {:ok, _} =
+          WorkflowRuns.ingest(
+            ctx.account,
+            ctx.project,
+            ctx.api_key,
+            run_document(commit, "passed")
+          )
+      end
+
+      assert events(ctx, "workflow_run_stored") == []
+    end
+  end
+
+  describe "verify_run_stored" do
+    setup ctx do
+      cr = create!(ctx, %{"source_branch" => "feat/x"})
+      {:ok, :created, version} = ScenarioSets.upload(cr, ctx.api_key, set_body(diff_fm(sha(1))))
+      %{cr: cr, digest: version.digest}
+    end
+
+    test "a final run records one event with its set", ctx do
+      doc = run_doc(ctx.digest, "diff", sha(1), [result("D1")])
+      {:ok, %{run: run}} = VerifyRuns.ingest(ctx.account, ctx.project, ctx.api_key, doc)
+
+      assert [event] = events(ctx, "verify_run_stored")
+      assert event.change_request_number == ctx.cr.number
+
+      assert event.data == %{
+               "run_id" => run.run_id,
+               "commit" => sha(1),
+               "source" => "diff",
+               "digest" => ctx.digest
+             }
+
+      assert event.actor_key_id == ctx.api_key.id
+
+      {:ok, %{duplicate: true}} = VerifyRuns.ingest(ctx.account, ctx.project, ctx.api_key, doc)
+      assert length(events(ctx, "verify_run_stored")) == 1
+    end
+
+    test "an uploading run records none until its commit makes it final", ctx do
+      bytes = "shot"
+
+      doc =
+        run_doc(ctx.digest, "diff", sha(1), [result("D1")], artifacts: [artifact("a", bytes)])
+
+      {:ok, %{run: run, uploads: [upload]}} =
+        VerifyRuns.ingest(ctx.account, ctx.project, ctx.api_key, doc)
+
+      assert events(ctx, "verify_run_stored") == []
+
+      :ok = Fake.put(upload.upload_url, upload.upload_headers, bytes)
+      {:ok, _final} = VerifyRuns.commit(ctx.project, ctx.api_key, run.run_id)
+      {:ok, _final} = VerifyRuns.commit(ctx.project, ctx.api_key, run.run_id)
+
+      assert [%{data: %{"run_id" => run_id}}] = events(ctx, "verify_run_stored")
+      assert run_id == run.run_id
     end
   end
 end

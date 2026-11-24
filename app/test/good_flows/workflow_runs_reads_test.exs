@@ -356,4 +356,60 @@ defmodule GoodFlows.WorkflowRunsReadsTest do
       end
     end
   end
+
+  describe "latest_clean_by_workflow/2" do
+    defp at!(ctx, workflow, outcome, started_at, attrs \\ %{}) do
+      run_id = Ecto.UUID.generate()
+
+      stored_run(
+        ctx.account,
+        ctx.project,
+        Map.merge(
+          %{
+            run_id: run_id,
+            workflow: workflow,
+            outcome: outcome,
+            started_at: started_at,
+            source_commit: @commit_a
+          },
+          attrs
+        )
+      )
+
+      run_id
+    end
+
+    defp latest(ctx, commit \\ @commit_a),
+      do:
+        ctx.project
+        |> WorkflowRuns.latest_clean_by_workflow(commit)
+        |> Enum.map(&{&1.workflow, &1.run_id})
+
+    test "a retried workflow shows its newest run, one row per workflow", ctx do
+      _failed = at!(ctx, "ci", "failed", ~U[2026-11-05 10:00:00Z])
+      passed = at!(ctx, "ci", "passed", ~U[2026-11-05 11:00:00Z])
+      lint = at!(ctx, "lint", "passed", ~U[2026-11-05 09:00:00Z])
+
+      assert latest(ctx) == [{"ci", passed}, {"lint", lint}]
+    end
+
+    test "a dirty newest run gives way to the older clean one; unknown dirt is clean", ctx do
+      clean = at!(ctx, "ci", "passed", ~U[2026-11-05 10:00:00Z], %{source_dirty: nil})
+      _dirty = at!(ctx, "ci", "failed", ~U[2026-11-05 11:00:00Z], %{source_dirty: true})
+
+      assert latest(ctx) == [{"ci", clean}]
+    end
+
+    test "runs on another commit or project are not shown", ctx do
+      _other_commit =
+        at!(ctx, "ci", "passed", ~U[2026-11-05 10:00:00Z], %{source_commit: @commit_b})
+
+      stored_run(ctx.other, ctx.other_project, %{source_commit: @commit_a})
+
+      assert latest(ctx) == []
+
+      assert [%Run{workflow: "ci", outcome: "passed"}] =
+               WorkflowRuns.latest_clean_by_workflow(ctx.project, @commit_b)
+    end
+  end
 end

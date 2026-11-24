@@ -29,6 +29,10 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
       (`released`, `merged` or `closed`)
     - `defect_recorded`: `defect_id`, `commit`, `attribution`, `severity`, `ticket`
       (`number` is the attributed change request, or null)
+    - `workflow_run_stored`: `run_id`, `workflow`, `outcome`, `commit` (one per `draft` or
+      `open` change request whose head is the run's commit)
+    - `verify_run_stored`: `run_id`, `commit`, `source`, `digest` (one per `draft` or `open`
+      change request with a set version on the run's digest, when the run becomes `final`)
 
     `actor` has `key_id` null for an event caused by a signed-in member in the dashboard.
     Public keys see every `note`, the `ticket` of `defect_recorded` and `actor` as null.
@@ -43,7 +47,7 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
         enum: ~w(cr_state_changed cr_retargeted cr_parent_changed verdict_changed
           scenario_set_uploaded scenario_set_approved scenario_set_rejected answer_recorded
           task_created task_completed policy_version_created lease_acquired lease_renewed
-          lease_expired lease_released defect_recorded)
+          lease_expired lease_released defect_recorded workflow_run_stored verify_run_stored)
       },
       number: %Schema{type: :integer, nullable: true, description: "Change request number"},
       data: %Schema{type: :object},
