@@ -75,9 +75,29 @@ defmodule GoodFlows.Accounts do
 
   """
   def register_user(attrs) do
-    %User{}
-    |> User.email_changeset(attrs)
-    |> Repo.insert()
+    Repo.transact(fn ->
+      with {:ok, user} <- %User{} |> User.email_changeset(attrs) |> Repo.insert(),
+           {:ok, _account} <- create_account(user, default_account_attrs(user)) do
+        {:ok, user}
+      end
+    end)
+  end
+
+  # Named after the email's local part. The random suffix keeps the slug
+  # unique when two users share a local part.
+  defp default_account_attrs(%User{email: email}) do
+    [name | _] = String.split(email, "@")
+
+    base =
+      name
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9]+/, "-")
+      |> String.trim("-")
+
+    base = if base == "", do: "account", else: base
+    suffix = :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
+
+    %{name: name, slug: "#{base}-#{suffix}"}
   end
 
   ## Settings

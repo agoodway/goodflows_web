@@ -40,6 +40,13 @@ defmodule GoodFlows.AccountsFixtures do
     user
   end
 
+  @doc "A user whose default account membership has been removed."
+  def user_without_accounts_fixture(attrs \\ %{}) do
+    user = user_fixture(attrs)
+    GoodFlows.Repo.delete_all(from au in Accounts.AccountUser, where: au.user_id == ^user.id)
+    user
+  end
+
   def user_scope_fixture do
     user = user_fixture()
     user_scope_fixture(user)
