@@ -38,6 +38,15 @@ defmodule GoodFlows.ChangeRequests do
   `cr_state_changed`, a retarget `cr_retargeted` and a parent change
   `cr_parent_changed`, and a new head makes the change request's `open`
   review tasks `stale`.
+
+  History that outlives the event retention is kept in the same
+  transactions: a Git facts report that stores a row records its
+  `previous_head` and `head_kind`; a recompute that stores the first
+  verdict or changes its state, head or policy version appends a
+  `VerdictTransition`, and every recompute opens and closes `ReasonSpan`s
+  by diffing the new reasons against the open spans. A merge closes the
+  open spans with `merged` and stores `fix_iterations` and `head_count`;
+  a close closes them with `closed`.
   """
   import Ecto.Query
 
@@ -49,11 +58,12 @@ defmodule GoodFlows.ChangeRequests do
     GitFactsValidator,
     Grading,
     Params,
+    ReasonSpan,
     RecomputeJob,
     Rules
   }
 
-  alias GoodFlows.ChangeRequests.Verdict
+  alias GoodFlows.ChangeRequests.{Verdict, VerdictTransition}
   alias GoodFlows.JsonDocument
   alias GoodFlows.KeysetCursor
   alias GoodFlows.MergeLeases
@@ -269,6 +279,7 @@ defmodule GoodFlows.ChangeRequests do
 
     updated = change_request |> ChangeRequest.state_changeset(to) |> Repo.update!()
     record_event(change_request.state, to, change_request, api_key)
+    if to == "closed", do: close_open_spans(change_request, "closed", DateTime.utc_now())
     recompute(updated)
     record_state_changed(change_request, to, api_key)
     MergeLeases.record_ended(ended, api_key)
@@ -389,10 +400,13 @@ defmodule GoodFlows.ChangeRequests do
         if(verdict, do: verdict.policy_version, else: current_policy_version(change_request)),
       reasons: if(verdict, do: verdict.reasons, else: []),
       merged_without_mergeable_verdict: verdict_state != "mergeable",
-      merged_without_lease: not leased?
+      merged_without_lease: not leased?,
+      fix_iterations: fix_iterations(change_request),
+      head_count: head_count(change_request)
     }
 
     updated = change_request |> ChangeRequest.merge_changeset(merge) |> Repo.update!()
+    close_open_spans(change_request, "merged", now)
     record_event(state, "merged", change_request, api_key)
     record_state_changed(change_request, "merged", api_key)
     MergeLeases.record_ended(ended, api_key)
@@ -401,6 +415,42 @@ defmodule GoodFlows.ChangeRequests do
   end
 
   defp merge_locked(%ChangeRequest{}, _api_key, _attrs), do: Repo.rollback(:invalid_transition)
+
+  defp fix_iterations(change_request) do
+    if history_predates_head_kinds?(change_request),
+      do: nil,
+      else: count_fixes_after_a_grade(change_request)
+  end
+
+  defp history_predates_head_kinds?(%ChangeRequest{id: id}),
+    do:
+      Repo.exists?(from f in GitFacts, where: f.change_request_id == ^id and is_nil(f.head_kind))
+
+  defp count_fixes_after_a_grade(%ChangeRequest{id: id}) do
+    replaced_head_was_graded_earlier =
+      from g in VerdictTransition,
+        where:
+          g.change_request_id == ^id and g.to_head == parent_as(:fix).from_head and
+            g.to_state in ~w(blocked needs_review) and
+            g.inserted_at < parent_as(:fix).inserted_at,
+        select: 1
+
+    Repo.aggregate(
+      from(t in VerdictTransition,
+        as: :fix,
+        where:
+          t.change_request_id == ^id and t.cause == "head" and
+            t.head_kind in ~w(fast_forward rewrite) and exists(replaced_head_was_graded_earlier)
+      ),
+      :count
+    )
+  end
+
+  defp head_count(%ChangeRequest{id: id}) do
+    Repo.one(
+      from f in GitFacts, where: f.change_request_id == ^id, select: count(f.head, :distinct)
+    )
+  end
 
   @doc """
   Sets the parent of a `draft` or `open` change request to change request
@@ -598,11 +648,52 @@ defmodule GoodFlows.ChangeRequests do
   defp report_git_facts_locked(change_request, api_key, document) do
     lock_head(change_request.project_id, document["head"])
     change_request = lock_active(change_request)
-    status = store_git_facts(change_request, api_key, document)
+    head_kind = head_kind(change_request, document)
+    status = store_git_facts(change_request, api_key, document, head_kind)
     updated = put_head(change_request, document["head"])
-    recompute(updated)
+    recompute(updated, nil, head_kind: if(status == :created, do: head_kind))
     {status, updated}
   end
+
+  defp head_kind(%ChangeRequest{head: nil}, _document), do: "first"
+  defp head_kind(%ChangeRequest{head: head}, %{"head" => head}), do: "retarget"
+
+  defp head_kind(%ChangeRequest{head: previous} = change_request, document) do
+    facts = previous_facts(change_request)
+
+    cond do
+      previous in Enum.map(document["commits"], & &1["sha"]) -> kind_keeping_head(facts, document)
+      rebased?(facts, document) -> "rebase"
+      true -> "rewrite"
+    end
+  end
+
+  defp kind_keeping_head(nil = _no_merge_base_to_compare, _document), do: "fast_forward"
+
+  defp kind_keeping_head(facts, document),
+    do: if(same_merge_base?(facts, document), do: "fast_forward", else: "target_merged")
+
+  defp rebased?(nil, _document), do: false
+
+  defp rebased?(facts, document),
+    do:
+      not same_merge_base?(facts, document) and
+        commit_paths(document) == commit_paths(facts.document)
+
+  defp same_merge_base?(%GitFacts{document: stored}, document),
+    do: stored["target"]["merge_base"] == document["target"]["merge_base"]
+
+  defp previous_facts(%ChangeRequest{id: id, head: head, target_branch: target}) do
+    Repo.one(
+      from f in GitFacts,
+        where: f.change_request_id == ^id and f.head == ^head,
+        order_by: [desc: f.target_branch == ^target, desc: f.inserted_at],
+        limit: 1
+    )
+  end
+
+  defp commit_paths(document),
+    do: Enum.map(document["commits"], fn c -> Enum.map(c["changed_files"], & &1["path"]) end)
 
   @doc """
   Locks the change request row (`FOR UPDATE`) inside the caller's
@@ -621,7 +712,7 @@ defmodule GoodFlows.ChangeRequests do
   def require_active(%ChangeRequest{state: state}) when state in @active_states, do: :ok
   def require_active(%ChangeRequest{}), do: {:error, :not_active}
 
-  defp store_git_facts(change_request, api_key, document) do
+  defp store_git_facts(change_request, api_key, document, head_kind) do
     digest = JsonDocument.digest(document)
 
     row = %{
@@ -631,6 +722,8 @@ defmodule GoodFlows.ChangeRequests do
       target_branch: document["target"]["branch"],
       document: document,
       digest: digest,
+      previous_head: change_request.head,
+      head_kind: head_kind,
       account_user_id: api_key.account_user_id,
       api_key_id: api_key.id,
       inserted_at: DateTime.utc_now()
@@ -803,11 +896,15 @@ defmodule GoodFlows.ChangeRequests do
   policy, `GoodFlows.ReviewPolicies.compiled/1`). `closed` and `merged`
   change requests are skipped. Call it inside the transaction that changed
   an input.
-  """
-  @spec recompute(ChangeRequest.t(), Rules.policy() | nil) :: :ok | :skipped
-  def recompute(change_request, policy \\ nil)
 
-  def recompute(%ChangeRequest{state: state} = change_request, policy)
+  Option `head_kind:` is the kind of the Git facts row the caller just
+  stored for a new head; it is recorded on a transition and on spans
+  closed with cause `head`.
+  """
+  @spec recompute(ChangeRequest.t(), Rules.policy() | nil, keyword()) :: :ok | :skipped
+  def recompute(change_request, policy \\ nil, opts \\ [])
+
+  def recompute(%ChangeRequest{state: state} = change_request, policy, opts)
       when state in @active_states do
     policy = policy || ReviewPolicies.compiled(change_request.project_id)
     facts = current_facts(change_request)
@@ -855,10 +952,13 @@ defmodule GoodFlows.ChangeRequests do
 
     record_counted_runs(change_request, grading.runs)
     record_verdict_changed(change_request, previous, stored)
+    head_kind = Keyword.get(opts, :head_kind)
+    record_transition(change_request, previous, stored, head_kind)
+    record_spans(change_request, previous, stored, head_kind)
     :ok
   end
 
-  def recompute(%ChangeRequest{}, _policy), do: :skipped
+  def recompute(%ChangeRequest{}, _policy, _opts), do: :skipped
 
   defp parent_input(%ChangeRequest{parent_id: nil}), do: nil
 
@@ -912,6 +1012,123 @@ defmodule GoodFlows.ChangeRequests do
         nil
       )
     end
+
+    :ok
+  end
+
+  defp record_transition(change_request, previous, %Verdict{} = verdict, head_kind) do
+    if transition?(previous, verdict) do
+      cause = cause(previous, verdict)
+
+      Repo.insert!(%VerdictTransition{
+        change_request_id: change_request.id,
+        from_state: previous && previous.state,
+        to_state: verdict.state,
+        from_head: previous && previous.head,
+        to_head: verdict.head,
+        policy_version: verdict.policy_version,
+        cause: cause,
+        head_kind: if(cause == "head", do: head_kind),
+        inserted_at: verdict.computed_at
+      })
+    end
+
+    :ok
+  end
+
+  defp transition?(nil, _verdict), do: true
+
+  defp transition?(previous, verdict),
+    do: state_head_and_policy(previous) != state_head_and_policy(verdict)
+
+  defp state_head_and_policy(%Verdict{} = verdict),
+    do: {verdict.state, verdict.head, verdict.policy_version}
+
+  defp cause(nil, _verdict), do: "created"
+  defp cause(%Verdict{head: from}, %Verdict{head: to}) when from != to, do: "head"
+
+  defp cause(%Verdict{policy_version: from}, %Verdict{policy_version: to}) when from != to,
+    do: "policy"
+
+  defp cause(_previous, _verdict), do: "inputs"
+
+  defp record_spans(change_request, previous, %Verdict{} = verdict, head_kind) do
+    open =
+      Repo.all(
+        from s in ReasonSpan,
+          where: s.change_request_id == ^change_request.id and is_nil(s.closed_at)
+      )
+
+    keys = verdict.reasons |> Enum.map(&span_key/1) |> Enum.uniq()
+    open_keys = MapSet.new(open, &{&1.rule, &1.subject, &1.outcome})
+    gone = Enum.reject(open, &({&1.rule, &1.subject, &1.outcome} in keys))
+    now = verdict.computed_at
+
+    if gone != [] do
+      cause = cause(previous, verdict)
+
+      close_spans(
+        Enum.map(gone, & &1.id),
+        verdict.head,
+        now,
+        cause,
+        if(cause == "head", do: head_kind)
+      )
+    end
+
+    inherited = keys_from_before_spans(change_request, previous, open)
+
+    rows =
+      for {rule, subject, outcome} = key <- keys, not MapSet.member?(open_keys, key) do
+        %{
+          id: Ecto.UUID.generate(),
+          change_request_id: change_request.id,
+          rule: rule,
+          subject: subject,
+          outcome: outcome,
+          opened_head: verdict.head,
+          opened_policy_version: verdict.policy_version,
+          opened_at: now,
+          inherited: key in inherited
+        }
+      end
+
+    if rows != [], do: Repo.insert_all(ReasonSpan, rows)
+    :ok
+  end
+
+  defp span_key(%{"rule" => rule, "subject" => subject, "outcome" => outcome}),
+    do: {rule, subject, outcome}
+
+  defp keys_from_before_spans(_change_request, nil = _no_stored_verdict, _open), do: []
+  defp keys_from_before_spans(_change_request, _previous, [_ | _] = _open), do: []
+
+  defp keys_from_before_spans(change_request, %Verdict{reasons: reasons}, []) do
+    if spans_ever_recorded?(change_request),
+      do: [],
+      else: Enum.map(reasons, &span_key/1)
+  end
+
+  defp spans_ever_recorded?(%ChangeRequest{id: id}),
+    do: Repo.exists?(from s in ReasonSpan, where: s.change_request_id == ^id)
+
+  defp close_open_spans(%ChangeRequest{id: id, head: head}, cause, at) do
+    ids =
+      Repo.all(
+        from s in ReasonSpan,
+          where: s.change_request_id == ^id and is_nil(s.closed_at),
+          select: s.id
+      )
+
+    close_spans(ids, head, at, cause, nil)
+  end
+
+  defp close_spans([], _head, _at, _cause, _head_kind), do: :ok
+
+  defp close_spans(ids, head, at, cause, head_kind) do
+    Repo.update_all(from(s in ReasonSpan, where: s.id in ^ids),
+      set: [closed_head: head, closed_at: at, close_cause: cause, close_head_kind: head_kind]
+    )
 
     :ok
   end

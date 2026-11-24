@@ -20,11 +20,11 @@ See proposal.md. Today `report_git_facts/3` stores a row per (change request, he
 
 ### D1. Transitions are a table next to the event, not a longer retention
 
-`change_request_verdict_transitions` (`id`, `change_request_id` on delete cascade, `from_state`, `to_state`, `from_head`, `to_head`, `policy_version`, `cause`, `head_kind`, `inserted_at`; index on `(change_request_id, inserted_at)`). It is written in `record_verdict_changed/4`, under the same condition as the event, so the two never disagree.
+`change_request_verdict_transitions` (`id`, `change_request_id` on delete cascade, `from_state`, `to_state`, `from_head`, `to_head`, `policy_version`, `cause`, `head_kind`, `inserted_at`; index on `(change_request_id, inserted_at)`). It is written next to `record_verdict_changed/4`, in the same transaction and under the same condition as the event, so the two never disagree.
 
 Alternative considered: exempt `verdict_changed` from the sweep. Rejected because the feed's retention is part of the `project-events` contract (`410` on a stale cursor), and events carry no `cause` or `head_kind`.
 
-`add-change-request-dashboard` widens the event condition to reason-only changes. Transitions keep the narrower condition; if that change lands first, `record_verdict_changed/4` writes the transition only when state, head or policy version changed.
+`add-change-request-dashboard` widens the event condition to reason-only changes. Transitions keep the narrower condition; if that change lands first, the transition next to `record_verdict_changed/4` is still written only when state, head or policy version changed.
 
 ### D2. `cause` is derived, `head_kind` is passed in
 

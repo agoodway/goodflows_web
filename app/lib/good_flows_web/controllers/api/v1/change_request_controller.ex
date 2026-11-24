@@ -257,7 +257,11 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
     `mergeable`. A held merge lease is released (`release_reason:
     "merged"`) without recomputing the verdict, and
     `merge.merged_without_lease` is true unless `lease_id` names the change
-    request's active, unexpired lease. The stored verdict is recorded as it is, not recomputed:
+    request's active, unexpired lease. `merge.head_count` is the number of
+    distinct heads with Git facts and `merge.fix_iterations` the number of
+    `fast_forward` or `rewrite` head changes away from a head whose verdict
+    had been `blocked` or `needs_review` (null when a Git facts row predates
+    head kinds). The stored verdict is recorded as it is, not recomputed:
     after a policy write that recomputes in the background (more than the
     inline limit of active change requests, default 100), `merge.policy_version`
     can be older than the current policy until that job runs. The same report
@@ -438,7 +442,8 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
   operation(:show_git_facts,
     summary: "Read the Git facts for a head",
     description:
-      "The report for the change request's `target_branch`, or for `target` when given.",
+      "The report for the change request's `target_branch`, or for `target` when given, " <>
+        "with the `previous_head` and `head_kind` recorded when it was stored.",
     parameters:
       ApiParams.project() ++
         @number_param ++
