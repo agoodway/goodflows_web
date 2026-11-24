@@ -50,10 +50,11 @@ if [[ ! -x "$elixir_home/bin/elixir" ]]; then
   rm -f "$archive"
 fi
 # Amp and supervised services use separate login shells, not this setup shell.
+# Amp's snapshot keeps only the PATH this hook adds. Hex's CA path is in
+# ~/.hex/hex.config, and the project env var MIX_OS_DEPS_COMPILE_PARTITION_COUNT
+# reaches shells through Amp's ~/.env.
 cat > "$toolchains/env" <<'ENV'
 export PATH="$HOME/.local/share/goodflows/elixir-1.19.4/bin:$HOME/.local/share/goodflows/otp-28.1.1/bin:$PATH"
-export HEX_CACERTS_PATH=/etc/ssl/certs/ca-certificates.crt
-export MIX_OS_DEPS_COMPILE_PARTITION_COUNT="$(nproc)"
 ENV
 profile_marker='# GoodFlows orb toolchains'
 touch "$HOME/.bash_profile"
@@ -70,6 +71,7 @@ cd app
 if ! compgen -G "$HOME/.mix/archives/hex-*" >/dev/null; then
   time mix local.hex --force
 fi
+mix hex.config cacerts_path "$HEX_CACERTS_PATH"
 if [[ ! -f "$HOME/.mix/elixir/1-19-otp-28/rebar3" ]]; then
   time mix local.rebar --force
 fi

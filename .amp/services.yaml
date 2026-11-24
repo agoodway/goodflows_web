@@ -2,10 +2,10 @@ services:
   postgres:
     platforms: [linux]
     # .agents/setup installs 15 on Debian 12 and 17 on 13. Restoring an orb snapshot rewrites the
-    # login profile, so the service reads the version from the installed `main` cluster.
+    # login profile, so the service reads the version of the `main` cluster on port 5432.
     command: >-
-      major="$(pg_lsclusters --no-header | awk '$2 == "main" {print $1; exit}')" &&
-      exec sudo pg_ctlcluster --foreground "${major:?no main PostgreSQL cluster, run .agents/setup}" main start
+      major="$(pg_lsclusters --no-header | awk '$2 == "main" && $3 == 5432 {print $1; exit}')" &&
+      exec sudo pg_ctlcluster --foreground "${major:?no main PostgreSQL cluster on port 5432, run .agents/setup}" main start
     port: 5432
   web:
     platforms: [linux]
