@@ -871,7 +871,9 @@ defmodule GoodFlowsWeb.CoreComponents do
   end
 
   @doc """
-  Renders breadcrumbs for dashboard navigation.
+  Renders breadcrumbs for dashboard navigation. Below the `sm` breakpoint only
+  the last two items show, and the earlier ones stay available to screen
+  readers. The current page shrinks last, so its label stays whole.
 
   ## Examples
 
@@ -883,11 +885,26 @@ defmodule GoodFlowsWeb.CoreComponents do
   attr :items, :list, required: true
 
   def breadcrumbs(assigns) do
+    assigns = assign(assigns, :phone_from, length(assigns.items) - 2)
+
     ~H"""
     <nav aria-label="Breadcrumb" class="min-w-0">
       <ol class="flex min-w-0 items-center gap-2 font-mono text-xs text-muted">
-        <li :for={{item, idx} <- Enum.with_index(@items)} class="flex min-w-0 items-center gap-2">
-          <span :if={idx > 0} aria-hidden="true">/</span>
+        <li
+          :for={{item, idx} <- Enum.with_index(@items)}
+          class={[
+            "flex min-w-0 items-center gap-2",
+            idx < @phone_from && "sr-only focus-within:not-sr-only sm:not-sr-only",
+            idx == @phone_from + 1 && "max-w-full shrink-0"
+          ]}
+        >
+          <span
+            :if={idx > 0}
+            aria-hidden="true"
+            class={idx == @phone_from && "hidden sm:inline"}
+          >
+            /
+          </span>
           <.link
             :if={Map.has_key?(item, :to)}
             navigate={item.to}
