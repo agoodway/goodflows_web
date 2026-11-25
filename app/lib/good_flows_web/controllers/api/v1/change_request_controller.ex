@@ -23,6 +23,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
 
   alias GoodFlowsWeb.Schemas.{
     ChangeRequestCreateRequest,
+    ChangeRequestDependenciesRequest,
     ChangeRequestListResponse,
     ChangeRequestMergeRequest,
     ChangeRequestParentRequest,
@@ -44,7 +45,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
 
   plug JsonBody,
        [limit: :change_request_max_body_bytes, default: 65_536]
-       when action in [:create, :merged, :set_parent, :retarget]
+       when action in [:create, :merged, :set_parent, :set_dependencies, :retarget]
 
   plug JsonBody,
        [limit: :change_request_git_facts_max_body_bytes, default: 16_777_216]
@@ -354,6 +355,46 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestController do
     %{change_request: change_request, current_api_key: api_key} = conn.assigns
 
     with {:ok, change_request} <- ChangeRequests.clear_parent(change_request, api_key) do
+      render_one(conn, change_request)
+    end
+  end
+
+  operation(:set_dependencies,
+    summary: "Set the changes the change request depends on",
+    description: """
+    Replaces the change request's `dependencies` with `change_ids`: at
+    most 50 distinct change ids, each matching the `change_id` rule
+    and none the change request's own `change_id` (else `422` on
+    `change_ids`). An empty list clears them. For each id that no `merged`
+    change request of the project links, the verdict is `pending` with
+    `dependency_not_merged`. When a change request linking an id merges
+    or changes state, its dependents are recomputed in the background. The
+    change request must be `draft` or `open`.
+    """,
+    parameters: ApiParams.project() ++ @number_param,
+    request_body:
+      {"Dependencies", "application/json", ChangeRequestDependenciesRequest, required: true},
+    responses:
+      [
+        ok: {"The change request", "application/json", ChangeRequestResponse},
+        unauthorized: @unauthorized,
+        forbidden: @write_forbidden,
+        not_found: @not_found,
+        not_acceptable: @not_acceptable,
+        conflict: @editable_conflict,
+        request_entity_too_large: {"Body exceeds 64 KiB", "application/json", ErrorResponse},
+        unprocessable_entity:
+          {"Invalid `change_ids`, project slug or path number", "application/json",
+           ValidationErrorResponse}
+      ] ++ @json_errors
+  )
+
+  @doc "Replaces the change request's dependencies."
+  def set_dependencies(conn, _params) do
+    %{change_request: change_request, current_api_key: api_key} = conn.assigns
+
+    with {:ok, change_request} <-
+           ChangeRequests.set_dependencies(change_request, api_key, conn.private.json_body) do
       render_one(conn, change_request)
     end
   end

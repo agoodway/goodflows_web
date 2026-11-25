@@ -9,7 +9,8 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
   opener's membership and key are kept, and the `merged_*` fields hold the
   merge report and the verdict at the merged head, written once.
   `parent_id` names the one parent change request of a stacked change
-  request (lower number, same project), or nil.
+  request (lower number, same project), or nil. `dependencies` lists the
+  change ids it waits for, in the order the client sent them.
 
   Rows are written by `GoodFlows.ChangeRequests` only. `create_changeset/2`
   and the other changesets set values as given and never rewrite them.
@@ -34,6 +35,7 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
     field :source_branch, :string
     field :target_branch, :string
     field :change_id, :string
+    field :dependencies, {:array, :string}, default: []
     field :links, :map
     field :link_tickets, {:array, :string}, default: []
     field :link_threads, {:array, :string}, default: []
@@ -133,6 +135,11 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
   @spec parent_changeset(t(), Ecto.UUID.t() | nil) :: Ecto.Changeset.t()
   def parent_changeset(change_request, parent_id),
     do: change(change_request, parent_id: parent_id)
+
+  @doc "Replaces the dependencies."
+  @spec dependencies_changeset(t(), [String.t()]) :: Ecto.Changeset.t()
+  def dependencies_changeset(change_request, change_ids),
+    do: change(change_request, dependencies: change_ids)
 
   @doc "Changes the target branch."
   @spec target_changeset(t(), String.t()) :: Ecto.Changeset.t()

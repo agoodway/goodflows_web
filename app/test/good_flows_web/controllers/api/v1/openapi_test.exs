@@ -116,6 +116,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/change-requests/{number}/tasks/{task_id}/done", "post"},
     {"/api/v1/projects/{project}/change-requests/{number}/parent", "put"},
     {"/api/v1/projects/{project}/change-requests/{number}/parent", "delete"},
+    {"/api/v1/projects/{project}/change-requests/{number}/dependencies", "put"},
     {"/api/v1/projects/{project}/change-requests/{number}/retarget", "post"},
     {"/api/v1/projects/{project}/change-requests/{number}/merge-lease", "post"},
     {"/api/v1/projects/{project}/merge-leases/{lease_id}/heartbeat", "post"},
@@ -656,6 +657,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       {@cr <> "/{number}/tasks/{task_id}/done", "post", ~w(200 401 403 404 406 422)},
       {@cr <> "/{number}/parent", "put", ~w(200 400 401 403 404 406 409 413 415 422)},
       {@cr <> "/{number}/parent", "delete", ~w(200 401 403 404 406 409 422)},
+      {@cr <> "/{number}/dependencies", "put", ~w(200 400 401 403 404 406 409 413 415 422)},
       {@cr <> "/{number}/retarget", "post", ~w(200 400 401 403 404 406 409 413 415 422)},
       {@cr <> "/{number}/merge-lease", "post", ~w(200 201 400 401 403 404 406 409 413 415 422)},
       {"/api/v1/projects/{project}/merge-leases/{lease_id}/heartbeat", "post",
@@ -688,6 +690,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
             {@fi, "post", "FeatureIndexSyncRequest"},
             {@cr <> "/{number}/review/items/{item_id}/answers", "post", "ReviewAnswerRequest"},
             {@cr <> "/{number}/parent", "put", "ChangeRequestParentRequest"},
+            {@cr <> "/{number}/dependencies", "put", "ChangeRequestDependenciesRequest"},
             {@cr <> "/{number}/retarget", "post", "ChangeRequestRetargetRequest"},
             {@cr <> "/{number}/merge-lease", "post", "MergeLeaseRequest"},
             {"/api/v1/projects/{project}/defects", "post", "DefectRequest"}
@@ -777,6 +780,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       refute "lease_id" in schemas["ChangeRequestMergeRequest"]["required"]
       assert "merged_without_lease" in schemas["ChangeRequestMerge"]["required"]
       assert "parent" in schemas["ChangeRequest"]["required"]
+      assert "dependencies" in schemas["ChangeRequest"]["required"]
 
       assert schemas["DefectRequest"]["properties"]["severity"]["enum"] ==
                ~w(low medium high critical)
@@ -799,6 +803,7 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
       types = schemas["ProjectEvent"]["properties"]["type"]["enum"]
       assert "lease_expired" in types and "defect_recorded" in types
       assert "workflow_run_stored" in types and "verify_run_stored" in types
+      assert "cr_dependencies_changed" in types
 
       description = schemas["ProjectEvent"]["description"]
       assert description =~ "`workflow_run_stored`: `run_id`, `workflow`, `outcome`, `commit`"
@@ -806,7 +811,8 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
       rules = schemas["VerdictReason"]["properties"]["rule"]["enum"]
 
-      for rule <- ~w(parent_not_merged parent_closed merge_result_ungraded merge_result_failed),
+      for rule <- ~w(parent_not_merged parent_closed dependency_not_merged merge_result_ungraded
+                     merge_result_failed),
           do: assert(rule in rules)
     end
 

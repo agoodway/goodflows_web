@@ -19,7 +19,8 @@ defmodule GoodFlowsWeb.Schemas.VerdictReason do
           max_changed_files max_changed_lines scenario_set_approval scenario_set_missing
           diff_only_set diff_set_weakened diff_set_revision scenario_results_missing must_failed should_failed
           should_not_run spec_gap unmapped_area undriven_feature feature_index_missing
-          parent_not_merged parent_closed merge_result_ungraded merge_result_failed)
+          parent_not_merged parent_closed dependency_not_merged merge_result_ungraded
+          merge_result_failed)
       },
       outcome: %Schema{type: :string, enum: ~w(pending blocked needs_review)},
       subject: %Schema{
@@ -30,6 +31,7 @@ defmodule GoodFlowsWeb.Schemas.VerdictReason do
           "Sorted unless the rule defines an order (`path_match`: glob first; scenario " <>
             "rules and `merge_result_failed`: `[source, id]`; `spec_gap`: `[capability, " <>
             "requirement, scenario]`; `parent_not_merged` and `parent_closed`: `[parent number]`; " <>
+            "`dependency_not_merged`: `[change id]`; " <>
             "`merge_result_ungraded`: `[lease base]`)"
       },
       message: %Schema{type: :string, nullable: true}

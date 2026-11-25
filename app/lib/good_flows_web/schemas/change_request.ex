@@ -22,6 +22,7 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequest do
       :links,
       :head,
       :parent,
+      :dependencies,
       :opened_by,
       :merge,
       :inserted_at,
@@ -45,6 +46,11 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequest do
         type: :integer,
         nullable: true,
         description: "The parent change request's number (a stacked change request), or null"
+      },
+      dependencies: %Schema{
+        type: :array,
+        items: %Schema{type: :string},
+        description: "The change ids this change request waits for, in the order set"
       },
       opened_by: %Schema{
         type: :object,

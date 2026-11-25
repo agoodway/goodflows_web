@@ -12,6 +12,7 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
     - `cr_state_changed`: `from`, `to`
     - `cr_retargeted`: `from`, `to` (the old and new target branch)
     - `cr_parent_changed`: `from`, `to` (the old and new parent number, null for none)
+    - `cr_dependencies_changed`: `from`, `to` (the old and new change id lists, `[]` for none)
     - `verdict_changed`: `from` (null for the first verdict), `to`, `head`, `policy_version`.
       Written whenever anything the verdict shows changes (state, head, policy version,
       reasons, scenarios, coverage, counted runs or review counts), so `from` may equal `to`
@@ -44,7 +45,8 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
       id: %Schema{type: :integer, description: "The event's cursor"},
       type: %Schema{
         type: :string,
-        enum: ~w(cr_state_changed cr_retargeted cr_parent_changed verdict_changed
+        enum: ~w(cr_state_changed cr_retargeted cr_parent_changed cr_dependencies_changed
+          verdict_changed
           scenario_set_uploaded scenario_set_approved scenario_set_rejected answer_recorded
           task_created task_completed policy_version_created lease_acquired lease_renewed
           lease_expired lease_released defect_recorded workflow_run_stored verify_run_stored)

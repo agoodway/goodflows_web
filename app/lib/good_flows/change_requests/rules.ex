@@ -51,6 +51,15 @@ defmodule GoodFlows.ChangeRequests.Rules do
   change request graded without scenario sets is never held for a
   merge-result run it cannot have. Merge-result runs never grade the
   branch.
+
+  Change dependencies (`add-change-request-dependencies`) read
+  `inputs.dependencies`: one entry per change id the change request
+  depends on, with the other change requests of the project that link it
+  (`number` and `state`, by number). Each id that no `merged` change request
+  links adds `dependency_not_merged` (`pending`, `subject` `[<change id>]`),
+  whatever the facts. Its message says whether a linking change request is
+  still `draft` or `open`, every one is `closed`, or none links it.
+  `inputs.dependencies` in the verdict lists the ids.
   """
 
   alias GoodFlows.ChangeRequests.Grading
@@ -84,7 +93,14 @@ defmodule GoodFlows.ChangeRequests.Rules do
           required(:policy) => policy(),
           optional(:grading) => Grading.t(),
           optional(:parent) => %{number: pos_integer(), state: String.t()} | nil,
-          optional(:merge_result) => %{base: String.t(), runs: [Grading.run()]} | nil
+          optional(:merge_result) => %{base: String.t(), runs: [Grading.run()]} | nil,
+          optional(:dependencies) => [dependency()]
+        }
+
+  @typedoc "A change id the change request depends on, and the change requests linking it."
+  @type dependency :: %{
+          change_id: String.t(),
+          change_requests: [%{number: pos_integer(), state: String.t()}]
         }
 
   @typedoc "One reason, as stored and rendered."
@@ -126,6 +142,7 @@ defmodule GoodFlows.ChangeRequests.Rules do
     reasons(inputs) ++
       set_presence_reasons(inputs) ++
       parent_reasons(inputs[:parent]) ++
+      Enum.flat_map(Map.get(inputs, :dependencies, []), &dependency_reasons/1) ++
       if(facts?, do: grading_reasons(inputs) ++ merge_result_reasons(inputs), else: [])
   end
 
@@ -150,6 +167,34 @@ defmodule GoodFlows.ChangeRequests.Rules do
     ]
 
   defp parent_reasons(_parent), do: []
+
+  defp dependency_reasons(%{change_id: id, change_requests: change_requests}) do
+    states = Enum.map(change_requests, & &1.state)
+    active = for %{number: n, state: state} <- change_requests, state in ~w(draft open), do: n
+    way_out = "or rebase onto a commit where #{id} is archived"
+
+    message =
+      cond do
+        "merged" in states ->
+          nil
+
+        active != [] ->
+          "Change #{id} is not merged: #{linked_by(active)}. Merge it first, #{way_out}"
+
+        change_requests != [] ->
+          "Every change request linking change #{id} is closed " <>
+            "(#{Enum.map_join(change_requests, ", ", & &1.number)}). " <>
+            "Reopen and merge one, #{way_out}"
+
+        true ->
+          "No change request links change #{id}. Open and merge one, #{way_out}"
+      end
+
+    if message, do: [reason("dependency_not_merged", "pending", [id], message)], else: []
+  end
+
+  defp linked_by([number]), do: "change request #{number} links it"
+  defp linked_by(numbers), do: "change requests #{Enum.join(numbers, ", ")} link it"
 
   defp merge_result_reasons(%{merge_result: %{base: base, runs: runs}, grading: grading}) do
     ungraded =
@@ -662,7 +707,8 @@ defmodule GoodFlows.ChangeRequests.Rules do
         if(grading.intent && grading.intent.approved, do: grading.intent.digest),
       "diff_baseline_digest" => grading.diff && grading.diff[:baseline][:digest],
       "counted_runs" => grading.runs |> Enum.map(& &1.run_id) |> Enum.sort(),
-      "feature_index_version" => grading.index && grading.index.version
+      "feature_index_version" => grading.index && grading.index.version,
+      "dependencies" => inputs |> Map.get(:dependencies, []) |> Enum.map(& &1.change_id)
     }
   end
 

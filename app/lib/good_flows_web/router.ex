@@ -193,6 +193,7 @@ defmodule GoodFlowsWeb.Router do
 
     put "/change-requests/:number/parent", ChangeRequestController, :set_parent
     delete "/change-requests/:number/parent", ChangeRequestController, :clear_parent
+    put "/change-requests/:number/dependencies", ChangeRequestController, :set_dependencies
     post "/change-requests/:number/retarget", ChangeRequestController, :retarget
     post "/change-requests/:number/merge-lease", MergeLeaseController, :acquire
     post "/merge-leases/:lease_id/heartbeat", MergeLeaseController, :heartbeat

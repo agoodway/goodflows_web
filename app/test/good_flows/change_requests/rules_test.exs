@@ -329,4 +329,85 @@ defmodule GoodFlows.ChangeRequests.RulesTest do
 
     assert {other.state, other.reasons} == {base.state, base.reasons}
   end
+
+  describe "dependency_not_merged" do
+    defp with_dependencies(dependencies, opts \\ []),
+      do: opts |> inputs() |> Map.put(:dependencies, dependencies) |> Rules.evaluate()
+
+    defp dependency(id, linking),
+      do: %{
+        change_id: id,
+        change_requests: for({n, state} <- linking, do: %{number: n, state: state})
+      }
+
+    test "an open linking change request: pending, subject the id, message names it" do
+      verdict = with_dependencies([dependency("add-login", [{40, "closed"}, {41, "open"}])])
+
+      assert %{state: "pending", reasons: [reason]} = verdict
+      assert %{"rule" => "dependency_not_merged", "subject" => ["add-login"]} = reason
+      assert reason["message"] =~ "change request 41 links it"
+      refute reason["message"] =~ "40"
+      assert reason["message"] =~ "rebase onto a commit where add-login is archived"
+    end
+
+    test "several draft or open linking change requests are all named" do
+      [reason] =
+        with_dependencies([dependency("add-login", [{41, "draft"}, {45, "open"}])]).reasons
+
+      assert reason["message"] =~ "change requests 41, 45 link it"
+    end
+
+    test "every linking change request closed" do
+      [reason] =
+        with_dependencies([dependency("add-login", [{40, "closed"}, {41, "closed"}])]).reasons
+
+      assert reason["subject"] == ["add-login"]
+
+      assert reason["message"] =~
+               "Every change request linking change add-login is closed (40, 41)"
+
+      assert reason["message"] =~ "rebase onto a commit where add-login is archived"
+    end
+
+    test "no linking change request" do
+      [reason] = with_dependencies([dependency("add-login", [])]).reasons
+      assert reason["message"] =~ "No change request links change add-login"
+      assert reason["message"] =~ "rebase onto a commit where add-login is archived"
+    end
+
+    test "one merged linking change request satisfies it, whatever the others" do
+      verdict =
+        with_dependencies([
+          dependency("add-login", [{40, "closed"}, {41, "merged"}, {42, "open"}])
+        ])
+
+      assert %{state: "mergeable", reasons: []} = verdict
+      assert verdict.inputs["dependencies"] == ["add-login"]
+    end
+
+    test "one reason per unmerged id; inputs list every id in stored order" do
+      verdict =
+        with_dependencies([
+          dependency("b-sessions", []),
+          dependency("add-login", [{41, "merged"}]),
+          dependency("a-tokens", [{43, "open"}])
+        ])
+
+      assert Enum.map(verdict.reasons, & &1["subject"]) == [["a-tokens"], ["b-sessions"]]
+      assert verdict.inputs["dependencies"] == ["b-sessions", "add-login", "a-tokens"]
+    end
+
+    test "fires without Git facts, next to git_facts_missing" do
+      verdict =
+        with_dependencies([dependency("add-login", [])], git_facts: nil, claims: nil)
+
+      assert rules(verdict) == ["dependency_not_merged", "git_facts_missing"]
+    end
+
+    test "no dependencies: nothing fires and inputs record an empty list" do
+      verdict = with_dependencies([])
+      assert verdict.reasons == []
+      assert verdict.inputs["dependencies"] == []
+    end
+  end
 end

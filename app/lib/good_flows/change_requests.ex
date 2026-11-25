@@ -35,9 +35,18 @@ defmodule GoodFlows.ChangeRequests do
   `verdict_changed` event when anything the verdict shows changed: its
   state, head, policy version, reasons, scenarios, coverage, counted runs
   or review counts. State changes and merge reports record
-  `cr_state_changed`, a retarget `cr_retargeted` and a parent change
-  `cr_parent_changed`, and a new head makes the change request's `open`
-  review tasks `stale`.
+  `cr_state_changed`, a retarget `cr_retargeted`, a parent change
+  `cr_parent_changed` and a dependencies change `cr_dependencies_changed`,
+  and a new head makes the change request's `open` review tasks `stale`.
+
+  A change request's `dependencies` are change ids; each one no `merged`
+  change request of the project links holds its verdict `pending`. When
+  a change request linking a change id is created, changes state or
+  merges, the change requests that depend on that id may have lower
+  numbers, so they are recomputed by `RecomputeJob` after the commit
+  (`recompute_dependents/2`) rather than locked in the same transaction.
+  A transaction-level advisory lock keyed on (project, change id)
+  serializes those writes with a dependencies update.
 
   History that outlives the event retention is kept in the same
   transactions: a Git facts report that stores a row records its
@@ -104,6 +113,7 @@ defmodule GoodFlows.ChangeRequests do
   def create(%Account{id: account_id}, %Project{account_id: account_id} = project, api_key, body) do
     with {:ok, attrs} <- Params.create(body) do
       Repo.transaction(fn ->
+        lock_change_id(project.id, attrs.change_id)
         {number, default_branch} = next_number(project)
 
         change_request =
@@ -119,6 +129,7 @@ defmodule GoodFlows.ChangeRequests do
           |> Repo.insert!()
 
         recompute(change_request)
+        enqueue_dependents(change_request)
         change_request
       end)
     end
@@ -277,6 +288,7 @@ defmodule GoodFlows.ChangeRequests do
           {:ok, ChangeRequest.t()} | {:error, :invalid_transition}
   def transition(%ChangeRequest{} = change_request, %ApiKey{} = api_key, action) do
     Repo.transaction(fn ->
+      lock_change_id(change_request.project_id, change_request.change_id)
       change_request = lock(change_request)
 
       case next_state(change_request, action) do
@@ -307,6 +319,7 @@ defmodule GoodFlows.ChangeRequests do
     record_state_changed(change_request, to, api_key)
     MergeLeases.record_ended(ended, api_key)
     recompute_children(children)
+    enqueue_dependents(updated)
     updated
   end
 
@@ -389,7 +402,10 @@ defmodule GoodFlows.ChangeRequests do
           | {:error, :invalid_transition | :merge_conflict | {:invalid_body, map()}}
   def report_merge(%ChangeRequest{} = change_request, %ApiKey{} = api_key, body) do
     with {:ok, attrs} <- Params.merge(body) do
-      Repo.transaction(fn -> merge_locked(lock(change_request), api_key, attrs) end)
+      Repo.transaction(fn ->
+        lock_change_id(change_request.project_id, change_request.change_id)
+        merge_locked(lock(change_request), api_key, attrs)
+      end)
     end
   end
 
@@ -434,6 +450,7 @@ defmodule GoodFlows.ChangeRequests do
     record_state_changed(change_request, "merged", api_key)
     MergeLeases.record_ended(ended, api_key)
     recompute_children(children)
+    enqueue_dependents(updated)
     updated
   end
 
@@ -557,6 +574,128 @@ defmodule GoodFlows.ChangeRequests do
   end
 
   defp not_editable, do: {:coded_conflict, "not_editable", %{}}
+
+  @doc """
+  Replaces the dependencies (change ids) of a `draft` or `open` change
+  request from a normalized body (`{"change_ids": [...]}`), records
+  `cr_dependencies_changed` when the list changed, and recomputes the
+  verdict. Another state is `{:coded_conflict, "not_editable", %{}}`; the
+  change request's own `change_id` is `{:invalid_body, %{"change_ids"
+  => _}}`. Each id's change id lock is taken, in sorted order, before the
+  row lock, so a concurrent merge of a change request linking one of them
+  either sees the new list or is seen by this recompute.
+  """
+  @spec set_dependencies(ChangeRequest.t(), ApiKey.t(), term()) ::
+          {:ok, ChangeRequest.t()}
+          | {:error, {:invalid_body, map()} | {:coded_conflict, String.t(), map()}}
+  def set_dependencies(%ChangeRequest{} = change_request, %ApiKey{} = api_key, body) do
+    with :ok <- require_editable(change_request),
+         {:ok, change_ids} <- Params.dependencies(body),
+         :ok <- reject_own_change(change_request, change_ids) do
+      Repo.transaction(fn ->
+        change_ids |> Enum.sort() |> Enum.each(&lock_change_id(change_request.project_id, &1))
+        replace_dependencies(lock(change_request), change_ids, api_key)
+      end)
+    end
+  end
+
+  defp replace_dependencies(change_request, change_ids, api_key) do
+    if require_active(change_request) != :ok, do: Repo.rollback(not_editable())
+
+    updated =
+      change_request |> ChangeRequest.dependencies_changeset(change_ids) |> Repo.update!()
+
+    if change_request.dependencies != change_ids do
+      ProjectEvents.record(
+        change_request.project_id,
+        change_request.number,
+        "cr_dependencies_changed",
+        %{"from" => change_request.dependencies, "to" => change_ids},
+        Review.cli_actor(api_key)
+      )
+    end
+
+    recompute(updated)
+    updated
+  end
+
+  defp reject_own_change(%ChangeRequest{change_id: own}, change_ids) do
+    if own != nil and own in change_ids,
+      do:
+        {:error,
+         {:invalid_body, %{"change_ids" => ["must not include the change request's own change"]}}},
+      else: :ok
+  end
+
+  # Serializes everything that reads or changes who depends on change id
+  # `change_id` in a project with what changes the state of a change
+  # request linking it: a dependencies update and the merge, state change
+  # or create of a linking change request. Taken before any change request
+  # row lock. `lock_head/2` keys a different namespace, and no path takes
+  # both, so the two cannot form a cycle.
+  defp lock_change_id(_project_id, nil), do: :ok
+
+  defp lock_change_id(project_id, change_id) do
+    Repo.query!(
+      "SELECT pg_advisory_xact_lock(hashtextextended('change_request_change:' || $1 || ':' || $2, 0))",
+      [project_id, change_id],
+      log: false
+    )
+
+    :ok
+  end
+
+  # Dependents can have lower numbers than the change request whose state
+  # changed, so they are not locked here (that would break the `number`
+  # lock order): a job recomputes them after this transaction commits.
+  defp enqueue_dependents(%ChangeRequest{change_id: nil}), do: :ok
+
+  defp enqueue_dependents(%ChangeRequest{project_id: project_id, change_id: change_id}) do
+    if Repo.exists?(dependents_query(project_id, change_id)) do
+      case PgFlow.enqueue(RecomputeJob, %{"project_id" => project_id, "change_id" => change_id}) do
+        {:ok, _run_id} -> :ok
+        {:error, reason} -> Repo.rollback({:enqueue_failed, reason})
+      end
+    else
+      :ok
+    end
+  end
+
+  defp dependents_query(project_id, change_id) do
+    from c in ChangeRequest,
+      where:
+        c.project_id == ^project_id and c.state in @active_states and
+          ^change_id in c.dependencies
+  end
+
+  @doc """
+  Recomputes every `draft` and `open` change request of the project whose
+  dependencies include `change_id`, in one transaction, locked in `number`
+  order, and returns how many were recomputed. Run by
+  `GoodFlows.ChangeRequests.RecomputeJob` after a change request linking
+  `change_id` changes state.
+  """
+  @spec recompute_dependents(Ecto.UUID.t(), String.t()) :: non_neg_integer()
+  def recompute_dependents(project_id, change_id) do
+    {:ok, count} =
+      Repo.transaction(fn ->
+        change_requests =
+          Repo.all(
+            from c in dependents_query(project_id, change_id),
+              order_by: c.number,
+              lock: "FOR UPDATE"
+          )
+
+        if change_requests != [] do
+          policy = ReviewPolicies.compiled(project_id)
+          Enum.each(change_requests, &recompute(&1, policy))
+        end
+
+        length(change_requests)
+      end)
+
+    count
+  end
 
   @doc """
   Changes the target branch of a `draft` or `open` change request from a
@@ -944,6 +1083,7 @@ defmodule GoodFlows.ChangeRequests do
         policy: policy,
         grading: grading,
         parent: parent_input(change_request),
+        dependencies: dependencies_input(change_request),
         merge_result: merge_result_input(change_request, facts, policy, grading)
       })
 
@@ -990,6 +1130,26 @@ defmodule GoodFlows.ChangeRequests do
       from c in ChangeRequest,
         where: c.id == ^parent_id,
         select: %{number: c.number, state: c.state}
+    )
+  end
+
+  defp dependencies_input(%ChangeRequest{dependencies: []}), do: []
+
+  defp dependencies_input(%ChangeRequest{} = change_request) do
+    linking =
+      Repo.all(
+        from c in ChangeRequest,
+          where:
+            c.project_id == ^change_request.project_id and c.id != ^change_request.id and
+              c.change_id in ^change_request.dependencies,
+          order_by: c.number,
+          select: {c.change_id, %{number: c.number, state: c.state}}
+      )
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    Enum.map(
+      change_request.dependencies,
+      &%{change_id: &1, change_requests: Map.get(linking, &1, [])}
     )
   end
 
