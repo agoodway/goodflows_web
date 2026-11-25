@@ -18,6 +18,8 @@ defmodule GoodFlows.ChangeRequestsConcurrencyTest do
   alias GoodFlows.FeatureIndex
   alias GoodFlows.ProjectEvents
   alias GoodFlows.Repo
+  alias GoodFlows.Review
+  alias GoodFlows.Review.Task, as: ReviewTask
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ReviewPolicies.Version
   alias GoodFlows.WorkflowRuns
@@ -234,7 +236,7 @@ defmodule GoodFlows.ChangeRequestsConcurrencyTest do
                 cr.number,
                 "cr_state_changed",
                 %{"from" => "draft", "to" => "open"},
-                ctx.api_key
+                Review.cli_actor(ctx.api_key)
               )
             end)
           end)
@@ -282,6 +284,95 @@ defmodule GoodFlows.ChangeRequestsConcurrencyTest do
       true ->
         Process.sleep(50)
         wait_until_row_lock_waits(task, tries - 1)
+    end
+  end
+
+  test "a task completion queues behind the change request lock of an answer replacing its item's answer",
+       ctx do
+    {cr, task} =
+      unboxed(fn ->
+        {:ok, cr} =
+          ChangeRequests.create(ctx.account, ctx.project, ctx.api_key, %{
+            "title" => "t",
+            "source_branch" => "b"
+          })
+
+        {:ok, :created, cr} = ChangeRequests.report_git_facts(cr, ctx.api_key, git_facts(sha(1)))
+        raw = claims(front_matter(sha(1), %{"cr" => cr.number, "door" => "one_way"}))
+        {:ok, _status, cr} = ChangeRequests.upload_claims(cr, ctx.api_key, raw)
+        [item] = Review.packet(cr).items
+        actor = Review.cli_actor(ctx.account_user, ctx.api_key)
+        body = %{"head" => sha(1), "answer" => "request_change", "note" => "split it"}
+        {:ok, _answer} = Review.answer(cr, actor, item.id, body)
+        {:ok, [task]} = Review.list_tasks(cr, %{"state" => "open"})
+        {cr, task}
+      end)
+
+    parent = self()
+    answer = Task.async(fn -> answer_replacing_item_answer(parent, ctx, cr, task) end)
+    assert_receive :event_recorded, 5_000
+
+    completer =
+      Task.async(fn ->
+        unboxed(fn ->
+          %{rows: [[backend_pid]]} = Repo.query!("SELECT pg_backend_pid()")
+          send(parent, {:backend_pid, backend_pid})
+
+          Review.complete_task(cr, ctx.account_user, ctx.api_key, task.id)
+        end)
+      end)
+
+    assert_receive {:backend_pid, backend_pid}, 5_000
+    wait_until_backend_waits(completer, backend_pid, 100)
+    send(answer.pid, :mark_task_stale)
+
+    assert {:ok, {1, nil}} = Task.await(answer, 15_000)
+    assert {:ok, %ReviewTask{state: "done"}} = Task.await(completer, 15_000)
+  end
+
+  defp answer_replacing_item_answer(parent, ctx, cr, task) do
+    unboxed(fn ->
+      Repo.transaction(fn ->
+        cr = ChangeRequests.lock_active(cr)
+
+        ProjectEvents.record(
+          cr.project_id,
+          cr.number,
+          "answer_recorded",
+          %{},
+          Review.cli_actor(ctx.api_key)
+        )
+
+        send(parent, :event_recorded)
+        receive(do: (:mark_task_stale -> :ok))
+        Repo.update_all(from(t in ReviewTask, where: t.id == ^task.id), set: [state: "stale"])
+      end)
+    end)
+  end
+
+  defp wait_until_backend_waits(_task, _backend_pid, 0),
+    do: flunk("the completion neither ran nor waited")
+
+  defp wait_until_backend_waits(task, backend_pid, tries) do
+    waiting =
+      unboxed(fn ->
+        Repo.one(
+          from l in "pg_locks",
+            where: l.pid == ^backend_pid and not l.granted,
+            select: count()
+        )
+      end)
+
+    cond do
+      waiting > 0 ->
+        :ok
+
+      Process.info(task.pid) == nil ->
+        :ok
+
+      true ->
+        Process.sleep(50)
+        wait_until_backend_waits(task, backend_pid, tries - 1)
     end
   end
 

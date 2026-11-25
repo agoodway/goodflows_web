@@ -491,6 +491,11 @@ defmodule GoodFlowsWeb.CoreComponents do
   Pass `empty` with an `:empty_state` slot to show an empty state in place
   of the table. It renders outside the stream container.
 
+  Pass `span_from` (a function of the row returning a column index or nil)
+  with a `:span` slot to replace a row's columns from that index on with
+  one cell that spans them, such as a note for a row with nothing to
+  show there. Below `md` the cell shows without a label.
+
   ## Examples
 
       <.table id="users" rows={@users}>
@@ -504,6 +509,10 @@ defmodule GoodFlowsWeb.CoreComponents do
   attr :row_click, :any, default: nil, doc: "the function for handling phx-click on each row"
   attr :empty, :boolean, default: false, doc: "whether there are no rows to show"
 
+  attr :span_from, :any,
+    default: nil,
+    doc: "the function returning the column index a row's :span cell starts at, or nil"
+
   attr :row_item, :any,
     default: &Function.identity/1,
     doc: "the function for mapping each row before calling the :col and :action slots"
@@ -515,6 +524,7 @@ defmodule GoodFlowsWeb.CoreComponents do
 
   slot :action, doc: "the slot for showing user actions in the last table column"
   slot :empty_state, doc: "shown in place of the table when `empty` is true"
+  slot :span, doc: "the cell that spans the columns from `span_from` on"
 
   def table(assigns) do
     assigns =
@@ -543,12 +553,19 @@ defmodule GoodFlowsWeb.CoreComponents do
             class={@row_click && "data-table-row-link"}
           >
             <td
-              :for={col <- @col}
+              :for={col <- Enum.take(@col, span_index(@span_from, @row_item.(row), @col))}
               data-label={col[:label]}
               phx-click={@row_click && @row_click.(row)}
               class={col[:class]}
             >
               {render_slot(col, @row_item.(row))}
+            </td>
+            <td
+              :if={span_index(@span_from, @row_item.(row), @col) < length(@col)}
+              colspan={length(@col) - span_index(@span_from, @row_item.(row), @col)}
+              data-label=""
+            >
+              {render_slot(@span, @row_item.(row))}
             </td>
             <td :if={@action != []} class="table-actions">
               <div class="flex justify-end gap-2">
@@ -563,6 +580,9 @@ defmodule GoodFlowsWeb.CoreComponents do
     </div>
     """
   end
+
+  defp span_index(nil, _item, cols), do: length(cols)
+  defp span_index(span_from, item, cols), do: span_from.(item) || length(cols)
 
   @doc """
   Renders label/value rows. Long values wrap.
@@ -871,7 +891,9 @@ defmodule GoodFlowsWeb.CoreComponents do
   end
 
   @doc """
-  Renders breadcrumbs for dashboard navigation.
+  Renders breadcrumbs for dashboard navigation. Below the `sm` breakpoint only
+  the last two items show, and the earlier ones stay available to screen
+  readers. The current page shrinks last, so its label stays whole.
 
   ## Examples
 
@@ -883,11 +905,26 @@ defmodule GoodFlowsWeb.CoreComponents do
   attr :items, :list, required: true
 
   def breadcrumbs(assigns) do
+    assigns = assign(assigns, :phone_from, length(assigns.items) - 2)
+
     ~H"""
     <nav aria-label="Breadcrumb" class="min-w-0">
       <ol class="flex min-w-0 items-center gap-2 font-mono text-xs text-muted">
-        <li :for={{item, idx} <- Enum.with_index(@items)} class="flex min-w-0 items-center gap-2">
-          <span :if={idx > 0} aria-hidden="true">/</span>
+        <li
+          :for={{item, idx} <- Enum.with_index(@items)}
+          class={[
+            "flex min-w-0 items-center gap-2",
+            idx < @phone_from && "sr-only focus-within:not-sr-only sm:not-sr-only",
+            idx == @phone_from + 1 && "max-w-full shrink-0"
+          ]}
+        >
+          <span
+            :if={idx > 0}
+            aria-hidden="true"
+            class={idx == @phone_from && "hidden sm:inline"}
+          >
+            /
+          </span>
           <.link
             :if={Map.has_key?(item, :to)}
             navigate={item.to}

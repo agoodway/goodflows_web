@@ -37,10 +37,11 @@ defmodule GoodFlows.MergeLeases do
   reading `parent_id`. Each change records its `lease_acquired`,
   `lease_renewed`, `lease_expired` or `lease_released` event in the same
   transaction, with the lease's change request as `number` and the
-  request's key as `actor` (nil for expiry), and recomputes the change
-  request's verdict (`GoodFlows.ChangeRequests.recompute/2`), since the
-  merge-result check depends on the held lease. A merge's release does not
-  recompute: the change request is `merged` and its verdict is frozen.
+  request's key and its membership as `actor` (nil for expiry), and
+  recomputes the change request's verdict
+  (`GoodFlows.ChangeRequests.recompute/2`), since the merge-result check
+  depends on the held lease. A merge's release does not recompute: the
+  change request is `merged` and its verdict is frozen.
   """
   import Ecto.Query
 
@@ -51,6 +52,7 @@ defmodule GoodFlows.MergeLeases do
   alias GoodFlows.ProjectEvents
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
+  alias GoodFlows.Review
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ReviewPolicies.Document
 
@@ -468,7 +470,13 @@ defmodule GoodFlows.MergeLeases do
         do: Map.put(data, "release_reason", lease.release_reason),
         else: data
 
-    ProjectEvents.record(lease.project_id, number, type, data, api_key)
+    ProjectEvents.record(
+      lease.project_id,
+      number,
+      type,
+      data,
+      api_key && Review.cli_actor(api_key)
+    )
   end
 
   defp cast_id(lease_id) do

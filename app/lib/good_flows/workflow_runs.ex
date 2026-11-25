@@ -33,7 +33,9 @@ defmodule GoodFlows.WorkflowRuns do
 
   A first insert whose `source.commit` is the head of a `draft` or `open`
   change request of the project recomputes that verdict in the same
-  transaction (`GoodFlows.ChangeRequests.recompute_for_commit/2`).
+  transaction (`GoodFlows.ChangeRequests.recompute_for_commit/3`) and
+  records a `workflow_run_stored` event for it. An exact retry records
+  nothing.
 
   Insert and comparison queries run with `log: false` so the document never
   reaches Ecto logs, and with the timeout
@@ -177,6 +179,49 @@ defmodule GoodFlows.WorkflowRuns do
   end
 
   def list_runs(%Account{}, %Project{}, _params), do: {:error, :not_found}
+
+  @doc """
+  The newest run of each workflow on `commit` (by `started_at`, then
+  `run_id`) whose source is not dirty, with summary columns only, ordered
+  by workflow. The same ordering as the required-workflow lookup of
+  `GoodFlows.ChangeRequests`, so a required workflow's row is the run its
+  verdict counts. With `stored_by`, only runs stored at or before it.
+  """
+  @spec latest_clean_by_workflow(Project.t(), String.t(), DateTime.t() | nil) :: [Run.t()]
+  def latest_clean_by_workflow(project, commit, stored_by \\ nil)
+
+  def latest_clean_by_workflow(
+        %Project{account_id: account_id, id: project_id},
+        commit,
+        stored_by
+      )
+      when is_binary(commit) do
+    latest =
+      from r in Run,
+        where:
+          r.account_id == ^account_id and r.project_id == ^project_id and
+            r.source_commit == ^commit and (is_nil(r.source_dirty) or r.source_dirty == false),
+        distinct: r.workflow,
+        order_by: [asc: r.workflow, desc: r.started_at, desc: r.run_id],
+        select: struct(r, ^@summary_fields)
+
+    latest
+    |> then(&if(stored_by, do: where(&1, [r], r.inserted_at <= ^stored_by), else: &1))
+    |> Repo.all()
+  end
+
+  @doc "The summaries of the project's runs with `run_ids`, in no order."
+  @spec summaries(Project.t(), [Ecto.UUID.t()]) :: [Run.t()]
+  def summaries(%Project{}, []), do: []
+
+  def summaries(%Project{account_id: account_id, id: project_id}, run_ids) do
+    Repo.all(
+      from r in Run,
+        where:
+          r.account_id == ^account_id and r.project_id == ^project_id and r.run_id in ^run_ids,
+        select: struct(r, ^@summary_fields)
+    )
+  end
 
   @doc """
   Loads one run and its test-report summaries.
@@ -414,12 +459,12 @@ defmodule GoodFlows.WorkflowRuns do
     row = row(project, api_key, payload, columns)
 
     {:ok, result} =
-      Store.transaction(fn -> insert_or_compare(row) end, timeout: db_timeout_ms())
+      Store.transaction(fn -> insert_or_compare(row, api_key) end, timeout: db_timeout_ms())
 
     result
   end
 
-  defp insert_or_compare(row) do
+  defp insert_or_compare(row, api_key) do
     case Store.insert_all(Run, [row],
            on_conflict: :nothing,
            conflict_target: @identity,
@@ -428,12 +473,28 @@ defmodule GoodFlows.WorkflowRuns do
            timeout: db_timeout_ms()
          ) do
       {1, [%Run{id: id}]} ->
-        ChangeRequests.recompute_for_commit(row.project_id, row.source_commit)
+        ChangeRequests.recompute_for_commit(
+          row.project_id,
+          row.source_commit,
+          run_event(row, api_key)
+        )
+
         {:ok, ack(id, row.run_id, false)}
 
       {0, []} ->
         compare(row)
     end
+  end
+
+  defp run_event(row, api_key) do
+    data = %{
+      "run_id" => row.run_id,
+      "workflow" => row.workflow,
+      "outcome" => row.outcome,
+      "commit" => row.source_commit
+    }
+
+    {"workflow_run_stored", data, api_key}
   end
 
   # Only the digest is sent: the payload went once with the insert.

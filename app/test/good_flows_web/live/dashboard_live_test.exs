@@ -29,7 +29,7 @@ defmodule GoodFlowsWeb.DashboardLiveTest do
     end
 
     test "sends users without accounts home with a flash" do
-      conn = build_conn() |> log_in_user(user_fixture()) |> get(~p"/dashboard")
+      conn = build_conn() |> log_in_user(user_without_accounts_fixture()) |> get(~p"/dashboard")
       assert redirected_to(conn) == ~p"/"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "any accounts"
     end

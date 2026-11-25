@@ -254,6 +254,8 @@ defmodule GoodFlowsWeb.Router do
       layout: {GoodFlowsWeb.Layouts, :dashboard} do
       live "/", DashboardLive, :index
       live "/projects", ProjectLive.Index, :index
+      live "/projects/:slug/change-requests", ChangeRequestLive.Index, :index
+      live "/projects/:slug/change-requests/:number", ChangeRequestLive.Show, :show
       live "/api-keys", ApiKeyLive.Index, :index
     end
   end

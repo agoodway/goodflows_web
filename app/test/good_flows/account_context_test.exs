@@ -9,7 +9,7 @@ defmodule GoodFlows.AccountContextTest do
   alias GoodFlows.Repo
 
   setup do
-    user = user_fixture()
+    user = user_without_accounts_fixture()
     account = account_fixture(%{name: "Beta Co"})
     account_user_fixture(account, user, :owner)
     %{user: user, account: account}
@@ -93,7 +93,8 @@ defmodule GoodFlows.AccountContextTest do
     end
 
     test "errors when the user has no accounts" do
-      assert {:error, :no_accounts} = AccountContext.get_default_account(user_fixture(), %{})
+      assert {:error, :no_accounts} =
+               AccountContext.get_default_account(user_without_accounts_fixture(), %{})
     end
   end
 

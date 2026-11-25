@@ -19,7 +19,9 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequestMerge do
       :policy_version,
       :reasons,
       :merged_without_mergeable_verdict,
-      :merged_without_lease
+      :merged_without_lease,
+      :head_count,
+      :fix_iterations
     ],
     properties: %{
       merged_commit: %Schema{type: :string},
@@ -34,6 +36,21 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequestMerge do
         type: :boolean,
         description:
           "True unless the report named the change request's active, unexpired merge lease"
+      },
+      head_count: %Schema{
+        type: :integer,
+        minimum: 0,
+        nullable: true,
+        description:
+          "Distinct heads with Git facts at the merge; null for a merge recorded before it existed"
+      },
+      fix_iterations: %Schema{
+        type: :integer,
+        minimum: 0,
+        nullable: true,
+        description:
+          "Head changes of kind fast_forward or rewrite away from a head whose verdict was " <>
+            "blocked or needs_review; null when part of the history predates the count"
       }
     }
   })

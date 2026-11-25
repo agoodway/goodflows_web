@@ -40,7 +40,10 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
   @doc "Renders a verdict read."
   def verdict(%{verdict: verdict, redact?: redact?}), do: %{data: verdict_data(verdict, redact?)}
 
-  @doc "Renders stored Git facts with `totals`, the uploader and the upload time."
+  @doc """
+  Renders stored Git facts with `totals`, `previous_head`, `head_kind`, the
+  uploader and the upload time.
+  """
   def git_facts(%{git_facts: %GitFacts{} = facts, redact?: redact?}) do
     files = facts.document["diff"]["files"]
 
@@ -56,6 +59,8 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
       data:
         Map.merge(document, %{
           "totals" => totals,
+          "previous_head" => facts.previous_head,
+          "head_kind" => facts.head_kind,
           "user_id" => user_id(facts.account_user, redact?),
           "inserted_at" => DateTime.to_iso8601(facts.inserted_at)
         })
@@ -111,7 +116,9 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
       policy_version: change_request.merged_policy_version,
       reasons: reasons(change_request.merged_reasons, redact?),
       merged_without_mergeable_verdict: change_request.merged_without_mergeable_verdict,
-      merged_without_lease: change_request.merged_without_lease
+      merged_without_lease: change_request.merged_without_lease,
+      head_count: change_request.merged_head_count,
+      fix_iterations: change_request.merged_fix_iterations
     }
   end
 

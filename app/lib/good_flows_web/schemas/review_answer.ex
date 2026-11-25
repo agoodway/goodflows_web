@@ -17,7 +17,7 @@ defmodule GoodFlowsWeb.Schemas.ReviewAnswer do
       answer: %Schema{type: :string, enum: ~w(approve reject request_change choose)},
       option: %Schema{type: :string, nullable: true},
       note: %Schema{type: :string, nullable: true},
-      channel: %Schema{type: :string, enum: ["cli"]},
+      channel: %Schema{type: :string, enum: ["cli", "dashboard"]},
       answered_by: %Schema{
         type: :object,
         properties: %{

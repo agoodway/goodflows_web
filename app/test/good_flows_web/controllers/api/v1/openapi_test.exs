@@ -798,6 +798,11 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
 
       types = schemas["ProjectEvent"]["properties"]["type"]["enum"]
       assert "lease_expired" in types and "defect_recorded" in types
+      assert "workflow_run_stored" in types and "verify_run_stored" in types
+
+      description = schemas["ProjectEvent"]["description"]
+      assert description =~ "`workflow_run_stored`: `run_id`, `workflow`, `outcome`, `commit`"
+      assert description =~ "`verify_run_stored`: `run_id`, `commit`, `source`, `digest`"
 
       rules = schemas["VerdictReason"]["properties"]["rule"]["enum"]
 

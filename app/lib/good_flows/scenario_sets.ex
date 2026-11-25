@@ -14,7 +14,7 @@ defmodule GoodFlows.ScenarioSets do
   so the approval follows the bytes, not the head.
 
   Diff digests take decisions only through `diff_set_weakened` review
-  answers (`record_decision/5` with source `diff`); a diff version is
+  answers (`record_decision/4` with source `diff`); a diff version is
   `accepted` (`accepted?/2`) when its digest's latest decision is
   `approve`, and the newest accepted diff version, else version 1, is the
   diff `baseline/2`. Storing a diff version supersedes every
@@ -126,7 +126,7 @@ defmodule GoodFlows.ScenarioSets do
           change_request.number,
           "scenario_set_uploaded",
           %{"source" => version.source, "digest" => digest, "version" => version.version},
-          api_key
+          Review.cli_actor(api_key)
         )
 
         {:created, version}
@@ -338,7 +338,7 @@ defmodule GoodFlows.ScenarioSets do
   defp decide_locked(change_request, account_user, api_key, attrs) do
     change_request = ChangeRequests.lock_active(change_request)
 
-    case record_decision(change_request, account_user, api_key, attrs) do
+    case record_decision(change_request, Review.cli_actor(account_user, api_key), attrs) do
       {:created, decision} ->
         ChangeRequests.recompute(change_request)
         {:created, decision}
@@ -352,17 +352,21 @@ defmodule GoodFlows.ScenarioSets do
   Records a decision (`attrs`: `decision`, `digest`, `note`) on the current
   digest of the change request's `source` set (`intent` by default; `diff`
   only from `diff_set_weakened` answers) for a change request the caller
-  has locked (`GoodFlows.ChangeRequests.lock_active/1`), with its
+  has locked (`GoodFlows.ChangeRequests.lock_active/1`) by `actor`
+  (`t:GoodFlows.Review.actor/0`, whose channel and key the decision
+  stores), with its
   `scenario_set_approved` or `scenario_set_rejected` event carrying
   `source`, in the caller's transaction. Does not recompute the verdict. A
   decision equal to the digest's latest one by the same membership is
   `{:retry, latest}` and records nothing; a digest that is not the
   current version's of `source` rolls back with `:stale_digest`.
   """
-  @spec record_decision(ChangeRequest.t(), AccountUser.t(), ApiKey.t(), map(), String.t()) ::
+  @spec record_decision(ChangeRequest.t(), Review.actor(), map(), String.t()) ::
           {:created | :retry, Decision.t()}
-  def record_decision(change_request, account_user, api_key, attrs, source \\ "intent")
+  def record_decision(change_request, actor, attrs, source \\ "intent")
       when source in ["intent", "diff"] do
+    account_user = actor.account_user
+
     case current(change_request, source) do
       %Version{digest: digest} when digest == attrs.digest -> :ok
       _other -> Repo.rollback(:stale_digest)
@@ -387,19 +391,19 @@ defmodule GoodFlows.ScenarioSets do
             digest: attrs.digest,
             decision: attrs.decision,
             note: attrs.note,
-            channel: "cli",
+            channel: actor.channel,
             account_user_id: account_user.id,
-            api_key_id: api_key.id
+            api_key_id: actor.api_key && actor.api_key.id
           },
           log: false
         )
 
-      record_decision_event(change_request, decision, source, api_key)
+      record_decision_event(change_request, decision, source, actor)
       {:created, decision}
     end
   end
 
-  defp record_decision_event(change_request, %Decision{} = decision, source, api_key) do
+  defp record_decision_event(change_request, %Decision{} = decision, source, actor) do
     {type, data} =
       case decision.decision do
         "approve" ->
@@ -414,7 +418,7 @@ defmodule GoodFlows.ScenarioSets do
       change_request.number,
       type,
       Map.put(data, "source", source),
-      api_key
+      actor
     )
   end
 

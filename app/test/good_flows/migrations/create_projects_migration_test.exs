@@ -29,6 +29,8 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
   # review policy versions reference `projects` too (and the last index is
   # on `workflow_runs`), so they come first.
   @cache_migrations [
+    {20_261_124_144_912, GoodFlows.Repo.Migrations.AddChangeRequestIterationHistory,
+     "add_change_request_iteration_history"},
     {20_261_121_190_243, GoodFlows.Repo.Migrations.CreateDefects, "create_defects"},
     {20_261_121_190_241, GoodFlows.Repo.Migrations.AddParentToChangeRequests,
      "add_parent_to_change_requests"},

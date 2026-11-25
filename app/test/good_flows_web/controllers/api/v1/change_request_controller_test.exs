@@ -287,6 +287,12 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestControllerTest do
 
       again = ctx.sk_conn |> post_json(cr_path(slug, 1, "/merged"), report) |> json_response(200)
       assert again["data"]["merge"]["merged_at"] == first["data"]["merge"]["merged_at"]
+      assert %{"head_count" => 0, "fix_iterations" => 0} = again["data"]["merge"]
+
+      Repo.update_all(ChangeRequest, set: [merged_head_count: nil, merged_fix_iterations: nil])
+      before = ctx.sk_conn |> get(cr_path(slug, 1)) |> json_response(200)
+      assert_schema(before, "ChangeRequestResponse", ApiSpec.spec())
+      assert %{"head_count" => nil, "fix_iterations" => nil} = before["data"]["merge"]
 
       assert ctx.sk_conn
              |> post_json(cr_path(slug, 1, "/merged"), %{report | "merged_commit" => sha(0xC2)})
@@ -344,6 +350,32 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestControllerTest do
                ctx.sk_conn |> get(cr_path(slug, 1, "/git-facts/ABC")) |> json_response(422)
 
       assert count(GitFacts) == 1
+    end
+
+    test "reads return previous_head and head_kind, null for a pre-change report", ctx do
+      slug = ctx.project.slug
+      _ = create_cr(ctx.sk_conn, slug)
+      _ = facts!(ctx, 1, sha(1))
+
+      fix =
+        sha(2)
+        |> git_facts()
+        |> Map.update!("commits", &[hd(git_facts(sha(1))["commits"]) | &1])
+
+      assert ctx.sk_conn |> post_json(cr_path(slug, 1, "/git-facts"), fix) |> json_response(201)
+
+      read = ctx.sk_conn |> get(cr_path(slug, 1, "/git-facts/#{sha(2)}")) |> json_response(200)
+      assert_schema(read, "GitFactsResponse", ApiSpec.spec())
+      assert read["data"]["previous_head"] == sha(1)
+      assert read["data"]["head_kind"] == "fast_forward"
+
+      first = ctx.sk_conn |> get(cr_path(slug, 1, "/git-facts/#{sha(1)}")) |> json_response(200)
+      assert %{"previous_head" => nil, "head_kind" => "first"} = first["data"]
+
+      Repo.update_all(GitFacts, set: [previous_head: nil, head_kind: nil])
+      old = ctx.sk_conn |> get(cr_path(slug, 1, "/git-facts/#{sha(2)}")) |> json_response(200)
+      assert_schema(old, "GitFactsResponse", ApiSpec.spec())
+      assert %{"previous_head" => nil, "head_kind" => nil} = old["data"]
     end
 
     test "a second report for the same head on another target branch", ctx do

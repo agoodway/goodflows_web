@@ -25,8 +25,10 @@ The setup's seeded development account is `user@example.com` with password
 From the repository root, run `amp orb services ensure` to start the declared
 PostgreSQL and Phoenix services and obtain the current orb's portal URL.
 The Phoenix service uses Amp's assigned port and public hostname; generated
-portal state is ignored by Git. Toolchains are available to agents and services
-through a single login-profile hook, not just the setup process.
+portal state is ignored by Git. Toolchains are on `PATH` for agents and services
+through a login-profile hook, which Amp's snapshot keeps. Nothing else may depend
+on that hook: Hex's CA path is in `~/.hex/hex.config`, and
+`MIX_OS_DEPS_COMPILE_PARTITION_COUNT` is an Amp project environment variable.
 
 Checks:
 

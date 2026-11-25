@@ -192,4 +192,19 @@ defmodule GoodFlowsWeb.ProjectLiveTest do
     assert has_element?(view, "#projects-#{elsewhere.id}")
     refute has_element?(view, "#projects-empty")
   end
+
+  test "each slug links to the project's change requests", %{
+    conn: conn,
+    path: path,
+    account: account
+  } do
+    project = SpryFixtures.project_fixture(account, slug: "web")
+    {:ok, view, _html} = live(conn, path)
+
+    target = ~p"/dashboard/accounts/#{account.id}/projects/web/change-requests"
+    assert has_element?(view, ~s(#change-requests-#{project.id}[href="#{target}"]), "web")
+
+    assert {:error, {:live_redirect, %{to: ^target}}} =
+             view |> element("#change-requests-#{project.id}") |> render_click()
+  end
 end

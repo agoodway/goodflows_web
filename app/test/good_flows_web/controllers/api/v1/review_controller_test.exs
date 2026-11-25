@@ -11,6 +11,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
   alias GoodFlows.Caches.Keys
   alias GoodFlows.Caches.ObjectStore.Fake
   alias GoodFlows.Repo
+  alias GoodFlows.Review
   alias GoodFlows.Review.{Answer, Items, Task}
   alias GoodFlows.ScenarioSets.Decision
   alias GoodFlows.VerifyRuns.Artifact
@@ -1152,6 +1153,46 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
              |> json_response(403)
 
       assert ctx.sk_conn |> get(cr_path(slug, 999, "/tasks")) |> json_response(404)
+    end
+  end
+
+  describe "dashboard answers" do
+    setup ctx do
+      _ = create_cr(ctx.sk_conn, ctx.project.slug)
+      :ok
+    end
+
+    test "read through the API with channel dashboard and no key", ctx do
+      slug = ctx.project.slug
+      one_way!(ctx)
+      [door] = packet(ctx.sk_conn, slug, 1)["items"]
+      member = Repo.preload(ctx.sk_key, :account_user).account_user
+      {:ok, cr} = GoodFlows.ChangeRequests.get(ctx.project, 1)
+
+      {:ok, _answer} =
+        Review.answer(cr, Review.dashboard_actor(member), door["id"], %{
+          "head" => sha(1),
+          "answer" => "approve"
+        })
+
+      body = ctx.sk_conn |> get(cr_path(slug, 1, "/review")) |> json_response(200)
+      assert_schema(body, "ReviewPacketResponse", ApiSpec.spec())
+      [item] = body["data"]["items"]
+
+      assert %{
+               "answer" => "approve",
+               "channel" => "dashboard",
+               "answered_by" => %{"user_id" => user_id, "key_id" => nil}
+             } = item["answer"]
+
+      assert user_id == member.user_id
+      assert verdict(ctx.sk_conn, slug, 1)["state"] == "mergeable"
+
+      [event] =
+        events(ctx.sk_conn, slug)["data"] |> Enum.filter(&(&1["type"] == "answer_recorded"))
+
+      assert event["number"] == 1
+      assert event["actor"] == %{"user_id" => member.user_id, "key_id" => nil}
     end
   end
 end

@@ -50,6 +50,8 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
     field :merged_reasons, GoodFlows.JsonValue
     field :merged_without_mergeable_verdict, :boolean
     field :merged_without_lease, :boolean, default: false
+    field :merged_fix_iterations, :integer
+    field :merged_head_count, :integer
 
     belongs_to :account, Account
     belongs_to :parent, __MODULE__
@@ -105,7 +107,8 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
   @doc """
   Records the merge: `merge` holds `merged_commit`, `target_branch`,
   `merged_at`, `head`, `verdict_state`, `policy_version`, `reasons`,
-  `merged_without_mergeable_verdict` and `merged_without_lease`.
+  `merged_without_mergeable_verdict`, `merged_without_lease`,
+  `fix_iterations` and `head_count`.
   """
   @spec merge_changeset(t(), map()) :: Ecto.Changeset.t()
   def merge_changeset(change_request, merge) do
@@ -120,7 +123,9 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
       merged_policy_version: merge.policy_version,
       merged_reasons: merge.reasons,
       merged_without_mergeable_verdict: merge.merged_without_mergeable_verdict,
-      merged_without_lease: merge.merged_without_lease
+      merged_without_lease: merge.merged_without_lease,
+      merged_fix_iterations: merge.fix_iterations,
+      merged_head_count: merge.head_count
     )
   end
 

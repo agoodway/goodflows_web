@@ -1,13 +1,18 @@
 services:
   postgres:
     platforms: [linux]
-    # .agents/setup picks the major (15 on Debian 12, 17 on 13) and exports it in the login profile.
-    command: sudo pg_ctlcluster --foreground "${GOODFLOWS_PG_MAJOR:?run .agents/setup}" main start
+    # .agents/setup installs 15 on Debian 12 and 17 on 13. Restoring an orb snapshot rewrites the
+    # login profile, so the service reads the version of the `main` cluster on port 5432.
+    command: >-
+      major="$(pg_lsclusters --no-header | awk '$2 == "main" && $3 == 5432 {print $1; exit}')" &&
+      exec sudo pg_ctlcluster --foreground "${major:?no main PostgreSQL cluster on port 5432, run .agents/setup}" main start
     port: 5432
   web:
     platforms: [linux]
     cwd: app
+    # Source the toolchain env directly: restoring an orb snapshot rewrites the login profile.
     command: >-
+      . "$HOME/.local/share/goodflows/env" &&
       ../.agents/resume &&
       PHX_HOST="$(printf '%s' "$PUBLIC_URL" | cut -d/ -f3)" exec mix phx.server
     health: /users/log-in

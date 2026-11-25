@@ -302,7 +302,7 @@ Decisions SHALL be kept per change request and digest, oldest first. A digest is
 - **THEN** the version reads as `approved` true
 
 ### Requirement: Decisions record who decided and how
-Each decision SHALL store `decision` (`approve` or `reject`), the membership, the key, the digest, the `note` (null for approvals), the time, and `channel` `cli` for every decision made through the API. A decision with the `decision` and `note` of the digest's latest decision, when that was made by the same membership, MUST respond `200` and add no row. Decision responses MUST include `decision`, `digest`, `note`, `decided_by` (with `user_id`), `decided_at` and `channel`.
+Each decision SHALL store `decision` (`approve` or `reject`), the membership, the key, the digest, the `note` (null for approvals), the time, and the `channel`. A decision with the `decision` and `note` of the digest's latest decision, when that was made by the same membership, MUST respond `200` and add no row. Decision responses MUST include `decision`, `digest`, `note`, `decided_by` (with `user_id`), `decided_at` and `channel`.
 
 #### Scenario: Approval record
 - **WHEN** membership M approves digest `d2` with key K
@@ -421,3 +421,10 @@ A diff digest's decisions SHALL be recorded only by `diff_set_weakened` answers,
 #### Scenario: Intent version accepted
 - **WHEN** an intent version's digest is approved
 - **THEN** that version reads `approved` true and `accepted` true
+
+### Requirement: Decisions record their channel
+A decision's `channel` SHALL be `cli` for every decision made through the API, and `dashboard`, with the key null, for a decision recorded by a review answer made in the dashboard.
+
+#### Scenario: Approval from the dashboard
+- **WHEN** membership M approves the `scenario_set_approval` item for digest `d2` in the dashboard
+- **THEN** `d2` reads as approved, and its decision names M, has no key, and has `channel` `dashboard`

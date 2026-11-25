@@ -85,6 +85,29 @@ defmodule GoodFlows.AccountsTest do
       assert is_nil(user.confirmed_at)
       assert is_nil(user.password)
     end
+
+    test "creates a default account owned by the new user" do
+      {:ok, user} = Accounts.register_user(valid_user_attributes(email: "jo.smith@example.com"))
+
+      assert [{account, :owner}] = Accounts.list_user_accounts(user)
+      assert account.name == "jo.smith"
+    end
+
+    test "gives users with the same email name separate accounts" do
+      {:ok, a} = Accounts.register_user(%{email: "sam@one.example.com"})
+      {:ok, b} = Accounts.register_user(%{email: "sam@two.example.com"})
+
+      [{account_a, :owner}] = Accounts.list_user_accounts(a)
+      [{account_b, :owner}] = Accounts.list_user_accounts(b)
+      assert account_a.id != account_b.id
+      assert account_a.slug != account_b.slug
+    end
+
+    test "creates no account when the email is invalid" do
+      count = GoodFlows.Repo.aggregate(GoodFlows.Accounts.Account, :count)
+      {:error, _changeset} = Accounts.register_user(%{email: "not valid"})
+      assert GoodFlows.Repo.aggregate(GoodFlows.Accounts.Account, :count) == count
+    end
   end
 
   describe "sudo_mode?/2" do
