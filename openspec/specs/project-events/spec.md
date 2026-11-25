@@ -30,7 +30,7 @@ Each event SHALL have `id` (its cursor), `type`, `number` (the change request nu
 
 #### Scenario: Event types
 - **WHEN** a client reads the feed
-- **THEN** each event's `type` is one of `cr_state_changed`, `cr_retargeted`, `cr_parent_changed`, `verdict_changed`, `scenario_set_uploaded`, `scenario_set_approved`, `scenario_set_rejected`, `answer_recorded`, `task_created`, `task_completed`, `policy_version_created`, `lease_acquired`, `lease_renewed`, `lease_expired`, `lease_released`, `defect_recorded`, `workflow_run_stored` and `verify_run_stored`
+- **THEN** each event's `type` is one of `cr_state_changed`, `cr_retargeted`, `cr_parent_changed`, `cr_dependencies_changed`, `verdict_changed`, `scenario_set_uploaded`, `scenario_set_approved`, `scenario_set_rejected`, `answer_recorded`, `task_created`, `task_completed`, `policy_version_created`, `lease_acquired`, `lease_renewed`, `lease_expired`, `lease_released`, `defect_recorded`, `workflow_run_stored` and `verify_run_stored`
 
 #### Scenario: Event without a change request
 - **WHEN** a client reads a `policy_version_created` event or the `defect_recorded` event of an unattributed defect
@@ -292,6 +292,21 @@ The OpenAPI document SHALL list the three types among the feed's event types, wi
 #### Scenario: Edit event types in the OpenAPI document
 - **WHEN** a client reads the OpenAPI document
 - **THEN** the project event types include `cr_retargeted`, `cr_parent_changed` and `task_completed`, with the payload fields of each
+
+### Requirement: Dependency changes are recorded in the project feed
+The feed SHALL record `cr_dependencies_changed` when a dependencies update changes a change request's stored list, with `data` `{"from": [...], "to": [...]}` (the old and new lists, `[]` for none), in the transaction that makes the change, with the change request's `number`. Its `actor` is the request's key and that key's membership. An update that sends the stored list again, or a rejected update, MUST record no event.
+
+#### Scenario: Dependencies set, then cleared
+- **WHEN** change request 42's dependencies change from none to `["add-login"]`, then to none
+- **THEN** two `cr_dependencies_changed` events have `data` `{"from": [], "to": ["add-login"]}` and `{"from": ["add-login"], "to": []}`
+
+#### Scenario: Same list again
+- **WHEN** change request 42's dependencies are `["add-login"]` and a client puts `{"change_ids": ["add-login"]}`
+- **THEN** no `cr_dependencies_changed` event is recorded
+
+#### Scenario: OpenAPI lists the dependencies event
+- **WHEN** a client reads the OpenAPI document
+- **THEN** the project event types include `cr_dependencies_changed`, with its payload fields
 
 ### Requirement: Stored runs are recorded in the project feed
 The feed SHALL record `workflow_run_stored` once for each `draft` or `open` change request whose head is a newly stored workflow run's commit, and `verify_run_stored` once for each `draft` or `open` change request with a scenario set version on a verify run's digest when the run becomes `final`. Each is written in the transaction that stores or finalizes the run, with the change request's `number`, and its `actor` is the uploading key and its membership.
