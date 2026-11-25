@@ -171,7 +171,7 @@ A set whose front matter has a top-level `run` key, or a scenario entry with `re
 - **THEN** the API responds `422` on `content` and stores nothing
 
 ### Requirement: Intent coverage rows name requirements
-An intent set's `coverage`, when present, MUST be a list of entries with `capability`, `requirement` and `scenario` (OpenSpec names, each 1 to 200 characters, never checked against specs), `status` (`covered` or `no_check`), `scenarios` (QA scenario IDs of the set, under the ID rule; empty for `no_check`), and an optional `reason` of at most 1,000 characters. A `covered` row MUST name at least one scenario. `{capability, requirement, scenario}` MUST be unique per set.
+An intent set's `coverage`, when present, MUST be a list of entries with `capability`, `requirement` and `scenario` (spec names, each 1 to 200 characters, never checked against specs), `status` (`covered` or `no_check`), `scenarios` (QA scenario IDs of the set, under the ID rule; empty for `no_check`), and an optional `reason` of at most 1,000 characters. A `covered` row MUST name at least one scenario. `{capability, requirement, scenario}` MUST be unique per set.
 
 #### Scenario: Spec gap row
 - **WHEN** an intent set has a coverage row `{capability: exports, requirement: "Export is audited", scenario: "Audit entry written", status: no_check, scenarios: [], reason: "Needs a log reader"}`
@@ -204,15 +204,15 @@ An intent set's `coverage`, when present, MUST be a list of entries with `capabi
 - **WHEN** a `sections` entry has a `sha256` in uppercase hex
 - **THEN** the API responds `422` with an error on `sections`
 
-### Requirement: An intent set belongs to the linked OpenSpec change
-An intent set's `change` MUST equal the change request's linked OpenSpec change ID. A change request with no linked change MUST get `422` on `content.change` for an intent upload. A change request SHALL have at most one intent set, versioned.
+### Requirement: An intent set belongs to the linked change
+An intent set's `change` MUST equal the change request's linked `change_id`. A change request with no linked change MUST get `422` on `content.change` for an intent upload. A change request SHALL have at most one intent set, versioned.
 
 #### Scenario: Wrong change
 - **WHEN** change request 42 links `add-export` and a client uploads an intent set with `change: add-import`
 - **THEN** the API responds `422` with an error on `content.change` and stores nothing
 
 #### Scenario: No linked change
-- **WHEN** change request 43 has no linked OpenSpec change and a client uploads an intent set
+- **WHEN** change request 43 has no linked change and a client uploads an intent set
 - **THEN** the API responds `422` with an error on `content.change`
 
 ### Requirement: A diff set names a revision

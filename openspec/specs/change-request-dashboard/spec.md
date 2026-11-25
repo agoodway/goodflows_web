@@ -102,7 +102,7 @@ The detail page SHALL show:
 - the intent and diff scenario sets the verdict graded, with version and approval
 - the verify run IDs the verdict counted
 - a claims summary: door, and the number of safe-because claims, questions and open risks
-- the opener, the OpenSpec change, and the parent change request linked to its detail page
+- the opener, the linked change, and the parent change request linked to its detail page
 
 #### Scenario: Missing required workflow
 - **WHEN** the policy requires workflow `ci` and the verdict has a `required_workflow_missing` reason with subject `["ci"]`

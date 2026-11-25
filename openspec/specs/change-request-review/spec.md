@@ -33,7 +33,7 @@ The packet SHALL return `data` with `number`, `head`, `base` (`branch`, `merge_b
 - **THEN** the packet has `head` null, `base` null, `verdict` `pending`, an empty `items` list, and a `pending` entry with rule `git_facts_missing`
 
 #### Scenario: Intent set to approve before code
-- **WHEN** change request 42 links an OpenSpec change, has no `git-facts` report, `scenarios.require_approved_intent` is `true`, and its current intent version has unapproved digest `5e1c…`
+- **WHEN** change request 42 links a change, has no `git-facts` report, `scenarios.require_approved_intent` is `true`, and its current intent version has unapproved digest `5e1c…`
 - **THEN** the packet has `head` null, `base` null, `verdict` `pending`, a `pending` entry with rule `git_facts_missing`, and exactly one item, of kind `scenario_set_approval` with subject `["5e1c…"]` and `answer` null
 
 #### Scenario: Mergeable change request
@@ -52,7 +52,7 @@ Every `pending` and `blocked` reason of the verdict SHALL appear in the packet's
 - **THEN** the packet's `blocked` list has a `must_failed` entry with subject `["intent", "S3"]` and no item for `S3` exists
 
 #### Scenario: No intent set yet
-- **WHEN** change request 42 links an OpenSpec change, has no intent set, and `scenarios.require_approved_intent` is `true`
+- **WHEN** change request 42 links a change, has no intent set, and `scenarios.require_approved_intent` is `true`
 - **THEN** the packet's `pending` list has a `scenario_set_approval` entry with subject `[]` and no `scenario_set_approval` item exists
 
 #### Scenario: Unapproved intent set

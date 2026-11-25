@@ -72,19 +72,19 @@ On every write route, authentication, project resolution and change request reso
 - **THEN** the new change request has `number` `1`
 
 ### Requirement: Change request fields are validated
-The create body MUST accept only `title` (required, 1 to 256 UTF-8 bytes, no control characters), `source_branch` (required) and `target_branch` (optional, defaults to the project's `default_branch`), both 1 to 256 UTF-8 bytes with no control characters, `openspec_change` (optional, 1 to 64 bytes matching `[a-z0-9][a-z0-9-]*`), and `links` (optional, the workflow-run `links` shape). Any other key or a rule violation MUST return `422` on that key.
+The create body MUST accept only `title` (required, 1 to 256 UTF-8 bytes, no control characters), `source_branch` (required) and `target_branch` (optional, defaults to the project's `default_branch`), both 1 to 256 UTF-8 bytes with no control characters, `change_id` (optional, 1 to 64 bytes matching `[a-z0-9][a-z0-9-]*`), and `links` (optional, the workflow-run `links` shape). Any other key or a rule violation MUST return `422` on that key.
 
 #### Scenario: Default target branch
 - **WHEN** a client creates `{"title": "Add login", "source_branch": "feat/login"}` in a project whose `default_branch` is `trunk`
 - **THEN** the API responds `201` with `target_branch` `trunk`
 
-#### Scenario: Linked OpenSpec change and links
-- **WHEN** a client creates a change request with `openspec_change` `add-login` and `links` `{"tickets": ["GOO-291"]}`
+#### Scenario: Linked change and links
+- **WHEN** a client creates a change request with `change_id` `add-login` and `links` `{"tickets": ["GOO-291"]}`
 - **THEN** the API responds `201` and stores both as given
 
-#### Scenario: Several OpenSpec changes
-- **WHEN** a client creates a change request with `openspec_change` `["add-login", "add-logout"]`
-- **THEN** the API responds `422` with an error on `openspec_change` and stores nothing
+#### Scenario: Several changes
+- **WHEN** a client creates a change request with `change_id` `["add-login", "add-logout"]`
+- **THEN** the API responds `422` with an error on `change_id` and stores nothing
 
 #### Scenario: Unknown key
 - **WHEN** a client creates a change request with a `state` key
@@ -99,7 +99,7 @@ The create body MUST accept only `title` (required, 1 to 256 UTF-8 bytes, no con
 - **THEN** the API responds `422` with an error on `links` and stores nothing
 
 ### Requirement: Change request responses carry the record
-A change request response MUST include under `data` the `id`, `number`, `title`, `state`, `source_branch`, `target_branch`, `openspec_change` (or null), `links` (or null), `head` (the last reported head, or null), `parent` (the parent change request's number, or null), `dependencies` (the stored change ids, `[]` when none), `opened_by` with the opener's `user_id`, `merge` (null unless merged), `inserted_at` and `updated_at`. It MUST NOT include `account_id` or `project_id`.
+A change request response MUST include under `data` the `id`, `number`, `title`, `state`, `source_branch`, `target_branch`, `change_id` (or null), `links` (or null), `head` (the last reported head, or null), `parent` (the parent change request's number, or null), `dependencies` (the stored change ids, `[]` when none), `opened_by` with the opener's `user_id`, `merge` (null unless merged), `inserted_at` and `updated_at`. It MUST NOT include `account_id` or `project_id`.
 
 #### Scenario: New change request
 - **WHEN** a client creates a change request without Git facts
@@ -706,7 +706,7 @@ From this phase the verdict SHALL apply the review policy's `scenarios`, `eviden
 - **THEN** the active settings include `scenarios.require_approved_intent`, `scenarios.should_failures`, `scenarios.spec_gaps`, `scenarios.approver`, `scenarios.diff_only`, `evidence.ignore_paths`, `coverage.unmapped_areas` and `coverage.undriven_features`
 
 ### Requirement: An approved intent set is required
-With `scenarios.require_approved_intent` true and a linked OpenSpec change, the verdict MUST be `pending` with reason `scenario_set_approval` while the change request has no intent set or its current intent version's digest is not approved (its latest decision is not `approve`). The reason's `subject` MUST be `[<current digest>]`, or `[]` when no intent set exists.
+With `scenarios.require_approved_intent` true and a linked change, the verdict MUST be `pending` with reason `scenario_set_approval` while the change request has no intent set or its current intent version's digest is not approved (its latest decision is not `approve`). The reason's `subject` MUST be `[<current digest>]`, or `[]` when no intent set exists.
 
 #### Scenario: No intent set yet
 - **WHEN** change request 42 links `add-export`, has no intent set, and the policy requires an approved intent set
@@ -740,10 +740,10 @@ Before any Git facts are reported for the change request's current head, the `sc
 - **THEN** the verdict is `pending` with only the `git_facts_missing` reason
 
 ### Requirement: A change request without a linked change needs a scenario set
-With `scenarios.require_approved_intent` true, a change request with no linked OpenSpec change MUST be `pending` with reason `scenario_set_missing` (`subject` `[]`) while it has no diff set. With `require_approved_intent` false, including policy version 0, no scenario set is required and `scenario_set_missing` MUST NOT fire.
+With `scenarios.require_approved_intent` true, a change request with no linked change MUST be `pending` with reason `scenario_set_missing` (`subject` `[]`) while it has no diff set. With `require_approved_intent` false, including policy version 0, no scenario set is required and `scenario_set_missing` MUST NOT fire.
 
 #### Scenario: No change and no diff set
-- **WHEN** change request 43 links no OpenSpec change, has no diff set, and the policy requires an approved intent set
+- **WHEN** change request 43 links no change, has no diff set, and the policy requires an approved intent set
 - **THEN** the verdict is `pending` with a `scenario_set_missing` reason
 
 #### Scenario: Nothing required
@@ -754,7 +754,7 @@ With `scenarios.require_approved_intent` true, a change request with no linked O
 With `scenarios.require_approved_intent` true and `scenarios.diff_only` `needs_review`, a change request that has a diff set and no intent set MUST get reason `diff_only_set` with outcome `needs_review` and `subject` `[]` at every head. With `scenarios.diff_only` `weakening` or `ignore`, `diff_only_set` MUST NOT fire.
 
 #### Scenario: Diff set only
-- **WHEN** change request 43 links no OpenSpec change, has a diff set for its head, every Must passed, the policy requires an approved intent set, and `scenarios.diff_only` is `needs_review`
+- **WHEN** change request 43 links no change, has a diff set for its head, every Must passed, the policy requires an approved intent set, and `scenarios.diff_only` is `needs_review`
 - **THEN** the verdict has a `diff_only_set` reason and is at least `needs_review`
 
 #### Scenario: New head keeps the reason
@@ -762,7 +762,7 @@ With `scenarios.require_approved_intent` true and `scenarios.diff_only` `needs_r
 - **THEN** the recomputed verdict still has a `diff_only_set` reason
 
 #### Scenario: Diff-only ignored
-- **WHEN** change request 43 links no OpenSpec change, has a diff set naming its head, a counted run passed every scenario, the policy requires an approved intent set, and `scenarios.diff_only` is `ignore`
+- **WHEN** change request 43 links no change, has a diff set naming its head, a counted run passed every scenario, the policy requires an approved intent set, and `scenarios.diff_only` is `ignore`
 - **THEN** the verdict has no `diff_only_set` reason and no scenario reason holds it from `mergeable`
 
 #### Scenario: Weakening mode has no per-head reason
@@ -1095,7 +1095,7 @@ While a change request's parent is `closed`, its verdict SHALL be `pending` with
 
 ### Requirement: Dependency ids follow the change id rule
 
-`change_ids` SHALL be an array of at most 50 distinct strings, each a 1 to 64 byte slug matching `[a-z0-9][a-z0-9-]*`, the rule of `openspec_change`. A body with another key, an id that breaks the rule, a duplicate id, or the change request's own `openspec_change` MUST return `422` on `change_ids` (an invalid entry on `change_ids[<index>]`) and change nothing.
+`change_ids` SHALL be an array of at most 50 distinct strings, each a 1 to 64 byte slug matching `[a-z0-9][a-z0-9-]*`, the rule of `change_id`. A body with another key, an id that breaks the rule, a duplicate id, or the change request's own `change_id` MUST return `422` on `change_ids` (an invalid entry on `change_ids[<index>]`) and change nothing.
 
 #### Scenario: Invalid id
 
@@ -1114,7 +1114,7 @@ While a change request's parent is `closed`, its verdict SHALL be `pending` with
 
 ### Requirement: A change request waits for its dependencies to merge
 
-For each id in a `draft` or `open` change request's `dependencies` that no `merged` change request of the same project links as its `openspec_change`, the verdict SHALL be `pending` with a reason whose `rule` is `dependency_not_merged` and whose `subject` is `[<change id>]`. The reason fires whatever the Git facts, and the change request's other reasons are kept. Its `message` MUST say which case holds and name rebasing onto a commit where the change is archived as a way out: a change request linking the id is `draft` or `open` (naming its numbers), every change request linking it is `closed`, or none links it. The verdict's `inputs.dependencies` SHALL be the stored id list.
+For each id in a `draft` or `open` change request's `dependencies` that no `merged` change request of the same project links as its `change_id`, the verdict SHALL be `pending` with a reason whose `rule` is `dependency_not_merged` and whose `subject` is `[<change id>]`. The reason fires whatever the Git facts, and the change request's other reasons are kept. Its `message` MUST say which case holds and name rebasing onto a commit where the change is archived as a way out: a change request linking the id is `draft` or `open` (naming its numbers), every change request linking it is `closed`, or none links it. The verdict's `inputs.dependencies` SHALL be the stored id list.
 
 #### Scenario: Dependency's change request open
 
@@ -1294,7 +1294,7 @@ A change request's diff baseline SHALL be the newest diff version whose digest i
 - **THEN** the baseline is version 1
 
 ### Requirement: A weakened diff set needs review
-With `scenarios.require_approved_intent` true, `scenarios.diff_only` `weakening`, a graded diff set, no linked OpenSpec change and no intent set, each Must scenario of the baseline that the current version removes, or demotes to `should` or `could`, MUST add reason `diff_set_weakened` with outcome `needs_review` and `subject` `["diff", <id>]`. An edited section of a Must, with its priority kept, MUST NOT add a reason.
+With `scenarios.require_approved_intent` true, `scenarios.diff_only` `weakening`, a graded diff set, no linked change and no intent set, each Must scenario of the baseline that the current version removes, or demotes to `should` or `could`, MUST add reason `diff_set_weakened` with outcome `needs_review` and `subject` `["diff", <id>]`. An edited section of a Must, with its priority kept, MUST NOT add a reason.
 
 #### Scenario: Must demoted after a failure
 - **WHEN** the baseline is version 1 with Must `S3`, and version 2, current and naming the head, has `S3` as `should`
