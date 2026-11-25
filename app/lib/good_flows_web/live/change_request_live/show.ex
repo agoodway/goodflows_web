@@ -304,10 +304,25 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
                 <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
                   <span>Rule
                   <.tag>{reason["rule"]}</.tag></span>
-                  <span :if={(reason["subject"] || []) != []} id={"reason-#{index}-subject"}>
+                  <span
+                    :if={reason["subject"] && !is_list(reason["subject"])}
+                    id={"reason-#{index}-subject"}
+                  >
                     Subject
-                    <.tag>{Enum.join(reason["subject"], ", ")}</.tag>
+                    <.tag>{reason["subject"]}</.tag>
                   </span>
+                </div>
+                <div
+                  :if={is_list(reason["subject"]) and reason["subject"] != []}
+                  id={"reason-#{index}-subject"}
+                  class="text-xs text-muted"
+                >
+                  Subject
+                  <ul class="mt-1 list-disc space-y-1 pl-5">
+                    <li :for={element <- reason["subject"]} class="break-words">
+                      <.tag>{element}</.tag>
+                    </li>
+                  </ul>
                 </div>
               </li>
             </ol>
@@ -340,6 +355,26 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             </div>
             <p :if={item.kind == "question"} class="break-words text-sm font-medium">
               {item.data[:text]}
+            </p>
+            <p
+              :if={item.kind == "open_item"}
+              id={"#{item_dom_id(item)}-risk"}
+              class="break-words text-sm font-medium"
+            >
+              {item.data[:risk]}
+              <span :if={item.data[:location]} class="block font-mono text-xs text-muted">
+                {item.data[:location]}
+              </span>
+            </p>
+            <p
+              :if={item.kind in ~w(failed_scenario not_run) and item.data[:reason]}
+              id={"#{item_dom_id(item)}-result"}
+              class="break-words text-sm font-medium"
+            >
+              {item.data[:reason]}
+              <span :if={item.data[:failed_step]} class="block font-mono text-xs text-muted">
+                Failed at {item.data[:failed_step]}
+              </span>
             </p>
             <p :if={item.answer} id={"#{item_dom_id(item)}-answer"} class="text-sm">
               {answer_verb(item.answer)} by {email(@emails, item.answer.account_user_id)}

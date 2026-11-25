@@ -276,6 +276,81 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       assert has_element?(view, "#review-cleared", "0 of 2 cleared")
     end
 
+    test "each open item shows its own risk and location", ctx do
+      cr = create!(ctx)
+      facts!(ctx.sk_conn, ctx.slug, cr.number, sha(1), files: [file("lib/a.ex")])
+
+      claims!(ctx.sk_conn, ctx.slug, cr.number, sha(1), %{
+        "cr" => cr.number,
+        "left_open" => [
+          %{
+            "risk" => "Restart loses todos",
+            "location" => "app/todos.py:32",
+            "affected" => "ops"
+          },
+          %{"risk" => "Ids can collide", "location" => "app/todos.py:51", "affected" => "users"}
+        ]
+      })
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      items = packet(ctx.sk_conn, ctx.slug, cr.number)["items"]
+      open = Enum.filter(items, &(&1["kind"] == "open_item"))
+
+      expected = [
+        {"Restart loses todos", "app/todos.py:32"},
+        {"Ids can collide", "app/todos.py:51"}
+      ]
+
+      assert length(open) == 2
+
+      for {item, {risk, location}} <- Enum.zip(open, expected) do
+        dom = "#item-#{String.replace(item["id"], ":", "-")}-risk"
+        assert has_element?(view, dom, risk)
+        assert has_element?(view, dom, location)
+      end
+
+      subject = "#reasons [data-rule='open_items'] [id$='-subject'] li"
+      assert has_element?(view, subject, "Restart loses todos")
+      assert has_element?(view, subject, "Ids can collide")
+      refute has_element?(view, "#reasons", "Ids can collide, Restart loses todos")
+    end
+
+    test "failed and not run scenario items show the run's reason and failed step", ctx do
+      cr = create!(ctx, %{"openspec_change" => "add-export"})
+      facts!(ctx.sk_conn, ctx.slug, cr.number, sha(1))
+      claims!(ctx.sk_conn, ctx.slug, cr.number, sha(1), %{"cr" => cr.number})
+      fm = intent_fm("add-export", [scenario("S1", "should"), scenario("S2", "should")])
+
+      digest =
+        ctx.sk_conn
+        |> post_json(cr_path(ctx.slug, cr.number, "/scenario-sets"), set_body(fm))
+        |> json_response(201)
+        |> get_in(["data", "digest"])
+
+      _ =
+        ctx.sk_conn
+        |> post_json(cr_path(ctx.slug, cr.number, "/scenario-sets/intent/approvals"), %{
+          "digest" => digest
+        })
+        |> json_response(201)
+
+      results = [
+        %{result("S1", "failed") | "failed_step" => "step 3", "reason" => "Export button 404s"},
+        %{result("S2", "not_run") | "reason" => "Needs a second account"}
+      ]
+
+      run!(ctx, digest, results, "2026-11-20T10:00:00Z")
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      failed = "##{item_id(ctx, cr.number, "failed_scenario")}-result"
+      not_run = "##{item_id(ctx, cr.number, "not_run")}-result"
+      assert has_element?(view, failed, "Export button 404s")
+      assert has_element?(view, failed, "Failed at step 3")
+      assert has_element?(view, not_run, "Needs a second account")
+      refute has_element?(view, not_run, "Failed at")
+    end
+
     test "a merged change request shows no items, the notice and Merged without a lease", ctx do
       cr = create!(ctx)
       one_way!(ctx, cr.number, sha(1))
