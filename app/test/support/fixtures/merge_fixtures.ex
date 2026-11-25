@@ -8,6 +8,7 @@ defmodule GoodFlows.MergeFixtures do
   import Phoenix.ConnTest
   import Plug.Conn
   import GoodFlows.ChangeRequestFixtures
+  import GoodFlows.GradingFixtures
   import GoodFlows.ReviewFixtures
 
   @endpoint GoodFlowsWeb.Endpoint
@@ -22,6 +23,30 @@ defmodule GoodFlows.MergeFixtures do
     _ = conn |> post(cr_path(slug, number, "/ready")) |> json_response(200)
     facts!(conn, slug, number, head, Keyword.take(opts, [:merge_base, :files, :target]))
     claims!(conn, slug, number, head, %{"cr" => number})
+    number
+  end
+
+  @doc """
+  Like `mergeable!/4`, but linked to OpenSpec change `change` with an
+  intent set graded at `head` by a passing run, so a lease on a moved base
+  turns on the merge-result check. Returns the change request's number.
+  """
+  def graded_mergeable!(conn, slug, head, change \\ "add-export") do
+    number = mergeable!(conn, slug, head, attrs: %{"openspec_change" => change})
+
+    digest =
+      conn
+      |> post_json(cr_path(slug, number, "/scenario-sets"), set_body(intent_fm(change)))
+      |> json_response(201)
+      |> get_in(["data", "digest"])
+
+    conn
+    |> post_json(
+      "/api/v1/projects/#{slug}/verify-runs",
+      run_doc(digest, "intent", head, [result("S1"), result("S2")])
+    )
+    |> json_response(201)
+
     number
   end
 

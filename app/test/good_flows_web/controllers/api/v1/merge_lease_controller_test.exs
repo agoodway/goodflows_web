@@ -318,12 +318,13 @@ defmodule GoodFlowsWeb.Api.V1.MergeLeaseControllerTest do
     end
 
     test "both flags; the merge's release keeps the frozen merged verdict", ctx do
-      lease = acquire!(ctx.sk_conn, ctx.slug, ctx.number, sha(1), sha(77))
-      assert rules(verdict(ctx.sk_conn, ctx.slug, ctx.number)) == ["merge_result_ungraded"]
+      number = graded_mergeable!(ctx.sk_conn, ctx.slug, sha(3))
+      lease = acquire!(ctx.sk_conn, ctx.slug, number, sha(3), sha(77))
+      assert rules(verdict(ctx.sk_conn, ctx.slug, number)) == ["merge_result_ungraded"]
 
       merge =
         ctx.sk_conn
-        |> merged(ctx.slug, ctx.number, sha(500))
+        |> merged(ctx.slug, number, sha(500))
         |> json_response(200)
         |> get_in(["data", "merge"])
 
@@ -336,7 +337,7 @@ defmodule GoodFlowsWeb.Api.V1.MergeLeaseControllerTest do
       assert Enum.map(merge["reasons"], & &1["rule"]) == ["merge_result_ungraded"]
       assert lease!(lease["id"]).release_reason == "merged"
 
-      stored = verdict(ctx.sk_conn, ctx.slug, ctx.number)
+      stored = verdict(ctx.sk_conn, ctx.slug, number)
       assert stored["state"] == "pending"
       assert rules(stored) == ["merge_result_ungraded"]
     end
@@ -401,6 +402,19 @@ defmodule GoodFlowsWeb.Api.V1.MergeLeaseControllerTest do
       assert v["state"] == "pending"
       assert [%{"subject" => [base]}] = reasons(v, "merge_result_ungraded")
       assert base == sha(200)
+    end
+
+    test "base moved without a scenario set: mergeable, merged with the verdict", ctx do
+      other = mergeable!(ctx.sk_conn, ctx.slug, sha(2), merge_base: sha(100))
+      lease = acquire!(ctx.sk_conn, ctx.slug, other, sha(2), sha(200))
+
+      assert %{"state" => "mergeable", "reasons" => []} =
+               verdict(ctx.sk_conn, ctx.slug, other)
+
+      assert %{"data" => %{"merge" => %{"merged_without_mergeable_verdict" => false}}} =
+               ctx.sk_conn
+               |> merged(ctx.slug, other, sha(500), %{"lease_id" => lease["id"]})
+               |> json_response(200)
     end
 
     test "base unchanged: mergeable", ctx do

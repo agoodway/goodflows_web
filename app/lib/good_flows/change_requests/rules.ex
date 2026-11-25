@@ -46,9 +46,11 @@ defmodule GoodFlows.ChangeRequests.Rules do
   per scenario of its set, so this is the newest result per Must): each
   Must that is not `passed` adds `merge_result_failed` (`blocked`,
   `[source, id]`), a Must without a result counting as `not_run`, and a
-  graded set without such a run, or no graded set, adds
-  `merge_result_ungraded` (`pending`, `[<lease base>]`). Merge-result runs
-  never grade the branch.
+  graded set without such a run adds `merge_result_ungraded` (`pending`,
+  `[<lease base>]`). With no graded set the check adds nothing, so a
+  change request graded without scenario sets is never held for a
+  merge-result run it cannot have. Merge-result runs never grade the
+  branch.
   """
 
   alias GoodFlows.ChangeRequests.Grading
@@ -158,13 +160,10 @@ defmodule GoodFlows.ChangeRequests.Rules do
         "No counted verify run grades the merge result on the lease's base"
       )
 
-    case graded_sets(grading) do
-      [] ->
-        [ungraded]
-
-      sets ->
-        sets |> Enum.flat_map(&merge_result_set(&1, runs, ungraded)) |> Enum.uniq()
-    end
+    grading
+    |> graded_sets()
+    |> Enum.flat_map(&merge_result_set(&1, runs, ungraded))
+    |> Enum.uniq()
   end
 
   defp merge_result_reasons(_inputs), do: []

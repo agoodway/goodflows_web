@@ -56,7 +56,7 @@ A project with no written version SHALL have current version `0`: a default that
 - `paths` `[]`, because sensitive paths depend on the project's language and layout.
 - `size`: `max_changed_files` `40`, `max_changed_lines` `1500`.
 - `coverage`: `unmapped_areas` and `undriven_features` `ignore`.
-- `merge`: `lease_ttl` `10m`, `regrade_merge_result` true.
+- `merge`: `lease_ttl` `10m`, `regrade_merge_result` true. The merge-result check applies only to a change request whose verdict grades a scenario set, so version 0 needs no merge-result run either.
 
 #### Scenario: New project
 - **WHEN** a client reads the review policy of a project that never wrote one

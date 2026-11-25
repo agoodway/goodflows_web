@@ -177,7 +177,7 @@ defmodule GoodFlows.MergeLeasesTest do
     end
 
     test "the holder of an expired lease on a moved base reacquires before the job runs", ctx do
-      number = mergeable!(ctx.sk_conn, ctx.slug, sha(1))
+      number = graded_mergeable!(ctx.sk_conn, ctx.slug, sha(1))
       {:ok, :created, l1} = acquire_ctx(ctx, number, sha(1), sha(200))
       assert verdict(ctx.sk_conn, ctx.slug, number)["state"] == "pending"
       move_expiry!(l1.id, -5)
@@ -335,7 +335,7 @@ defmodule GoodFlows.MergeLeasesTest do
     end
 
     test "recomputes the verdict without the merge-result check", ctx do
-      number = mergeable!(ctx.sk_conn, ctx.slug, sha(1))
+      number = graded_mergeable!(ctx.sk_conn, ctx.slug, sha(1))
       {:ok, :created, lease} = acquire_ctx(ctx, number, sha(1), sha(77))
 
       assert %{"state" => "pending"} = v = verdict(ctx.sk_conn, ctx.slug, number)

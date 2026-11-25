@@ -230,12 +230,17 @@ A verdict that changes away from `mergeable` while a lease is held SHALL NOT rel
 
 ### Requirement: Merge-result grading is required when the base moved
 
-While a change request holds an active lease, the current policy sets `merge.regrade_merge_result = true`, and the lease's `base` differs from the `merge_base` of the head's `git-facts` report, the verdict SHALL include the merge-result check. Otherwise the check MUST NOT apply. The check adds to the verdict's other rules and never replaces them.
+While a change request holds an active lease, the current policy sets `merge.regrade_merge_result = true`, the lease's `base` differs from the `merge_base` of the head's `git-facts` report, and the verdict grades at least one scenario set at the head, the verdict SHALL include the merge-result check. Otherwise the check MUST NOT apply, so a change request graded without scenario sets, such as one under policy version 0 with no set uploaded, is never held for a merge-result run it cannot have. The check adds to the verdict's other rules and never replaces them.
 
 #### Scenario: Base moved
 
-- **WHEN** CR 42's `git-facts` names `merge_base` `9f8e7d6`, regrading is on, and CR 42 acquires a lease with `base` `0a1b2c3`
+- **WHEN** CR 42's verdict grades an intent set, its `git-facts` names `merge_base` `9f8e7d6`, regrading is on, and CR 42 acquires a lease with `base` `0a1b2c3`
 - **THEN** CR 42's verdict becomes `pending` with a reason whose `rule` is `merge_result_ungraded`
+
+#### Scenario: Base moved without a scenario set
+
+- **WHEN** CR 42 is `mergeable` under policy version 0 with no scenario set, its `git-facts` names `merge_base` `9f8e7d6`, and CR 42 acquires a lease with `base` `0a1b2c3`
+- **THEN** CR 42's verdict stays `mergeable` with no reasons
 
 #### Scenario: Base unchanged
 
