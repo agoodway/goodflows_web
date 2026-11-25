@@ -214,7 +214,7 @@ defmodule GoodFlowsWeb.Api.V1.ProjectControllerTest do
 
     test "a project whose only content is a verify run is 409; a feature index is not", ctx do
       project = project_fixture(ctx.account)
-      cr = create_cr(ctx.sk_conn, project.slug, %{"openspec_change" => "add-x"})
+      cr = create_cr(ctx.sk_conn, project.slug, %{"change_id" => "add-x"})
       fm = intent_fm("add-x", [scenario("S1")])
 
       digest =

@@ -92,7 +92,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
       state: change_request.state,
       source_branch: change_request.source_branch,
       target_branch: change_request.target_branch,
-      openspec_change: change_request.openspec_change,
+      change_id: change_request.change_id,
       links: links(change_request.links, redact?),
       head: change_request.head,
       parent: change_request.parent && change_request.parent.number,

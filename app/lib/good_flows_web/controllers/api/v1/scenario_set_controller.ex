@@ -80,7 +80,7 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetController do
     byte for byte (`201`). Only the YAML front matter is read. The digest is
     the SHA-256 of `content`; a file equal to the current version is `200`
     with `duplicate` true. An intent set's `change` must equal the change
-    request's linked OpenSpec change. A file carrying run results is `422`:
+    request's linked change (`change_id`). A file carrying run results is `422`:
     results belong in a verify run. Only `draft` and `open` change requests
     accept uploads (`409`). Strict JSON, 1 MiB.
     """,

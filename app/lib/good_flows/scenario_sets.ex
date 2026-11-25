@@ -7,8 +7,8 @@ defmodule GoodFlows.ScenarioSets do
   `upload/3` stores the next version of the change request's intent or
   diff set from a `qa-scenarios/2` file (`GoodFlows.ScenarioSets.Document`),
   or answers `:duplicate` when its digest equals the current version's. An
-  intent set's `change` must equal the change request's linked OpenSpec
-  change. `decide/5` records an `approve` or `reject` decision on the
+  intent set's `change` must equal the change request's linked
+  `change_id`. `decide/5` records an `approve` or `reject` decision on the
   current intent digest, under the policy's `scenarios.approver`. A digest
   is approved when its latest decision is `approve` (`approved_digests/1`),
   so the approval follows the bytes, not the head.
@@ -73,16 +73,14 @@ defmodule GoodFlows.ScenarioSets do
     end
   end
 
-  defp check_change(%ChangeRequest{openspec_change: change}, %{source: "intent"} = upload) do
+  defp check_change(%ChangeRequest{change_id: change}, %{source: "intent"} = upload) do
     cond do
       change == nil ->
-        {:error,
-         {:invalid_body, %{"content.change" => ["the change request links no OpenSpec change"]}}}
+        {:error, {:invalid_body, %{"content.change" => ["the change request links no change"]}}}
 
       upload.front_matter["change"] != change ->
         {:error,
-         {:invalid_body,
-          %{"content.change" => ["must equal the change request's OpenSpec change"]}}}
+         {:invalid_body, %{"content.change" => ["must equal the change request's change_id"]}}}
 
       true ->
         :ok

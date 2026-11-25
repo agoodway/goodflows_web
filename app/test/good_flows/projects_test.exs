@@ -171,7 +171,7 @@ defmodule GoodFlows.ProjectsTest do
         ChangeRequests.create(ctx.account, ctx.project, ctx.key, %{
           "title" => "t",
           "source_branch" => "b",
-          "openspec_change" => "add-x"
+          "change_id" => "add-x"
         })
 
       fm = intent_fm("add-x", [scenario("S1")])

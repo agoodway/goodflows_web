@@ -35,7 +35,7 @@ defmodule GoodFlows.ChangeRequests.GradingTest do
       ChangeRequests.create(account, project, key, %{
         "title" => "Export",
         "source_branch" => "feat/export",
-        "openspec_change" => "add-export"
+        "change_id" => "add-export"
       })
 
     %{account: account, owner: owner, key: key, project: project, cr: cr}
@@ -213,7 +213,7 @@ defmodule GoodFlows.ChangeRequests.GradingTest do
         ChangeRequests.create(ctx.account, ctx.project, ctx.key, %{
           "title" => "Other",
           "source_branch" => "feat/other",
-          "openspec_change" => "add-other"
+          "change_id" => "add-other"
         })
 
       assert ChangeRequests.verify_runs(other) == []

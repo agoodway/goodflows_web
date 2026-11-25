@@ -1,8 +1,7 @@
 defmodule GoodFlows.TestReportFixtures do
   @moduledoc """
   Hand-written `test-timings/1` test reports for the test report ingestion
-  contract (`openspec/specs/test-timing-contract/spec.md`, mirrored from
-  goodflows `src/reporting/contract.rs`).
+  contract (mirrored from goodflows `src/reporting/contract.rs`).
 
   The JSON files in `test/support/fixtures/test_reports/` are:
 

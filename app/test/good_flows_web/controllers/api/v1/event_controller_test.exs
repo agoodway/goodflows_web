@@ -171,7 +171,7 @@ defmodule GoodFlowsWeb.Api.V1.EventControllerTest do
     test "verdict_changed when the reasons change under the same state, none for a retry",
          ctx do
       slug = ctx.project.slug
-      _ = create_cr(ctx.sk_conn, slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, slug, %{"change_id" => "add-export"})
       facts!(ctx.sk_conn, slug, 1, sha(1))
       claims!(ctx.sk_conn, slug, 1, sha(1), %{"cr" => 1, "door" => "one_way"})
 
@@ -257,7 +257,7 @@ defmodule GoodFlowsWeb.Api.V1.EventControllerTest do
 
     test "scenario set upload, approval and rejection", ctx do
       slug = ctx.project.slug
-      _ = create_cr(ctx.sk_conn, slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, slug, %{"change_id" => "add-export"})
       body = set_body(intent_fm("add-export"))
 
       digest =
@@ -399,7 +399,7 @@ defmodule GoodFlowsWeb.Api.V1.EventControllerTest do
 
     test "workflow_run_stored and verify_run_stored; pk_ sees data as stored, no actor", ctx do
       slug = ctx.project.slug
-      _ = create_cr(ctx.sk_conn, slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, slug, %{"change_id" => "add-export"})
       facts!(ctx.sk_conn, slug, 1, sha(1))
 
       digest =

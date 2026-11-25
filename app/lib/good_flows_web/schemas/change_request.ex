@@ -18,7 +18,7 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequest do
       :state,
       :source_branch,
       :target_branch,
-      :openspec_change,
+      :change_id,
       :links,
       :head,
       :parent,
@@ -34,7 +34,7 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequest do
       state: %Schema{type: :string, enum: ~w(draft open merged closed)},
       source_branch: %Schema{type: :string},
       target_branch: %Schema{type: :string},
-      openspec_change: %Schema{type: :string, nullable: true},
+      change_id: %Schema{type: :string, nullable: true},
       links: %Schema{
         type: :object,
         nullable: true,

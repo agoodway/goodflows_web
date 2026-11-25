@@ -25,7 +25,7 @@ defmodule GoodFlows.VerifyRunsTest do
       ChangeRequests.create(account, project, key, %{
         "title" => "Export",
         "source_branch" => "feat/export",
-        "openspec_change" => "add-export"
+        "change_id" => "add-export"
       })
 
     fm = intent_fm("add-export", [scenario("S1"), scenario(2, "should")])
@@ -102,7 +102,7 @@ defmodule GoodFlows.VerifyRunsTest do
         ChangeRequests.create(ctx.account, other, ctx.key, %{
           "title" => "x",
           "source_branch" => "b",
-          "openspec_change" => "add-export"
+          "change_id" => "add-export"
         })
 
       {:ok, :created, _} =

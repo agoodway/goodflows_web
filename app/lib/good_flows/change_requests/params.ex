@@ -4,8 +4,8 @@ defmodule GoodFlows.ChangeRequests.Params do
   `GoodFlowsWeb.Plugs.JsonBody`).
 
   Create accepts only `title` (required), `source_branch` (required),
-  `target_branch`, `openspec_change` and `links`. Titles and branches are
-  1 to 256 UTF-8 bytes without control characters, `openspec_change` is
+  `target_branch`, `change_id` and `links`. Titles and branches are
+  1 to 256 UTF-8 bytes without control characters, `change_id` is
   one 1 to 64 byte slug matching `[a-z0-9][a-z0-9-]*`, and `links` is the
   workflow-run `links` shape. Merge accepts only `merged_commit` (40 or 64
   lowercase hex characters), `target_branch` and an optional string
@@ -27,7 +27,7 @@ defmodule GoodFlows.ChangeRequests.Params do
           required(:title) => String.t(),
           required(:source_branch) => String.t(),
           optional(:target_branch) => String.t(),
-          required(:openspec_change) => String.t() | nil,
+          required(:change_id) => String.t() | nil,
           required(:links) => map() | nil
         }
 
@@ -40,7 +40,7 @@ defmodule GoodFlows.ChangeRequests.Params do
          "title" => text(),
          "source_branch" => text(),
          "target_branch" => {:omit, text()},
-         "openspec_change" => {:omit, {:string, min: 1, max: 64, format: @slug}},
+         "change_id" => {:omit, {:string, min: 1, max: 64, format: @slug}},
          "links" => {:omit, RunValidator.links_spec()}
        }}
 
@@ -51,7 +51,7 @@ defmodule GoodFlows.ChangeRequests.Params do
         attrs = %{
           title: body["title"],
           source_branch: body["source_branch"],
-          openspec_change: Map.get(body, "openspec_change"),
+          change_id: Map.get(body, "change_id"),
           links: Map.get(body, "links")
         }
 

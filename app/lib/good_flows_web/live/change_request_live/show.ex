@@ -627,9 +627,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             <span id="target-branch"><.tag>{@change_request.target_branch}</.tag></span>
           </:item>
           <:item title="Opened by">{email(@emails, @change_request.opened_by_account_user_id)}</:item>
-          <:item title="OpenSpec change">
-            <.tag :if={@change_request.openspec_change}>{@change_request.openspec_change}</.tag>
-            <span :if={!@change_request.openspec_change} class="text-muted">None</span>
+          <:item title="Change">
+            <.tag :if={@change_request.change_id}>{@change_request.change_id}</.tag>
+            <span :if={!@change_request.change_id} class="text-muted">None</span>
           </:item>
           <:item title="Parent">
             <.text_link

@@ -126,7 +126,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestControllerTest do
       body = %{
         "title" => "Add login",
         "source_branch" => "feat/login",
-        "openspec_change" => "add-login",
+        "change_id" => "add-login",
         "links" => %{"tickets" => ["GOO-291"]}
       }
 
@@ -140,7 +140,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestControllerTest do
                "number" => 1,
                "state" => "draft",
                "target_branch" => "trunk",
-               "openspec_change" => "add-login",
+               "change_id" => "add-login",
                "links" => %{"tickets" => ["GOO-291"]},
                "head" => nil,
                "merge" => nil,
@@ -158,9 +158,9 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestControllerTest do
       assert data["opened_by"]["user_id"] == owner.user_id
 
       for {bad, key} <- [
-            {%{"title" => "t", "source_branch" => "b", "openspec_change" => ["a", "b"]},
-             "openspec_change"},
+            {%{"title" => "t", "source_branch" => "b", "change_id" => ["a", "b"]}, "change_id"},
             {%{"title" => "t", "source_branch" => "b", "state" => "open"}, "body"},
+            {%{"title" => "t", "source_branch" => "b", "openspec_change" => "add-login"}, "body"},
             {%{"title" => "", "source_branch" => "b"}, "title"},
             {%{"title" => "t", "source_branch" => "b", "links" => %{}}, "links"}
           ] do

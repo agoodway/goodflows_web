@@ -16,7 +16,7 @@ defmodule GoodFlowsWeb.Api.V1.VerifyRunControllerTest do
 
   setup ctx do
     project = project_fixture(ctx.account)
-    cr = create_cr(ctx.sk_conn, project.slug, %{"openspec_change" => "add-export"})
+    cr = create_cr(ctx.sk_conn, project.slug, %{"change_id" => "add-export"})
     fm = intent_fm("add-export", [scenario("S1"), scenario("S2", "should")])
 
     digest =

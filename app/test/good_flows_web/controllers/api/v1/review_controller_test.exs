@@ -99,7 +99,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
     test "head, base, policy version and what passed", ctx do
       slug = ctx.project.slug
       policy!(ctx.sk_conn, slug, %{"evidence" => %{"required_workflows" => ["ci"]}})
-      _ = create_cr(ctx.sk_conn, slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, slug, %{"change_id" => "add-export"})
       head = sha(1)
       one_way!(ctx, head)
 
@@ -165,7 +165,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
         "scenarios" => %{"require_approved_intent" => true}
       })
 
-      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"change_id" => "add-export"})
       :ok
     end
 
@@ -378,7 +378,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
 
   describe "items" do
     setup ctx do
-      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"change_id" => "add-export"})
       :ok
     end
 
@@ -912,7 +912,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
 
   describe "packet consistency" do
     setup ctx do
-      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"change_id" => "add-export"})
       one_way!(ctx, sha(1))
       :ok
     end
@@ -937,7 +937,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewControllerTest do
 
   describe "verdict integration" do
     setup ctx do
-      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, ctx.project.slug, %{"change_id" => "add-export"})
       :ok
     end
 

@@ -38,7 +38,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestGradingFlowTest do
       "coverage" => %{"unmapped_areas" => "needs_review", "undriven_features" => "needs_review"}
     })
 
-    _ = create_cr(ctx.sk_conn, slug, %{"openspec_change" => "add-export"})
+    _ = create_cr(ctx.sk_conn, slug, %{"change_id" => "add-export"})
 
     _ =
       ctx.sk_conn
@@ -274,7 +274,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestGradingFlowTest do
       })
 
       slug = ctx.project.slug
-      _ = create_cr(ctx.sk_conn, slug, %{"openspec_change" => "add-export"})
+      _ = create_cr(ctx.sk_conn, slug, %{"change_id" => "add-export"})
 
       files = [file("lib/a.ex"), file("priv/b.sql")]
 

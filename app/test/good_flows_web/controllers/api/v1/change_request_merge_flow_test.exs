@@ -16,7 +16,7 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestMergeFlowTest do
     # CR 1 on main, linked to an intent set and graded at its head.
     parent =
       mergeable!(conn, slug, sha(1),
-        attrs: %{"openspec_change" => "add-export"},
+        attrs: %{"change_id" => "add-export"},
         merge_base: sha(100)
       )
 

@@ -317,7 +317,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
     end
 
     test "failed and not run scenario items show the run's reason and failed step", ctx do
-      cr = create!(ctx, %{"openspec_change" => "add-export"})
+      cr = create!(ctx, %{"change_id" => "add-export"})
       facts!(ctx.sk_conn, ctx.slug, cr.number, sha(1))
       claims!(ctx.sk_conn, ctx.slug, cr.number, sha(1), %{"cr" => cr.number})
       fm = intent_fm("add-export", [scenario("S1", "should"), scenario("S2", "should")])
@@ -498,7 +498,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
   describe "live refresh" do
     defp graded!(ctx, door) do
-      cr = create!(ctx, %{"openspec_change" => "add-export"})
+      cr = create!(ctx, %{"change_id" => "add-export"})
       facts!(ctx.sk_conn, ctx.slug, cr.number, sha(1))
       claims!(ctx.sk_conn, ctx.slug, cr.number, sha(1), %{"cr" => cr.number, "door" => door})
 
@@ -679,7 +679,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
       {_key, token} = api_key_fixture(ctx.membership, %{type: :private})
       author = api_conn(token)
-      number = create_cr(author, ctx.slug, %{"openspec_change" => "add-export"})["number"]
+      number = create_cr(author, ctx.slug, %{"change_id" => "add-export"})["number"]
 
       _ =
         author
@@ -702,7 +702,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
         "scenarios" => %{"require_approved_intent" => true, "approver" => "admin"}
       })
 
-      number = create_cr(ctx.sk_conn, ctx.slug, %{"openspec_change" => "add-export"})["number"]
+      number = create_cr(ctx.sk_conn, ctx.slug, %{"change_id" => "add-export"})["number"]
 
       _ =
         ctx.sk_conn
@@ -733,7 +733,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
         "scenarios" => %{"require_approved_intent" => true, "approver" => "any"}
       })
 
-      number = create_cr(ctx.sk_conn, ctx.slug, %{"openspec_change" => "add-export"})["number"]
+      number = create_cr(ctx.sk_conn, ctx.slug, %{"change_id" => "add-export"})["number"]
 
       _ =
         ctx.sk_conn
@@ -858,7 +858,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
         "scenarios" => %{"require_approved_intent" => true, "approver" => "any"}
       })
 
-      cr = head!(ctx, %{"openspec_change" => "add-export"})
+      cr = head!(ctx, %{"change_id" => "add-export"})
       intent = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
       approve_set!(ctx, cr.number, intent)
 
@@ -897,7 +897,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
     test "an unapproved intent set is not graded and lists a dashboard rejection", ctx do
       policy!(ctx.sk_conn, ctx.slug, %{"scenarios" => %{"require_approved_intent" => true}})
-      cr = head!(ctx, %{"openspec_change" => "add-export"})
+      cr = head!(ctx, %{"change_id" => "add-export"})
       digest = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
       run_id = verify!(ctx, digest, "intent", [result("S1")])
 
@@ -930,7 +930,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
         "scenarios" => %{"require_approved_intent" => true, "approver" => "any"}
       })
 
-      cr = head!(ctx, %{"openspec_change" => "add-export"})
+      cr = head!(ctx, %{"change_id" => "add-export"})
       digest = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
       approve_set!(ctx, cr.number, digest)
       dirty = verify!(ctx, digest, "intent", [result("S1")], dirty: true)
@@ -945,7 +945,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
     end
 
     test "verify runs: Counts, Dirty tree and Older set version, newest first", ctx do
-      cr = head!(ctx, %{"openspec_change" => "add-export"})
+      cr = head!(ctx, %{"change_id" => "add-export"})
       fm = intent_fm("add-export", [scenario("S1")])
       v1 = set!(ctx, cr.number, set_body(fm))
       older = verify!(ctx, v1, "intent", [result("S1")], finished_at: "2026-11-20T09:00:00Z")

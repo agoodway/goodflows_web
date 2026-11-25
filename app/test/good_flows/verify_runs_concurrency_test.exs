@@ -37,7 +37,7 @@ defmodule GoodFlows.VerifyRunsConcurrencyTest do
           ChangeRequests.create(account, project, key, %{
             "title" => "t",
             "source_branch" => "b",
-            "openspec_change" => "add-export"
+            "change_id" => "add-export"
           })
 
         {:ok, :created, set} =

@@ -11,13 +11,13 @@ defmodule GoodFlows.ReviewPolicies.Document do
   whole. An unknown section or key, or a null, is an error on that key. The
   stored document is kept as given.
 
-  The version 0 default needs no OpenSpec, workflows, scenario sets or
-  feature index: Git facts and a `change-claims/2` file can make a change
-  request mergeable. Only the scenario settings read OpenSpec (an intent
-  set needs a linked OpenSpec change, and `spec_gaps` reads its coverage),
-  and version 0 turns them off with `require_approved_intent` false and
-  `spec_gaps` `ignore`. A project that uses OpenSpec opts in by writing a
-  version that turns them on.
+  The version 0 default needs no linked change, workflows, scenario sets
+  or feature index: Git facts and a `change-claims/2` file can make a
+  change request mergeable. Only the scenario settings read the linked
+  change (an intent set needs a `change_id`, and `spec_gaps` reads the
+  intent set's coverage), and version 0 turns them off with
+  `require_approved_intent` false and `spec_gaps` `ignore`. A project that
+  links changes opts in by writing a version that turns them on.
 
   `active_settings/0` lists the dotted settings that take effect in this
   server version. Later phases add their settings to that one list; a

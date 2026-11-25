@@ -421,7 +421,7 @@ defmodule GoodFlows.ChangeRequests.IterationHistoryTest do
   describe "reason spans and verify runs" do
     setup ctx do
       _ = policy!(ctx, %{"scenarios" => %{"require_approved_intent" => true}}, 0)
-      cr = create!(ctx, %{"openspec_change" => "add-export"})
+      cr = create!(ctx, %{"change_id" => "add-export"})
       fm = intent_fm("add-export", [scenario("S1"), scenario("S2")])
       {:ok, _, version} = ScenarioSets.upload(cr, ctx.api_key, set_body(fm))
 

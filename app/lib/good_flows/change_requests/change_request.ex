@@ -33,7 +33,7 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
     field :title, :string
     field :source_branch, :string
     field :target_branch, :string
-    field :openspec_change, :string
+    field :change_id, :string
     field :links, :map
     field :link_tickets, {:array, :string}, default: []
     field :link_threads, {:array, :string}, default: []
@@ -71,7 +71,7 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
 
   @doc """
   Builds the insert changeset from validated create `attrs` (atom keys:
-  `title`, `source_branch`, `target_branch`, `openspec_change`, `links`).
+  `title`, `source_branch`, `target_branch`, `change_id`, `links`).
   `number`, the owner and the opener are set on the struct by the caller.
   """
   @spec create_changeset(t(), map()) :: Ecto.Changeset.t()
@@ -79,7 +79,7 @@ defmodule GoodFlows.ChangeRequests.ChangeRequest do
     links = Map.get(attrs, :links)
 
     change_request
-    |> change(Map.take(attrs, [:title, :source_branch, :target_branch, :openspec_change]))
+    |> change(Map.take(attrs, [:title, :source_branch, :target_branch, :change_id]))
     |> put_change(:links, links)
     |> put_change(:link_tickets, link_list(links, "tickets", &String.downcase(&1, :ascii)))
     |> put_change(:link_threads, link_list(links, "threads", & &1))

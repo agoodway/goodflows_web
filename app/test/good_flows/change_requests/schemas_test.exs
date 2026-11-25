@@ -13,7 +13,7 @@ defmodule GoodFlows.ChangeRequests.SchemasTest do
         title: title,
         source_branch: " feat ",
         target_branch: "main",
-        openspec_change: nil,
+        change_id: nil,
         links: links
       })
 

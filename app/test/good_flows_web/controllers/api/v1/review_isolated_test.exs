@@ -18,7 +18,7 @@ defmodule GoodFlowsWeb.Api.V1.ReviewIsolatedTest do
 
   setup ctx do
     project = project_fixture(ctx.account)
-    _ = create_cr(ctx.sk_conn, project.slug, %{"openspec_change" => "add-export"})
+    _ = create_cr(ctx.sk_conn, project.slug, %{"change_id" => "add-export"})
     facts!(ctx.sk_conn, project.slug, 1, sha(1))
     %{project: project}
   end

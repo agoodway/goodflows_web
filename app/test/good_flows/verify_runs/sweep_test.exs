@@ -31,7 +31,7 @@ defmodule GoodFlows.VerifyRuns.SweepTest do
       ChangeRequests.create(account, project, key, %{
         "title" => "Export",
         "source_branch" => "feat/export-#{System.unique_integer([:positive])}",
-        "openspec_change" => "add-export"
+        "change_id" => "add-export"
       })
 
     cr

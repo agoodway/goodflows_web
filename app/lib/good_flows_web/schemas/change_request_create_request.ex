@@ -16,7 +16,7 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequestCreateRequest do
       title: @text,
       source_branch: @text,
       target_branch: %Schema{@text | description: "Defaults to the project's `default_branch`"},
-      openspec_change: %Schema{
+      change_id: %Schema{
         type: :string,
         minLength: 1,
         maxLength: 64,

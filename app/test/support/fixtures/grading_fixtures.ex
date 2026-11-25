@@ -8,7 +8,7 @@ defmodule GoodFlows.GradingFixtures do
   def scenario(id, priority \\ "must", extra \\ %{}),
     do: Map.merge(%{"id" => id, "name" => "Scenario #{id}", "priority" => priority}, extra)
 
-  @doc "Intent front matter for OpenSpec change `change`."
+  @doc "Intent front matter for linked change `change`."
   def intent_fm(change, scenarios \\ [scenario("S1"), scenario("S2", "should")], extra \\ %{}) do
     Map.merge(
       %{

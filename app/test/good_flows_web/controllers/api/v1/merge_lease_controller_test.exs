@@ -367,7 +367,7 @@ defmodule GoodFlowsWeb.Api.V1.MergeLeaseControllerTest do
     setup ctx do
       number =
         mergeable!(ctx.sk_conn, ctx.slug, sha(1),
-          attrs: %{"openspec_change" => "add-export"},
+          attrs: %{"change_id" => "add-export"},
           merge_base: sha(100)
         )
 
@@ -472,7 +472,7 @@ defmodule GoodFlowsWeb.Api.V1.MergeLeaseControllerTest do
     test "a merge-result run does not grade the branch", ctx do
       other =
         mergeable!(ctx.sk_conn, ctx.slug, sha(2),
-          attrs: %{"openspec_change" => "add-export"},
+          attrs: %{"change_id" => "add-export"},
           merge_base: sha(100)
         )
 

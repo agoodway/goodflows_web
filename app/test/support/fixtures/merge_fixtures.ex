@@ -27,12 +27,12 @@ defmodule GoodFlows.MergeFixtures do
   end
 
   @doc """
-  Like `mergeable!/4`, but linked to OpenSpec change `change` with an
+  Like `mergeable!/4`, but linked to change `change` with an
   intent set graded at `head` by a passing run, so a lease on a moved base
   turns on the merge-result check. Returns the change request's number.
   """
   def graded_mergeable!(conn, slug, head, change \\ "add-export") do
-    number = mergeable!(conn, slug, head, attrs: %{"openspec_change" => change})
+    number = mergeable!(conn, slug, head, attrs: %{"change_id" => change})
 
     digest =
       conn

@@ -1,7 +1,7 @@
 defmodule GoodFlows.TestReports.Validator do
   @moduledoc """
-  Validates a `test-timings/1` test report document against the contract
-  specified in `openspec/specs/test-timing-contract/spec.md`.
+  Validates a `test-timings/1` test report document against the
+  goodflows test timing contract.
 
   goodflows owns the contract. This module mirrors goodflows
   `src/reporting/contract.rs` (the per-event field tables, `check/2` and

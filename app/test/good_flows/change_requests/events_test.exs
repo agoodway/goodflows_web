@@ -134,7 +134,7 @@ defmodule GoodFlows.ChangeRequests.EventsTest do
 
   describe "dashboard actor" do
     test "a scenario set decision stores channel dashboard and no key", ctx do
-      cr = create!(ctx, %{"openspec_change" => "add-export"})
+      cr = create!(ctx, %{"change_id" => "add-export"})
 
       {:ok, :created, version} =
         ScenarioSets.upload(cr, ctx.api_key, set_body(intent_fm("add-export")))

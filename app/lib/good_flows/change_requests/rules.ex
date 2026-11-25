@@ -34,7 +34,7 @@ defmodule GoodFlows.ChangeRequests.Rules do
   follows `scenarios.diff_only`: `needs_review` adds `diff_only_set` on
   every head; `weakening` adds `diff_set_weakened` (`["diff", id]`) for
   each Must of the diff baseline that the graded current version removes
-  or demotes, when no OpenSpec change is linked; `ignore` adds neither.
+  or demotes, when no change is linked; `ignore` adds neither.
 
   Merge coordination (`add-change-request-merge`) reads `inputs.parent`
   (the parent's number and state, or nil) and `inputs.merge_result` (the
@@ -213,7 +213,7 @@ defmodule GoodFlows.ChangeRequests.Rules do
             "scenario_set_missing",
             "pending",
             [],
-            "The change request has no linked OpenSpec change and no diff scenario set"
+            "The change request has no linked change and no diff scenario set"
           )
         ]
 
@@ -349,7 +349,7 @@ defmodule GoodFlows.ChangeRequests.Rules do
             "spec_gap",
             outcome,
             [row["capability"], row["requirement"], row["scenario"]],
-            "An OpenSpec scenario has no QA check and no proven claim"
+            "A spec scenario has no QA check and no proven claim"
           )
   end
 

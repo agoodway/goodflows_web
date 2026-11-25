@@ -16,7 +16,7 @@ defmodule GoodFlowsWeb.VerifyRunHygieneTest do
 
   setup ctx do
     project = project_fixture(ctx.account, %{"slug" => "vr-hygiene"})
-    cr = create_cr(ctx.sk_conn, project.slug, %{"openspec_change" => "add-export"})
+    cr = create_cr(ctx.sk_conn, project.slug, %{"change_id" => "add-export"})
 
     digest =
       ctx.sk_conn

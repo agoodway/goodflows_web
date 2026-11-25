@@ -83,11 +83,11 @@ defmodule GoodFlows.ChangeRequestsTest do
                verdict(cr)
     end
 
-    test "stores openspec_change and links as given", ctx do
+    test "stores change_id and links as given", ctx do
       links = %{"tickets" => ["GOO-291"]}
-      cr = create!(ctx, %{"openspec_change" => "add-login", "links" => links})
+      cr = create!(ctx, %{"change_id" => "add-login", "links" => links})
 
-      assert %{openspec_change: "add-login", links: ^links, link_tickets: ["goo-291"]} =
+      assert %{change_id: "add-login", links: ^links, link_tickets: ["goo-291"]} =
                reload(cr)
     end
 
@@ -114,10 +114,8 @@ defmodule GoodFlows.ChangeRequestsTest do
             {%{"title" => "a\nb", "source_branch" => "b"}, "title"},
             {%{"title" => String.duplicate("a", 257), "source_branch" => "b"}, "title"},
             {%{"title" => "t"}, "source_branch"},
-            {%{"title" => "t", "source_branch" => "b", "openspec_change" => ["a", "b"]},
-             "openspec_change"},
-            {%{"title" => "t", "source_branch" => "b", "openspec_change" => "Add_Login"},
-             "openspec_change"},
+            {%{"title" => "t", "source_branch" => "b", "change_id" => ["a", "b"]}, "change_id"},
+            {%{"title" => "t", "source_branch" => "b", "change_id" => "Add_Login"}, "change_id"},
             {%{"title" => "t", "source_branch" => "b", "links" => %{}}, "links"},
             {%{"title" => "t", "source_branch" => "b", "state" => "open"}, "body"}
           ] do

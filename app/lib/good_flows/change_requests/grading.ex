@@ -90,7 +90,7 @@ defmodule GoodFlows.ChangeRequests.Grading do
     diff = diff && diff_baseline(diff, diff_version, change_request, approved)
 
     %{
-      linked?: change_request.openspec_change != nil,
+      linked?: change_request.change_id != nil,
       intent: intent,
       diff: diff,
       runs: counted_runs(change_request, facts_document, policy, [intent, diff]),

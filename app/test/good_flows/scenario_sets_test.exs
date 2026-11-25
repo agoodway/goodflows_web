@@ -25,7 +25,7 @@ defmodule GoodFlows.ScenarioSetsTest do
       ChangeRequests.create(account, project, key, %{
         "title" => "Export",
         "source_branch" => "feat/export",
-        "openspec_change" => "add-export"
+        "change_id" => "add-export"
       })
 
     %{
