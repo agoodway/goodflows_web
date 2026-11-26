@@ -238,7 +238,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       assert has_element?(view, path <> " [id$=-subject]", "priv/repo/migrations/**")
     end
 
-    test "mergeable says no rule fired; no head says so", ctx do
+    test "mergeable says nothing blocks merging; no head says so", ctx do
       cr = create!(ctx)
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
       assert has_element?(view, "#no-head", "No head yet")
@@ -247,7 +247,21 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       claims!(ctx.sk_conn, ctx.slug, cr.number, sha(1), %{"cr" => cr.number})
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
       assert has_element?(view, "#header-verdict", "Mergeable")
-      assert has_element?(view, "#no-reasons", "No rule fired at this head.")
+
+      assert has_element?(
+               view,
+               "#no-reasons",
+               "Nothing blocks merging at commit #{String.slice(sha(1), 0, 7)}."
+             )
+
+      merge!(ctx, cr.number)
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      assert has_element?(
+               view,
+               "#no-reasons",
+               "Nothing blocked the merge at commit #{String.slice(sha(1), 0, 7)}."
+             )
     end
 
     test "an unknown or invalid number redirects with Change request not found", ctx do

@@ -313,7 +313,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             </p>
           <% true -> %>
             <p :if={@shown.reasons == []} id="no-reasons" class="text-sm">
-              No rule fired at this head.
+              {if @change_request.state == "merged",
+                do: "Nothing blocked the merge",
+                else: "Nothing blocks merging"}{if @shown.head, do: " at commit #{short(@shown.head)}"}.
             </p>
             <ol :if={@shown.reasons != []} id="reasons" class="space-y-3">
               <li
@@ -1019,6 +1021,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   defp shown_verdict(%{state: "merged"} = cr, _verdict),
     do: %{
       state: cr.merged_verdict_state,
+      head: cr.merged_head,
       reasons: cr.merged_reasons || [],
       policy_version: cr.merged_policy_version,
       computed_at: nil
@@ -1030,6 +1033,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   defp shown_verdict(_cr, verdict),
     do: %{
       state: verdict.state,
+      head: verdict.head,
       reasons: verdict.reasons,
       policy_version: verdict.policy_version,
       computed_at: verdict.computed_at
