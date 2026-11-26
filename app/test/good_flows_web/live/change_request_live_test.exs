@@ -289,6 +289,14 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
             "affected" => "ops"
           },
           %{"risk" => "Ids can collide", "location" => "app/todos.py:51", "affected" => "users"}
+        ],
+        "questions" => [
+          %{
+            "id" => "1",
+            "text" => "Keep ids?",
+            "options" => ["Yes", "No"],
+            "recommendation" => "Yes"
+          }
         ]
       })
 
@@ -310,10 +318,9 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
         assert has_element?(view, dom, location)
       end
 
-      subject = "#reasons [data-rule='open_items'] [id$='-subject'] li"
-      assert has_element?(view, subject, "Restart loses todos")
-      assert has_element?(view, subject, "Ids can collide")
-      refute has_element?(view, "#reasons", "Ids can collide, Restart loses todos")
+      subject = "#reasons [data-rule='open_items'] [id$='-subject'] a[href='#review-panel']"
+      assert has_element?(view, subject, "1 question · 2 open risks")
+      refute has_element?(view, "#reasons", "Ids can collide")
     end
 
     test "failed and not run scenario items show the run's reason and failed step", ctx do
@@ -349,6 +356,12 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       assert has_element?(view, failed, "Failed at step 3")
       assert has_element?(view, not_run, "Needs a second account")
       refute has_element?(view, not_run, "Failed at")
+
+      assert has_element?(
+               view,
+               "#reasons [data-rule=should_failed] a[href='#scenario-intent-S1']",
+               "Intent set · scenario S1: Scenario S1"
+             )
     end
 
     test "a merged change request shows no items, the notice and Merged without a lease", ctx do

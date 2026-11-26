@@ -79,6 +79,19 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     commit_not_counted: "Commit does not count at the head"
   }
 
+  # Reasons whose subject is one value: its label and whether it is a SHA.
+  @subject_labels %{
+    "git_facts_missing" => {"Head", :sha},
+    "claims_missing" => {"Head", :sha},
+    "diff_set_revision" => {"Names commit", :sha},
+    "merge_result_ungraded" => {"Lease base", :sha},
+    "required_workflow_failed" => {"Workflow", :text},
+    "required_workflow_missing" => {"Workflow", :text},
+    "dependency_not_merged" => {"Change", :text},
+    "unmapped_area" => {"File", :text},
+    "undriven_feature" => {"Feature", :text}
+  }
+
   @results %{"passed" => "Passed", "failed" => "Failed", "not_run" => "Not run"}
 
   @impl true
@@ -246,7 +259,10 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   @impl true
   def render(assigns) do
     assigns =
-      assign(assigns, :shown, shown_verdict(assigns.change_request, assigns.loaded.verdict))
+      assign(assigns,
+        shown: shown_verdict(assigns.change_request, assigns.loaded.verdict),
+        subject_context: subject_context(assigns)
+      )
 
     ~H"""
     <div class="mx-auto max-w-5xl space-y-4 lg:space-y-6">
@@ -301,29 +317,27 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
                   <.verdict_badge state={reason["outcome"]} />
                   <span class="text-sm">{reason["message"]}</span>
                 </div>
-                <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
-                  <span>Rule
-                  <.tag>{reason["rule"]}</.tag></span>
-                  <span
-                    :if={reason["subject"] && !is_list(reason["subject"])}
-                    id={"reason-#{index}-subject"}
-                  >
-                    Subject
-                    <.tag>{reason["subject"]}</.tag>
-                  </span>
-                </div>
-                <div
-                  :if={is_list(reason["subject"]) and reason["subject"] != []}
+                <ul
+                  :if={subject_lines(reason, @subject_context) != []}
                   id={"reason-#{index}-subject"}
-                  class="text-xs text-muted"
+                  class="space-y-1 text-sm"
                 >
-                  Subject
-                  <ul class="mt-1 list-disc space-y-1 pl-5">
-                    <li :for={element <- reason["subject"]} class="break-words">
-                      <.tag>{element}</.tag>
-                    </li>
-                  </ul>
-                </div>
+                  <li :for={line <- subject_lines(reason, @subject_context)} class="break-words">
+                    <.link
+                      :if={line.href}
+                      href={line.href}
+                      class="underline decoration-base-300 underline-offset-2 hover:decoration-current"
+                    >
+                      {line.text}
+                    </.link>
+                    <span :if={!line.href && line.text}>{line.text}</span>
+                    <.tag :for={tag <- line.tags}>{tag}</.tag>
+                  </li>
+                </ul>
+                <p class="text-xs text-muted">
+                  Rule
+                  <.tag>{reason["rule"]}</.tag>
+                </p>
               </li>
             </ol>
             <p class="mt-4 font-mono text-xs text-muted">
@@ -1165,4 +1179,74 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
 
   defp show_path(account, project, number),
     do: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/change-requests/#{number}"
+
+  defp subject_context(assigns) do
+    %{
+      names: Map.new((assigns.evidence && assigns.evidence.sets) || [], &{&1.source, &1.names}),
+      question_ids: for(q <- (assigns.claims || %{})["questions"] || [], do: q["id"]),
+      review?: assigns.packet != nil,
+      parent_path: &show_path(assigns.current_account, assigns.project, &1)
+    }
+  end
+
+  # What a reason's subject points at, in plain words: one line per thing,
+  # each with optional text, a link and code tags.
+  defp subject_lines(%{"subject" => subject}, _context) when subject in [nil, []], do: []
+
+  defp subject_lines(%{"subject" => subject}, _context) when is_binary(subject),
+    do: [line(nil, [subject])]
+
+  defp subject_lines(%{"rule" => rule, "subject" => [source, id]}, context)
+       when rule in ~w(must_failed should_failed should_not_run merge_result_failed diff_set_weakened) do
+    name = context.names[source][id]
+    text = "#{set_title(source)} · scenario #{id}" <> if(name, do: ": #{name}", else: "")
+    [line(text, [], name && "#scenario-#{source}-#{id}")]
+  end
+
+  defp subject_lines(%{"rule" => "open_items", "subject" => subject}, context) do
+    questions = Enum.count(subject, &(&1 in context.question_ids))
+
+    text =
+      [
+        questions > 0 && plural_count(questions, "question", "questions"),
+        length(subject) > questions &&
+          plural_count(length(subject) - questions, "open risk", "open risks")
+      ]
+      |> Enum.filter(& &1)
+      |> Enum.join(" · ")
+
+    [line(text, [], context.review? && "#review-panel")]
+  end
+
+  defp subject_lines(%{"rule" => "spec_gap", "subject" => parts}, _context),
+    do: [line(Enum.join(parts, " › "))]
+
+  defp subject_lines(%{"rule" => "path_match", "subject" => [glob | paths]}, _context),
+    do: [line("Pattern", [glob]) | Enum.map(paths, &line(nil, [&1]))]
+
+  defp subject_lines(%{"rule" => "proof_below_minimum", "subject" => facts}, _context),
+    do: Enum.map(facts, &line/1)
+
+  defp subject_lines(%{"rule" => "scenario_results_missing", "subject" => [source]}, context),
+    do: [line(set_title(source), [], context.names[source] && "#qa-set-#{source}")]
+
+  defp subject_lines(%{"rule" => "scenario_set_approval", "subject" => [digest]}, context),
+    do: [line("Intent set, digest", [short(digest)], context.names["intent"] && "#qa-set-intent")]
+
+  defp subject_lines(%{"rule" => rule, "subject" => [number]}, context)
+       when rule in ~w(parent_not_merged parent_closed),
+       do: [line("Parent change request ##{number}", [], context.parent_path.(number))]
+
+  defp subject_lines(%{"rule" => rule, "subject" => [value]}, _context)
+       when is_map_key(@subject_labels, rule) do
+    {label, kind} = @subject_labels[rule]
+    [line(label, [if(kind == :sha, do: short(value), else: value)])]
+  end
+
+  defp subject_lines(%{"subject" => subject}, _context), do: [line(nil, subject)]
+
+  defp line(text, tags \\ [], href \\ nil), do: %{text: text, tags: tags, href: href || nil}
+
+  defp plural_count(1, one, _many), do: "1 #{one}"
+  defp plural_count(n, _one, many), do: "#{n} #{many}"
 end
