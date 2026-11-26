@@ -22,8 +22,15 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   to its digest
   (`GoodFlows.ScenarioSets.decide/5` with no key, channel `dashboard`).
 
+  Each scenario row has a toggle that opens a details row: the scenario's
+  section of the set file (`GoodFlows.ScenarioSets.Sections`), rendered
+  with `GoodFlowsWeb.ScenarioMarkdown` only when its digest matches, and
+  from the run the row's result came from, the failed step, reason and
+  evidence, each linking to `GoodFlowsWeb.VerifyRunArtifactController`
+  unless expired. Open rows are kept in `open_scenarios`.
+
   The page reloads 500 ms after a project event, keeping an open answer
-  dialog.
+  dialog and the open scenario rows.
   """
   use GoodFlowsWeb, :live_view
 
@@ -39,7 +46,10 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   alias GoodFlows.Review.Packet
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ScenarioSets
+  alias GoodFlows.ScenarioSets.Sections
+  alias GoodFlows.VerifyRuns
   alias GoodFlows.WorkflowRuns
+  alias GoodFlowsWeb.ScenarioMarkdown
 
   @refresh_ms 500
 
@@ -128,7 +138,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
          refresh_scheduled: false,
          dialog: nil,
          answer_form: nil,
-         set_form: set_form()
+         set_form: set_form(),
+         open_scenarios: MapSet.new()
        )
        |> load(change_request)}
     else
@@ -192,12 +203,20 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
       |> ChangeRequests.verify_runs(frozen_at)
       |> Enum.map(&Map.put(&1, :mark, run_mark(&1, verdict, active?)))
 
+    sets = scenario_sets(verdict)
+
+    run_ids =
+      for {_source, set} <- sets,
+          row <- set["scenarios"] || [],
+          row["run_id"],
+          uniq: true,
+          do: row["run_id"]
+
+    details = VerifyRuns.scenario_details(project, run_ids)
+
     %{
       sets:
-        for(
-          {source, set} <- scenario_sets(verdict),
-          do: set_evidence(change_request, source, set, runs)
-        ),
+        for({source, set} <- sets, do: set_evidence(change_request, source, set, runs, details)),
       runs: runs,
       workflows: workflow_rows(project, verdict, frozen_at)
     }
@@ -208,7 +227,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   defp run_mark(run, verdict, false),
     do: if(run.run_id in counted_runs(verdict), do: :counts, else: :not_counted)
 
-  defp set_evidence(change_request, source, set, runs) do
+  defp set_evidence(change_request, source, set, runs, details) do
     version =
       case ScenarioSets.get_version(change_request, source, set["version"]) do
         {:ok, version} -> Repo.preload(version, :api_key)
@@ -224,6 +243,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
       version: version,
       rows: rows,
       names: names(version),
+      sections: sections(version),
+      details: details,
       decisions: ScenarioSets.decisions(change_request, set["digest"]),
       run_id: run_id,
       run: run_id && Enum.find(runs, &(&1.run_id == run_id))
@@ -234,6 +255,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
 
   defp names(version),
     do: Map.new(version.front_matter["scenarios"] || [], &{&1["id"], &1["name"]})
+
+  defp sections(nil), do: %{}
+  defp sections(version), do: Sections.split(version.content, version.sections || [])
 
   defp workflow_rows(_project, %{head: nil}, _frozen_at), do: []
 
@@ -526,6 +550,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             decide={if @active? and set.source == "intent", do: decide_state(@may_approve?, set)}
             who={who_may_answer(@approver)}
             form={@set_form}
+            open={@open_scenarios}
+            artifact_path={&artifact_path(@current_account, @project, &1, &2)}
           />
         </div>
         <div id="verify-runs-section" class="mt-8 space-y-3">
@@ -823,6 +849,20 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     end
   end
 
+  def handle_event("toggle_scenario", %{"source" => source, "id" => id}, socket) do
+    key = {source, id}
+    open = socket.assigns.open_scenarios
+
+    open =
+      cond do
+        MapSet.member?(open, key) -> MapSet.delete(open, key)
+        scenario_row?(socket.assigns.evidence, source, id) -> MapSet.put(open, key)
+        true -> open
+      end
+
+    {:noreply, assign(socket, open_scenarios: open)}
+  end
+
   def handle_event("cancel_answer", _params, socket),
     do: {:noreply, close_dialog(socket)}
 
@@ -942,6 +982,15 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   defp error_message(:not_active), do: "This change request is no longer open"
   defp error_message(:stale_digest), do: "The scenario set changed. Review the items again."
 
+  defp scenario_row?(nil, _source, _id), do: false
+
+  defp scenario_row?(evidence, source, id),
+    do:
+      Enum.any?(
+        evidence.sets,
+        &(&1.source == source and Enum.any?(&1.rows, fn r -> r["id"] == id end))
+      )
+
   defp close_dialog(socket), do: assign(socket, dialog: nil, answer_form: nil)
 
   @impl true
@@ -1029,6 +1078,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   attr :decide, :atom, default: nil, doc: "`:may`, `:may_not` or nil (no control)"
   attr :who, :string, default: nil
   attr :form, :any, default: nil
+  attr :open, MapSet, required: true
+  attr :artifact_path, :any, required: true, doc: "the function of run ID and artifact ID"
 
   defp qa_set(assigns) do
     assigns =
@@ -1155,9 +1206,37 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         id={"qa-set-#{@source}-scenarios"}
         rows={@set.rows}
         row_id={&"scenario-#{@source}-#{&1["id"]}"}
+        row_open={&MapSet.member?(@open, {@source, &1["id"]})}
       >
         <:col :let={row} label="ID">
-          <.tag>{row["id"]}</.tag>
+          <span class="inline-flex items-center gap-1">
+            <.button
+              id={"scenario-#{@source}-#{row["id"]}-toggle"}
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon={
+                if MapSet.member?(@open, {@source, row["id"]}),
+                  do: "hero-chevron-down",
+                  else: "hero-chevron-right"
+              }
+              phx-click="toggle_scenario"
+              phx-value-source={@source}
+              phx-value-id={row["id"]}
+              aria-expanded={to_string(MapSet.member?(@open, {@source, row["id"]}))}
+              aria-controls={
+                MapSet.member?(@open, {@source, row["id"]}) &&
+                  "scenario-#{@source}-#{row["id"]}-details"
+              }
+            >
+              <span class="sr-only">
+                {if MapSet.member?(@open, {@source, row["id"]}), do: "Hide", else: "Show"} details for {row[
+                  "id"
+                ]}
+              </span>
+            </.button>
+            <.tag>{row["id"]}</.tag>
+          </span>
         </:col>
         <:col :let={row} label="Scenario">
           <span class="break-words">{@set.names[row["id"]]}</span>
@@ -1168,6 +1247,15 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             {result_label(row["result"])}
           </.status_badge>
         </:col>
+        <:details :let={row}>
+          <.scenario_details
+            dom_id={"scenario-#{@source}-#{row["id"]}"}
+            section={@set.sections[row["id"]]}
+            run_id={row["run_id"]}
+            detail={row["run_id"] && get_in(@set.details, [row["run_id"], row["id"]])}
+            artifact_path={@artifact_path}
+          />
+        </:details>
       </.table>
 
       <div id={"qa-set-#{@source}-decisions"} class="space-y-2">
@@ -1188,6 +1276,83 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     </section>
     """
   end
+
+  attr :dom_id, :string, required: true
+  attr :section, :any, required: true, doc: "`{:ok, text}`, `:unmatched` or nil"
+  attr :run_id, :string, default: nil
+  attr :detail, :map, default: nil
+  attr :artifact_path, :any, required: true
+
+  defp scenario_details(assigns) do
+    ~H"""
+    <div class="space-y-4">
+      <%= case @section do %>
+        <% {:ok, text} -> %>
+          <div id={"#{@dom_id}-text"} class="scenario-markdown">
+            {ScenarioMarkdown.to_html(text)}
+          </div>
+        <% _unmatched -> %>
+          <p id={"#{@dom_id}-unmatched"} class="text-sm text-muted">
+            The text of this scenario could not be matched to the set file.
+          </p>
+      <% end %>
+
+      <div id={"#{@dom_id}-result"} class="space-y-2 border-t border-base-300 pt-3">
+        <h4 class="font-mono text-xs font-semibold uppercase tracking-wide text-muted">
+          Run result
+        </h4>
+        <p :if={!@detail} id={"#{@dom_id}-no-result"} class="text-sm text-muted">
+          No verify run result for this scenario.
+        </p>
+        <div :if={@detail} class="space-y-2">
+          <p :if={@detail.failed_step} id={"#{@dom_id}-failed-step"} class="font-mono text-xs">
+            Failed at {@detail.failed_step}
+          </p>
+          <p :if={@detail.reason} id={"#{@dom_id}-reason"} class="break-words text-sm">
+            {@detail.reason}
+          </p>
+          <p
+            :if={!@detail.failed_step and !@detail.reason and @detail.evidence == []}
+            class="text-sm text-muted"
+          >
+            No failed step, reason or evidence recorded.
+          </p>
+          <ul :if={@detail.evidence != []} id={"#{@dom_id}-evidence"} class="space-y-1">
+            <li
+              :for={artifact <- @detail.evidence}
+              id={"#{@dom_id}-evidence-#{artifact.id}"}
+              class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+            >
+              <span class="min-w-0 break-all font-mono">{artifact.path || artifact.id}</span>
+              <span class="text-muted">{artifact.content_type}</span>
+              <span class="whitespace-nowrap font-mono text-muted">{format_size(artifact.size)}</span>
+              <%= if artifact.expired do %>
+                <.status_badge>Expired</.status_badge>
+              <% else %>
+                <.text_link
+                  id={"#{@dom_id}-evidence-#{artifact.id}-download"}
+                  href={@artifact_path.(@run_id, artifact.id)}
+                  aria-label={"Download #{artifact.path || artifact.id}"}
+                >
+                  Download
+                </.text_link>
+              <% end %>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp format_size(nil), do: nil
+  defp format_size(bytes) when bytes < 1_024, do: "#{bytes} B"
+  defp format_size(bytes) when bytes < 1_048_576, do: "#{Float.round(bytes / 1_024, 1)} KiB"
+  defp format_size(bytes), do: "#{Float.round(bytes / 1_048_576, 1)} MiB"
+
+  defp artifact_path(account, project, run_id, artifact_id),
+    do:
+      ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/verify-runs/#{run_id}/artifacts/#{artifact_id}"
 
   attr :label, :string, required: true
   attr :rest, :global

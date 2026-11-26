@@ -10,6 +10,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
   import Phoenix.LiveViewTest
   import Ecto.Query, only: [from: 2]
 
+  alias GoodFlows.Caches.ObjectStore.Fake
   alias GoodFlows.ChangeRequests
   alias GoodFlows.ChangeRequests.Verdict
   alias GoodFlows.ProjectEvents
@@ -1226,6 +1227,274 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       dirty = verify!(ctx, diff, "diff", [result("D1")], dirty: true)
       _ = project_event(view, ctx)
       assert has_element?(view, "#verify-run-#{dirty}", "Dirty tree")
+    end
+  end
+
+  describe "scenario details" do
+    defp set_body_with_cli_digests(fm, texts \\ %{}) do
+      pieces =
+        for s <- fm["scenarios"] do
+          id = to_string(s["id"])
+          {id, "### #{id}. #{s["name"]} (Must)\n\n#{Map.get(texts, id, "Why: #{id}.")}\n\n"}
+        end
+
+      body = "# QA\n\n## Scenarios\n\n" <> Enum.map_join(pieces, "", &elem(&1, 1))
+
+      sections =
+        for {id, piece} <- pieces,
+            do: %{
+              "id" => id,
+              "sha256" => :sha256 |> :crypto.hash(piece) |> Base.encode16(case: :lower)
+            }
+
+      %{"content" => set_content(fm, body), "sections" => sections}
+    end
+
+    defp upload_set!(ctx, number, body) do
+      ctx.sk_conn
+      |> post_json(cr_path(ctx.slug, number, "/scenario-sets"), body)
+      |> json_response(201)
+      |> get_in(["data", "digest"])
+    end
+
+    defp head_cr!(ctx, attrs \\ %{}) do
+      cr = create!(ctx, attrs)
+      facts!(ctx.sk_conn, ctx.slug, cr.number, sha(1))
+      claims!(ctx.sk_conn, ctx.slug, cr.number, sha(1), %{"cr" => cr.number})
+      cr
+    end
+
+    defp final_run!(ctx, digest, source, results, artifacts \\ []) do
+      doc = run_doc(digest, source, sha(1), results, artifacts: Enum.map(artifacts, &elem(&1, 0)))
+
+      {:ok, %{run: run, uploads: uploads}} =
+        GoodFlows.VerifyRuns.ingest(ctx.account, ctx.project, ctx.sk_key, doc)
+
+      for {upload, {_declared, bytes}} <- Enum.zip(uploads, artifacts),
+          do: :ok = Fake.put(upload.upload_url, upload.upload_headers, bytes)
+
+      if artifacts != [],
+        do: {:ok, _final} = GoodFlows.VerifyRuns.commit(ctx.project, ctx.sk_key, run.run_id)
+
+      run
+    end
+
+    defp toggle(view, source, id),
+      do: view |> element("#scenario-#{source}-#{id}-toggle") |> render_click()
+
+    @steps """
+    Why: an update that wipes the fields it was not sent would lose the title.
+
+    1. Send `PATCH /todos/1` with `{"done":true}`.
+       - Expect: status `200`.
+    2. Click **Save** and enter `-1` in **Quantity**.
+       - Expect: the title is kept.
+    3. Send `GET /todos/1`.
+       - Expect: body `{"id":1,"title":"buy milk","done":true}`.
+    4. Reload the list page.
+       - Expect: the todo shows as done with its title.
+    """
+
+    test "a row opens and closes, aria-expanded follows, and it stays open after a refresh",
+         ctx do
+      cr = head_cr!(ctx)
+      fm = diff_fm(sha(1), [scenario(2), scenario(3)])
+      _digest = upload_set!(ctx, cr.number, set_body_with_cli_digests(fm, %{"2" => @steps}))
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      toggle_2 = "#scenario-diff-2-toggle"
+
+      refute has_element?(view, "#scenario-diff-2-details")
+      assert has_element?(view, "#{toggle_2}[aria-expanded=false]", "Show details for 2")
+      refute has_element?(view, "#{toggle_2}[aria-controls]")
+
+      toggle(view, "diff", 2)
+      assert has_element?(view, "#scenario-diff-2 + #scenario-diff-2-details")
+      assert has_element?(view, "#{toggle_2}[aria-expanded=true]", "Hide details for 2")
+      assert has_element?(view, "#{toggle_2}[aria-controls=scenario-diff-2-details]")
+      refute has_element?(view, "#scenario-diff-3-details")
+
+      _ = project_event(view, ctx)
+      assert has_element?(view, "#scenario-diff-2-details")
+      assert has_element?(view, "#{toggle_2}[aria-expanded=true]")
+
+      toggle(view, "diff", 2)
+      refute has_element?(view, "#scenario-diff-2-details")
+      assert has_element?(view, "#{toggle_2}[aria-expanded=false]")
+      refute has_element?(view, "#{toggle_2}[aria-controls]")
+
+      render_click(view, "toggle_scenario", %{"source" => "diff", "id" => "nope"})
+      refute has_element?(view, ".data-table-details")
+    end
+
+    test "a matched section shows its Why and steps rendered, without the heading", ctx do
+      cr = head_cr!(ctx)
+      fm = diff_fm(sha(1), [scenario(2)])
+      _digest = upload_set!(ctx, cr.number, set_body_with_cli_digests(fm, %{"2" => @steps}))
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      toggle(view, "diff", 2)
+
+      text = "#scenario-diff-2-text.scenario-markdown"
+      assert has_element?(view, "#{text} > p", "Why: an update that wipes")
+      assert has_element?(view, "#{text} > ol > li > ul > li", "Expect: status 200.")
+      assert has_element?(view, "#{text} > ol > li:nth-child(2) > ul > li", "the title is kept")
+      assert has_element?(view, "#{text} > ol > li:nth-child(4) > ul > li", "shows as done")
+      refute has_element?(view, "#{text} > ol > li:nth-child(5)")
+      assert has_element?(view, "#{text} strong", "Save")
+      assert has_element?(view, "#{text} strong", "Quantity")
+      assert has_element?(view, "#{text} code", "-1")
+      refute has_element?(view, text, "Scenario 2")
+      refute has_element?(view, "#{text} h3")
+      refute has_element?(view, "#scenario-diff-2-unmatched")
+    end
+
+    test "raw HTML in a section renders no script element and no handler", ctx do
+      cr = head_cr!(ctx)
+      fm = diff_fm(sha(1), [scenario(2)])
+
+      raw = """
+      <script>alert(1)</script>
+
+      Look <img src=x onerror=alert(1)> here and [docs](javascript:alert(1)).
+      """
+
+      _digest = upload_set!(ctx, cr.number, set_body_with_cli_digests(fm, %{"2" => raw}))
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      html = toggle(view, "diff", 2)
+
+      assert has_element?(view, "#scenario-diff-2-text", "here and")
+      refute has_element?(view, "#scenario-diff-2-details script")
+      refute has_element?(view, "#scenario-diff-2-details [onerror]")
+      refute has_element?(view, "#scenario-diff-2-details img")
+      refute html =~ "javascript:"
+    end
+
+    test "a version whose digest does not match shows the unmatched note and no text", ctx do
+      cr = head_cr!(ctx)
+      fm = diff_fm(sha(1), [scenario("S1"), scenario("S2")])
+      body = set_body_with_cli_digests(fm, %{"S2" => @steps})
+
+      sections =
+        for %{"id" => "S2"} = s <- body["sections"], do: %{s | "sha256" => section_sha("S2")}
+
+      body = %{body | "sections" => [hd(body["sections"]) | sections]}
+      _digest = upload_set!(ctx, cr.number, body)
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      toggle(view, "diff", "S1")
+      toggle(view, "diff", "S2")
+
+      assert has_element?(view, "#scenario-diff-S1-text", "Why: S1.")
+
+      assert has_element?(
+               view,
+               "#scenario-diff-S2-unmatched",
+               "could not be matched to the set file"
+             )
+
+      refute has_element?(view, "#scenario-diff-S2-text")
+      refute has_element?(view, "#scenario-diff-S2-details", "Why: an update")
+    end
+
+    test "a failed must shows its step, reason and evidence; an expired artifact has no link",
+         ctx do
+      cr = head_cr!(ctx)
+      fm = diff_fm(sha(1), [scenario("retry-backoff"), scenario("D2", "should")])
+      digest = upload_set!(ctx, cr.number, set_body_with_cli_digests(fm))
+
+      shot = :crypto.strong_rand_bytes(120_000)
+      log = "log bytes"
+
+      failed =
+        "retry-backoff"
+        |> result("failed", ["shot-3", "log-1"])
+        |> Map.merge(%{"failed_step" => "3", "reason" => ~s(Banner read "Saved")})
+
+      run =
+        final_run!(ctx, digest, "diff", [failed, result("D2", "not_run")], [
+          {artifact("shot-3", shot), shot},
+          {artifact("log-1", log, "text/plain"), log}
+        ])
+
+      Repo.update_all(
+        from(a in GoodFlows.VerifyRuns.Artifact,
+          where: a.verify_run_id == ^run.id and a.artifact_id == "log-1"
+        ),
+        set: [expired: true]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      toggle(view, "diff", "retry-backoff")
+      html = toggle(view, "diff", "D2")
+
+      dom = "#scenario-diff-retry-backoff"
+      assert has_element?(view, "#{dom}-failed-step", "Failed at 3")
+      assert has_element?(view, "#{dom}-reason", ~s(Banner read "Saved"))
+
+      shot_item = "#{dom}-evidence-shot-3"
+      assert has_element?(view, "#{dom}-evidence > li:first-child#{shot_item}")
+      assert has_element?(view, shot_item, "shots/shot-3.png")
+      assert has_element?(view, shot_item, "image/png")
+      assert has_element?(view, shot_item, "117.2 KiB")
+
+      href =
+        "/dashboard/accounts/#{ctx.account.id}/projects/#{ctx.slug}/verify-runs/#{run.run_id}/artifacts/shot-3"
+
+      assert has_element?(view, "#{shot_item}-download[href='#{href}']", "Download")
+
+      log_item = "#{dom}-evidence-log-1"
+      assert has_element?(view, log_item, "Expired")
+      refute has_element?(view, "#{log_item} a")
+
+      assert has_element?(view, "#scenario-diff-D2-reason", "it broke")
+      refute has_element?(view, "#scenario-diff-D2-failed-step")
+      refute html =~ "X-Amz-Signature"
+    end
+
+    test "a set with no counted run shows the text and says there is no result", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{"scenarios" => %{"require_approved_intent" => true}})
+      cr = head_cr!(ctx, %{"change_id" => "add-export"})
+      fm = intent_fm("add-export", [scenario("S1")])
+      digest = upload_set!(ctx, cr.number, set_body_with_cli_digests(fm))
+      _run = final_run!(ctx, digest, "intent", [result("S1")])
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      toggle(view, "intent", "S1")
+
+      assert has_element?(view, "#qa-set-intent-run", "No counted run")
+      assert has_element?(view, "#scenario-intent-S1-text", "Why: S1.")
+      assert has_element?(view, "#scenario-intent-S1-no-result", "No verify run result")
+    end
+
+    test "a merged change request shows the same details from its stored verdict", ctx do
+      cr = head_cr!(ctx)
+      fm = diff_fm(sha(1), [scenario("D1")])
+      digest = upload_set!(ctx, cr.number, set_body_with_cli_digests(fm, %{"D1" => @steps}))
+      shot = "shot bytes"
+
+      failed =
+        result("D1", "failed", ["shot-1"])
+        |> Map.merge(%{"failed_step" => "2", "reason" => "Title was wiped"})
+
+      run = final_run!(ctx, digest, "diff", [failed], [{artifact("shot-1", shot), shot}])
+      merge!(ctx, cr.number)
+
+      _later = final_run!(ctx, digest, "diff", [result("D1")])
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      assert has_element?(view, "#qa-frozen")
+      toggle(view, "diff", "D1")
+
+      assert has_element?(view, "#scenario-diff-D1-text > ol > li", "Send PATCH /todos/1")
+      assert has_element?(view, "#scenario-diff-D1-failed-step", "Failed at 2")
+      assert has_element?(view, "#scenario-diff-D1-reason", "Title was wiped")
+
+      assert has_element?(
+               view,
+               "#scenario-diff-D1-evidence-shot-1-download[href$='/verify-runs/#{run.run_id}/artifacts/shot-1']"
+             )
     end
   end
 end

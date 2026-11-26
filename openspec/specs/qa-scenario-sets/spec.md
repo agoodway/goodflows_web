@@ -428,3 +428,10 @@ A decision's `channel` SHALL be `cli` for every decision made through the API, a
 #### Scenario: Approval from the dashboard
 - **WHEN** membership M approves the `scenario_set_approval` item for digest `d2` in the dashboard
 - **THEN** `d2` reads as approved, and its decision names M, has no key, and has `channel` `dashboard`
+
+### Requirement: Only the dashboard reads a set's body
+The dashboard MAY split a stored version's Markdown body into scenario sections for display. That split MUST NOT change what an upload accepts, what is stored, or any digest, and uploads SHALL keep parsing only the front matter.
+
+#### Scenario: Body without a Scenarios heading
+- **WHEN** a client uploads a set whose body has no `## Scenarios` heading, with valid front matter and sections
+- **THEN** the API responds `201` and stores the set as sent

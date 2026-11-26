@@ -498,6 +498,13 @@ defmodule GoodFlowsWeb.CoreComponents do
   one cell that spans them, such as a note for a row with nothing to
   show there. Below `md` the cell shows without a label.
 
+  Pass `row_open` (a function of the row) with a `:details` slot to show a
+  full-width row directly below each row for which it returns true, with
+  the id `<row id>-details`. The caller owns the open state and the
+  toggle that changes it. Below `md` the cell shows without a label.
+  `row_open` is for list rows only: a stream tracks one DOM id per item, so
+  a details row would be orphaned on delete or reset. Passing both raises.
+
   ## Examples
 
       <.table id="users" rows={@users}>
@@ -515,6 +522,10 @@ defmodule GoodFlowsWeb.CoreComponents do
     default: nil,
     doc: "the function returning the column index a row's :span cell starts at, or nil"
 
+  attr :row_open, :any,
+    default: nil,
+    doc: "the function returning whether a row's :details row is shown"
+
   attr :row_item, :any,
     default: &Function.identity/1,
     doc: "the function for mapping each row before calling the :col and :action slots"
@@ -527,6 +538,11 @@ defmodule GoodFlowsWeb.CoreComponents do
   slot :action, doc: "the slot for showing user actions in the last table column"
   slot :empty_state, doc: "shown in place of the table when `empty` is true"
   slot :span, doc: "the cell that spans the columns from `span_from` on"
+  slot :details, doc: "the full-width row shown below a row when `row_open` returns true"
+
+  def table(%{rows: %Phoenix.LiveView.LiveStream{}, row_open: row_open}) when row_open != nil do
+    raise ArgumentError, "table/1 row_open is for list rows only, not a stream"
+  end
 
   def table(assigns) do
     assigns =
@@ -549,34 +565,44 @@ defmodule GoodFlowsWeb.CoreComponents do
           </tr>
         </thead>
         <tbody id={@id} phx-update={is_struct(@rows, Phoenix.LiveView.LiveStream) && "stream"}>
-          <tr
-            :for={row <- @rows}
-            id={@row_id && @row_id.(row)}
-            class={@row_click && "data-table-row-link"}
-          >
-            <td
-              :for={col <- Enum.take(@col, span_index(@span_from, @row_item.(row), @col))}
-              data-label={col[:label]}
-              phx-click={@row_click && @row_click.(row)}
-              class={col[:class]}
+          <%= for row <- @rows do %>
+            <tr
+              id={@row_id && @row_id.(row)}
+              class={@row_click && "data-table-row-link"}
             >
-              {render_slot(col, @row_item.(row))}
-            </td>
-            <td
-              :if={span_index(@span_from, @row_item.(row), @col) < length(@col)}
-              colspan={length(@col) - span_index(@span_from, @row_item.(row), @col)}
-              data-label=""
+              <td
+                :for={col <- Enum.take(@col, span_index(@span_from, @row_item.(row), @col))}
+                data-label={col[:label]}
+                phx-click={@row_click && @row_click.(row)}
+                class={col[:class]}
+              >
+                {render_slot(col, @row_item.(row))}
+              </td>
+              <td
+                :if={span_index(@span_from, @row_item.(row), @col) < length(@col)}
+                colspan={length(@col) - span_index(@span_from, @row_item.(row), @col)}
+                data-label=""
+              >
+                {render_slot(@span, @row_item.(row))}
+              </td>
+              <td :if={@action != []} class="table-actions">
+                <div class="flex justify-end gap-2">
+                  <%= for action <- @action do %>
+                    {render_slot(action, @row_item.(row))}
+                  <% end %>
+                </div>
+              </td>
+            </tr>
+            <tr
+              :if={@row_open && @row_open.(@row_item.(row))}
+              id={@row_id && "#{@row_id.(row)}-details"}
+              class="data-table-details"
             >
-              {render_slot(@span, @row_item.(row))}
-            </td>
-            <td :if={@action != []} class="table-actions">
-              <div class="flex justify-end gap-2">
-                <%= for action <- @action do %>
-                  {render_slot(action, @row_item.(row))}
-                <% end %>
-              </div>
-            </td>
-          </tr>
+              <td colspan={length(@col) + if(@action != [], do: 1, else: 0)} data-label="">
+                {render_slot(@details, @row_item.(row))}
+              </td>
+            </tr>
+          <% end %>
         </tbody>
       </table>
     </div>

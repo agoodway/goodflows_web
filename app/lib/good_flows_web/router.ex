@@ -259,6 +259,10 @@ defmodule GoodFlowsWeb.Router do
       live "/projects/:slug/change-requests/:number", ChangeRequestLive.Show, :show
       live "/api-keys", ApiKeyLive.Index, :index
     end
+
+    get "/projects/:slug/verify-runs/:run_id/artifacts/:artifact_id",
+        VerifyRunArtifactController,
+        :show
   end
 
   scope "/", GoodFlowsWeb do

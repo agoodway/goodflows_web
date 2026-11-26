@@ -236,6 +236,72 @@ defmodule GoodFlows.VerifyRunsTest do
     end
   end
 
+  describe "scenario_details/2" do
+    setup ctx do
+      shot = :crypto.strong_rand_bytes(1_200)
+      transcript = "hello transcript"
+
+      document =
+        run_doc(
+          ctx.digest,
+          "intent",
+          sha(1),
+          [result("S1", "failed", ["transcript", "shot-1"]), result(2, "not_run")],
+          artifacts: [artifact("shot-1", shot), artifact("transcript", transcript, "text/plain")]
+        )
+
+      {:ok, %{run: run, uploads: uploads}} = ingest(ctx, document)
+
+      for {u, body} <- Enum.zip(uploads, [shot, transcript]),
+          do: :ok = Fake.put(u.upload_url, u.upload_headers, body)
+
+      {:ok, run} = VerifyRuns.commit(ctx.project, ctx.key, run.run_id)
+      %{run: run}
+    end
+
+    test "a failed result with its step, reason and two artifacts in result order", ctx do
+      details = VerifyRuns.scenario_details(ctx.project, [ctx.run.run_id])
+
+      assert %{failed_step: "step 2", reason: "it broke", evidence: [first, second]} =
+               details[ctx.run.run_id]["S1"]
+
+      assert first == %{
+               id: "transcript",
+               path: "shots/transcript.png",
+               content_type: "text/plain",
+               size: 16,
+               expired: false
+             }
+
+      assert %{id: "shot-1", content_type: "image/png", size: 1_200, expired: false} = second
+    end
+
+    test "an integer scenario ID is keyed in string form", ctx do
+      details = VerifyRuns.scenario_details(ctx.project, [ctx.run.run_id])
+
+      assert details[ctx.run.run_id]["2"] == %{
+               failed_step: nil,
+               reason: "it broke",
+               evidence: []
+             }
+    end
+
+    test "other projects, unknown and non-canonical IDs, and uploading runs read nothing", ctx do
+      other = project_fixture(ctx.account)
+      assert VerifyRuns.scenario_details(other, [ctx.run.run_id]) == %{}
+      assert VerifyRuns.scenario_details(ctx.project, [Ecto.UUID.generate(), "x"]) == %{}
+      assert VerifyRuns.scenario_details(ctx.project, []) == %{}
+
+      {:ok, %{run: uploading}} =
+        ingest(
+          ctx,
+          doc(ctx, artifacts: [artifact("late", "late bytes")])
+        )
+
+      assert VerifyRuns.scenario_details(ctx.project, [uploading.run_id]) == %{}
+    end
+  end
+
   describe "list and show" do
     test "keyset paging, filters, counts", ctx do
       docs =

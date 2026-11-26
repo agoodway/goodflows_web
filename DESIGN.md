@@ -215,7 +215,27 @@ stream container. To replace a row's trailing columns with one note, such as a
 required workflow with no run, pass `span_from` (a function of the row that
 returns a column index, or nil for a normal row) with a `:span` slot; the slot
 renders in one cell spanning the columns from that index on, and below `md` it
-shows without a label. Do not hand-write `colspan` cells in a page.
+shows without a label. To show more about a row on demand, pass `row_open`
+(a function of the row that returns whether it is open) with a `:details`
+slot; an open row gets a full-width row directly below it, id
+`<row id>-details`, on a lightly tinted surface, and below `md` it shows
+without a label. `row_open` is for list rows only: a stream tracks one DOM
+id per item, so a details row would be orphaned on delete or reset, and
+`table/1` raises if `rows` is a stream. The page owns the open state and
+puts the toggle, a `ghost` icon button with `aria-expanded`, `aria-controls`
+naming the details row while it is open (and no `aria-controls` while it is
+closed, since the row does not exist then) and an accessible name naming the
+row, in the row's first column. Do not hand-write `colspan` cells in a page.
+
+Uploaded Markdown, such as a scenario's steps from its set file, renders
+through `GoodFlowsWeb.ScenarioMarkdown` (MDEx with raw HTML off, then
+html_sanitize_ex) inside a `.scenario-markdown` block. The class styles the
+sanitized tags in this system's terms, with no typography plugin: list
+markers and indents, paragraph spacing, `code` and `pre` in the tag style
+(2px radius, monospace) with `pre` scrolling inside its own box, tables in
+the data table border style, and links in the `text_link/1` color. Use it for
+any rendered Markdown; never `raw/1` anything that has not passed the
+sanitizer.
 
 A dialog is rendered conditionally by its LiveView and names the event that
 closes it. Escape, the ESC button and a click outside the panel all push that

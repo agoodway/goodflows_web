@@ -420,6 +420,79 @@ defmodule GoodFlows.VerifyRuns do
     end
   end
 
+  @typedoc "An evidence artifact of a result, for the change request page."
+  @type evidence :: %{
+          id: String.t(),
+          path: String.t() | nil,
+          content_type: String.t() | nil,
+          size: non_neg_integer() | nil,
+          expired: boolean()
+        }
+
+  @typedoc "A scenario's result details in one run."
+  @type scenario_detail :: %{
+          failed_step: String.t() | nil,
+          reason: String.t() | nil,
+          evidence: [evidence()]
+        }
+
+  @doc """
+  The result details of each scenario in the project's `final` runs
+  `run_ids`: `%{run_id => %{scenario_id => detail}}`, with scenario IDs in
+  string form and each result's evidence in its order. Reads only the
+  runs' results and artifacts and their artifact rows' `expired`, in one
+  query.
+  """
+  @spec scenario_details(Project.t(), [String.t()]) :: %{
+          String.t() => %{String.t() => scenario_detail()}
+        }
+  def scenario_details(%Project{id: project_id}, run_ids) do
+    case Enum.filter(run_ids, &RunValidator.canonical_uuid?/1) do
+      [] ->
+        %{}
+
+      run_ids ->
+        from(r in Run,
+          where: r.project_id == ^project_id and r.run_id in ^run_ids and r.status == "final",
+          select: {
+            r.run_id,
+            fragment("?->'results'", r.document),
+            fragment("?->'artifacts'", r.document),
+            fragment(
+              "(SELECT coalesce(jsonb_object_agg(a.artifact_id, a.expired), '{}') FROM verify_run_artifacts a WHERE a.verify_run_id = ?)",
+              r.id
+            )
+          }
+        )
+        |> Repo.all()
+        |> Map.new(fn {run_id, results, artifacts, expired} ->
+          {run_id, run_details(results, artifacts, expired)}
+        end)
+    end
+  end
+
+  defp run_details(results, artifacts, expired) do
+    declared = Map.new(artifacts, &{&1["id"], &1})
+
+    Map.new(results, fn result ->
+      evidence =
+        Enum.map(result["evidence"] || [], fn id ->
+          artifact = Map.get(declared, id, %{})
+
+          %{
+            id: id,
+            path: artifact["path"],
+            content_type: artifact["content_type"],
+            size: artifact["size"],
+            expired: Map.get(expired, id, false)
+          }
+        end)
+
+      {SetDocument.id_string(result["id"]),
+       %{failed_step: result["failed_step"], reason: result["reason"], evidence: evidence}}
+    end)
+  end
+
   @doc "Presigns a download of an artifact's object."
   @spec download(Artifact.t()) :: %{url: String.t(), expires_at: DateTime.t()}
   def download(%Artifact{} = artifact) do

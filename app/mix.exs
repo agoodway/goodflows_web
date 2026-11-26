@@ -107,6 +107,8 @@ defmodule GoodFlows.MixProject do
       # YAML front matter of change request claims (anchors, aliases and tags
       # are refused through yamerl's tokens before parsing)
       {:yaml_elixir, "~> 2.12"},
+      {:mdex, "~> 0.14"},
+      {:html_sanitize_ex, "~> 1.5"},
       {:bandit, "~> 1.5"},
 
       # OpenAPI Documentation

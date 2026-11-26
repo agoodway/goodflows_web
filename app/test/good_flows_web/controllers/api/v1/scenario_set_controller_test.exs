@@ -237,6 +237,24 @@ defmodule GoodFlowsWeb.Api.V1.ScenarioSetControllerTest do
     assert ctx.sk_conn |> get(sets_path(ctx, "/other/versions/1")) |> json_response(404)
   end
 
+  test "a body without a Scenarios heading is stored as sent", ctx do
+    body =
+      set_body(intent_fm("add-export"),
+        body: "# Export notes\n\nNo scenario sections here.\n\n### S1 is not under a heading\n"
+      )
+
+    refute body["content"] =~ "## Scenarios"
+
+    digest = digest_of(body)
+
+    assert %{"data" => %{"version" => 1, "digest" => ^digest}} =
+             ctx.sk_conn |> upload(ctx, body) |> json_response(201)
+
+    shown = ctx.sk_conn |> get(sets_path(ctx, "/intent/versions/1")) |> json_response(200)
+    assert shown["data"]["content"] == body["content"]
+    assert shown["data"]["sections"] == body["sections"]
+  end
+
   test "approve, repeat, reject, stale; pk_ redaction; diff decisions 404", ctx do
     body = set_body(intent_fm("add-export"))
     d1 = ctx.sk_conn |> upload(ctx, body) |> json_response(201) |> get_in(["data", "digest"])
