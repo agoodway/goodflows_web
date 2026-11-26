@@ -25,11 +25,19 @@ A slug that names no project of the account, a number that names no change reque
 - **THEN** they are redirected to the account's Projects page with the flash `Change request not found`
 
 ### Requirement: Change request pages are reached from the Projects page
-The Projects page SHALL link each project's slug to its change request list. The pages SHALL keep the Projects item active in the sidebar and show the breadcrumbs Dashboard, Projects, the project slug, Change requests and, on the detail page, `#<number>`.
+The Projects page SHALL link each project's slug to the project overview, which links to the change request list. The pages SHALL keep the Projects item active in the sidebar and show the breadcrumbs Dashboard, Projects, the project slug linking to the project overview, Change requests and, on the detail page, `#<number>`.
+
+#### Scenario: Projects page links to the overview
+- **WHEN** a member views the Projects page
+- **THEN** each project slug links to that project's overview
 
 #### Scenario: Projects page links to the list
-- **WHEN** a member views the Projects page
-- **THEN** each project slug links to that project's change request list
+- **WHEN** a member opens a project's overview from the Projects page
+- **THEN** the overview links to that project's change request list
+
+#### Scenario: Breadcrumb links to the overview
+- **WHEN** a member opens change request 42 of project `web`
+- **THEN** the breadcrumb `web` links to `web`'s overview
 
 ### Requirement: The list pages and filters change requests
 The list SHALL show the project's change requests by `number` descending, 50 per page, with a Load more button while more exist. A filter SHALL select Active (state `draft` or `open`, the default), Merged, Closed or All, and the filter MUST be kept in the URL as `?state=active|merged|closed|all`. Each row SHALL link to the change request's detail page. When the filter matches nothing, the page SHALL show an empty state naming the filter.
@@ -353,3 +361,10 @@ The download route MUST respond `404` when the project, run or artifact does not
 #### Scenario: Not a member
 - **WHEN** a signed-in user who is not a member of the account requests an artifact URL of that account
 - **THEN** the server redirects to `/dashboard` and presigns nothing
+
+### Requirement: Workflow runs at head link to their runs
+Each run in the detail page's workflow runs panel SHALL link to that run's detail page in the run history.
+
+#### Scenario: Required workflow run
+- **WHEN** change request 42's panel shows run X for required workflow `ci`
+- **THEN** the `ci` row links to run X's detail page

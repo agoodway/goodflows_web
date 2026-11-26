@@ -69,7 +69,7 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
           "present only when the document included them.",
       required: ~w(
         id run_id workflow environment outcome started_at duration_ms parallelism
-        max_in_flight graph_sha256 source ci host inserted_at
+        max_in_flight graph_sha256 source ci host failed_jobs inserted_at
       ),
       properties: %{
         "id" => %Schema{type: :string, format: :uuid, description: "Stable server id"},
@@ -90,6 +90,13 @@ defmodule GoodFlowsWeb.Schemas.WorkflowRunParts do
           ),
         "ci" => nullable(props["ci"], "Null when the document omitted `ci`."),
         "host" => props["host"],
+        "failed_jobs" => %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description:
+            "The `name` of each result whose `status` is `failed` or `timed_out`, in " <>
+              "result order, with repeats kept for partitions. Empty when none failed."
+        },
         "inserted_at" => %Schema{
           type: :string,
           format: :"date-time",

@@ -5,7 +5,9 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
   Summaries rebuild `source` from the copied columns: null when no commit
   was stored, otherwise `commit` plus `dirty` and `branch` only when each
   was stored. `host` and `ci` are the stored objects (`ci` null when the
-  document had none), so omitted keys stay omitted.
+  document had none), so omitted keys stay omitted. `failed_jobs` names the
+  `failed` and `timed_out` results; public keys see it too, because job
+  names are not redacted from their view of a document.
 
   Public keys (`redact?: true`) see each `results` entry's `command` and
   `error` as null, and in `graph` each job's and step's `command` and each
@@ -64,6 +66,7 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunJSON do
       source: source(run),
       ci: run.ci,
       host: run.host,
+      failed_jobs: run.failed_jobs,
       inserted_at: DateTime.to_iso8601(run.inserted_at)
     }
   end

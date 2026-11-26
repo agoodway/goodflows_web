@@ -1206,6 +1206,72 @@ defmodule GoodFlowsWeb.CoreComponents do
   end
 
   @doc """
+  Renders a button that copies `value` to the clipboard, such as a run id,
+  a commit, a test file path or an API query. `label` is its accessible
+  name ("Copy commit"); give a visible text as the inner block, or leave it
+  out for an icon-only button. After a click the icon turns into a check
+  and screen readers hear "Copied" for 2 seconds.
+
+  ## Examples
+
+      <.copy_button id="copy-commit" value={@run.source_commit} label="Copy commit" />
+      <.copy_button id="copy-query" value={@query} label="Copy API query">Copy</.copy_button>
+  """
+  attr :id, :string, required: true
+  attr :value, :string, required: true
+  attr :label, :string, required: true
+  attr :class, :any, default: nil
+  slot :inner_block
+
+  def copy_button(assigns) do
+    ~H"""
+    <button
+      id={@id}
+      type="button"
+      class={["copy-button group", @class]}
+      phx-hook=".CopyButton"
+      phx-update="ignore"
+      data-copy-value={@value}
+      aria-label={@label}
+      title={@label}
+    >
+      <.icon
+        name="hero-clipboard-document-micro"
+        class="size-4 shrink-0 group-data-[copied]:hidden"
+      />
+      <.icon
+        name="hero-check-micro"
+        class="hidden size-4 shrink-0 text-primary group-data-[copied]:inline-block"
+      />
+      <span :if={@inner_block != []}>{render_slot(@inner_block)}</span>
+      <span class="sr-only" aria-live="polite" data-copy-status></span>
+    </button>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".CopyButton">
+      export default {
+        mounted() {
+          this.el.addEventListener("click", () => {
+            const status = this.el.querySelector("[data-copy-status]");
+            const show = (copied, text) => {
+              if (copied) this.el.dataset.copied = "true";
+              status.textContent = text;
+              clearTimeout(this.timer);
+              this.timer = setTimeout(() => {
+                delete this.el.dataset.copied;
+                status.textContent = "";
+              }, 2000);
+            };
+            navigator.clipboard.writeText(this.el.dataset.copyValue)
+              .then(() => show(true, "Copied"))
+              .catch(() => show(false, "Copy failed"));
+          });
+        },
+        destroyed() { clearTimeout(this.timer); }
+      }
+    </script>
+    """
+  end
+
+  @doc """
   Groups the buttons at the end of an `editor_dialog/1`.
   """
   slot :inner_block, required: true

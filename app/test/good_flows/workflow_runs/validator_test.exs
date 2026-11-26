@@ -83,13 +83,14 @@ defmodule GoodFlows.WorkflowRuns.ValidatorTest do
       assert parent_columns.source_commit == "5a4a9715f1cd0a9795766bcd9294a77549b5b474"
       assert parent_columns.source_dirty == false
       assert parent_columns.environment == nil
-      refute Map.has_key?(parent_columns, :parent_run_id)
+      assert parent_columns.parent_run_id == nil
 
       assert {:ok, child, child_columns} = validate_json(golden("child-suite.json"))
       assert child["parent_run_id"] == @uuid
       assert child["caller_job"] == "call-suite"
       assert child_columns.workflow == "suite"
       assert child_columns.run_id == @child
+      assert child_columns.parent_run_id == @uuid
       refute Map.has_key?(child_columns, :caller_job)
     end
 

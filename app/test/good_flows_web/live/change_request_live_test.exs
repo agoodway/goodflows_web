@@ -1135,6 +1135,19 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       assert has_element?(view, "#workflow-run-nightly-perf", "Not required")
       assert has_element?(view, "#workflow-run-nightly-perf", "No CI link")
       assert passed in (ChangeRequests.verdict(cr).inputs["required_workflows"] |> Map.values())
+
+      run_path = "/dashboard/accounts/#{ctx.account.id}/projects/#{ctx.slug}/runs/#{passed}"
+      assert has_element?(view, ~s(#workflow-run-ci-link[href="#{run_path}"]))
+    end
+
+    test "the slug breadcrumb links to the project overview on both pages", ctx do
+      cr = create!(ctx)
+      overview = "/dashboard/accounts/#{ctx.account.id}/projects/#{ctx.slug}"
+
+      for path <- [list_path(ctx), show_path(ctx, cr.number)] do
+        {:ok, view, _html} = live(ctx.conn, path)
+        assert has_element?(view, ~s(nav[aria-label="Breadcrumb"] a[href="#{overview}"]), "web")
+      end
     end
 
     test "a merged change request shows frozen panels with Counts and Not counted", ctx do

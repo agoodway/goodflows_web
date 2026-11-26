@@ -10,7 +10,10 @@ defmodule GoodFlows.WorkflowRuns.Run do
   need, including `host`, `source_branch` and `ci`, so a list never reads
   `payload`. `link_tickets` (ASCII-lowercased) and `link_threads` (as
   sent) copy `links` for the link filters and are empty when the document
-  has none. They are not part of a summary.
+  has none. They are not part of a summary. `failed_jobs` (the names of
+  the `failed` and `timed_out` results, in result order) is part of a
+  summary; `parent_run_id` (the calling run) is not, and is used only to
+  fold called runs under their parent in the dashboard.
   `payload_digest` is the SHA-256 of the payload's canonical JSON
   (`GoodFlows.JsonDocument.digest/1`), used to compare retries. Rows are
   inserted once and never updated.
@@ -45,6 +48,8 @@ defmodule GoodFlows.WorkflowRuns.Run do
     field :host, :map
     field :link_tickets, {:array, :string}, default: []
     field :link_threads, {:array, :string}, default: []
+    field :failed_jobs, {:array, :string}, default: []
+    field :parent_run_id, Ecto.UUID
     field :payload, :map
     field :payload_digest, :binary
 

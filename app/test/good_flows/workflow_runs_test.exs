@@ -237,6 +237,49 @@ defmodule GoodFlows.WorkflowRunsTest do
     end
   end
 
+  describe "failed_jobs and parent_run_id" do
+    defp result(name, status, extra) do
+      Map.merge(
+        %{
+          "name" => name,
+          "status" => status,
+          "exit_code" => if(status == "passed", do: 0, else: 1),
+          "command" => "run #{name}",
+          "error" => nil,
+          "duration_ms" => 1,
+          "started" => true,
+          "blocked_ms" => 0,
+          "queued_ms" => 0
+        },
+        extra
+      )
+    end
+
+    defp stored(ctx, document) do
+      assert {:ok, %{id: id}} = WorkflowRuns.ingest(ctx.account, ctx.project, nil, document)
+      Repo.get!(Run, id)
+    end
+
+    test "keeps a repeated name for each failed partition", ctx do
+      results = [
+        result("test", "failed", %{"partition" => %{"index" => 1, "count" => 2}}),
+        result("test", "failed", %{"partition" => %{"index" => 2, "count" => 2}})
+      ]
+
+      run = stored(ctx, Map.merge(minimal(), %{"outcome" => "failed", "results" => results}))
+      assert run.failed_jobs == ["test", "test"]
+    end
+
+    test "copies parent_run_id from a called run, and minimal stores null", ctx do
+      child = goodflows("child")
+      assert stored(ctx, child).parent_run_id == child["parent_run_id"]
+
+      minimal_run = stored(ctx, minimal())
+      assert minimal_run.parent_run_id == nil
+      assert minimal_run.failed_jobs == []
+    end
+  end
+
   describe "links" do
     @links %{
       "threads" => ["https://ampcode.com/threads/T-1", "https://ampcode.com/threads/a%7Eb"],

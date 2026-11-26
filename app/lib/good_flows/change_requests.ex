@@ -191,6 +191,55 @@ defmodule GoodFlows.ChangeRequests do
     end
   end
 
+  @doc """
+  How many `draft` or `open` change requests of `project` have each verdict
+  state, one with no stored verdict counting as `pending`. Every state of
+  `GoodFlows.ChangeRequests.Verdict.states/0` is a key, zero when none.
+  """
+  @spec verdict_counts(Project.t()) :: %{String.t() => non_neg_integer()}
+  def verdict_counts(%Project{id: project_id}) do
+    counts =
+      Repo.all(
+        from c in ChangeRequest,
+          left_join: v in assoc(c, :verdict),
+          where: c.project_id == ^project_id and c.state in @active_states,
+          group_by: fragment("coalesce(?, 'pending')", v.state),
+          select: {fragment("coalesce(?, 'pending')", v.state), count(c.id)}
+      )
+
+    Map.merge(Map.new(Verdict.states(), &{&1, 0}), Map.new(counts))
+  end
+
+  @doc """
+  The `limit` most recently updated `draft` or `open` change requests of
+  `project`, `updated_at` descending, with their verdicts preloaded.
+  """
+  @spec recent_active(Project.t(), pos_integer()) :: [ChangeRequest.t()]
+  def recent_active(%Project{id: project_id}, limit) when is_integer(limit) and limit > 0 do
+    Repo.all(
+      from c in ChangeRequest,
+        where: c.project_id == ^project_id and c.state in @active_states,
+        order_by: [desc: c.updated_at, desc: c.number],
+        limit: ^limit,
+        preload: [:verdict]
+    )
+  end
+
+  @doc """
+  The change requests of `project`, in any state, whose `head` is `commit`,
+  `number` descending.
+  """
+  @spec at_head(Project.t(), String.t() | nil) :: [ChangeRequest.t()]
+  def at_head(%Project{}, nil), do: []
+
+  def at_head(%Project{id: project_id}, commit) when is_binary(commit) do
+    Repo.all(
+      from c in ChangeRequest,
+        where: c.project_id == ^project_id and c.head == ^commit,
+        order_by: [desc: c.number]
+    )
+  end
+
   defp filter(query, _field, nil), do: query
   defp filter(query, field, value), do: where(query, [c], field(c, ^field) == ^value)
 

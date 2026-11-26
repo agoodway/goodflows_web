@@ -393,6 +393,15 @@ defmodule GoodFlows.WorkflowRunsReadsTest do
       assert latest(ctx) == [{"ci", passed}, {"lint", lint}]
     end
 
+    test "rows and summaries carry failed_jobs for the change request panel", ctx do
+      failed = at!(ctx, "ci", "failed", ~U[2026-11-05 10:00:00Z], %{failed_jobs: ["test"]})
+
+      assert [%Run{failed_jobs: ["test"]}] =
+               WorkflowRuns.latest_clean_by_workflow(ctx.project, @commit_a)
+
+      assert [%Run{failed_jobs: ["test"]}] = WorkflowRuns.summaries(ctx.project, [failed])
+    end
+
     test "a dirty newest run gives way to the older clean one; unknown dirt is clean", ctx do
       clean = at!(ctx, "ci", "passed", ~U[2026-11-05 10:00:00Z], %{source_dirty: nil})
       _dirty = at!(ctx, "ci", "failed", ~U[2026-11-05 11:00:00Z], %{source_dirty: true})
@@ -410,6 +419,127 @@ defmodule GoodFlows.WorkflowRunsReadsTest do
 
       assert [%Run{workflow: "ci", outcome: "passed"}] =
                WorkflowRuns.latest_clean_by_workflow(ctx.project, @commit_b)
+    end
+  end
+
+  describe "list_runs/4 with fold_children and children/2" do
+    @parent "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    @child "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    @orphan "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    @missing "99999999-9999-4999-8999-999999999999"
+
+    defp run!(ctx, run_id, started_at, attrs \\ %{}) do
+      stored_run(
+        ctx.account,
+        ctx.project,
+        Map.merge(%{run_id: run_id, started_at: started_at}, attrs)
+      )
+    end
+
+    defp folded(ctx, params \\ %{}) do
+      assert {:ok, page} =
+               WorkflowRuns.list_runs(ctx.account, ctx.project, params, fold_children: true)
+
+      {Enum.map(page.runs, & &1.run_id), page.next_cursor}
+    end
+
+    test "a child of a stored parent is folded and listed by children/2", ctx do
+      run!(ctx, @parent, ~U[2026-11-05 10:00:00Z])
+      run!(ctx, @child, ~U[2026-11-05 10:01:00Z], %{parent_run_id: @parent, workflow: "suite"})
+
+      assert folded(ctx) == {[@parent], nil}
+
+      assert [%Run{run_id: @child, parent_run_id: @parent, workflow: "suite"}] =
+               WorkflowRuns.children(ctx.project, [@parent])
+
+      assert WorkflowRuns.children(ctx.project, []) == []
+    end
+
+    test "a child whose parent is not stored is listed", ctx do
+      run!(ctx, @orphan, ~U[2026-11-05 10:00:00Z], %{parent_run_id: @missing})
+
+      assert folded(ctx) == {[@orphan], nil}
+    end
+
+    test "a parent stored in another project does not fold the child", ctx do
+      stored_run(ctx.other, ctx.other_project, %{run_id: @parent})
+      run!(ctx, @child, ~U[2026-11-05 10:00:00Z], %{parent_run_id: @parent})
+
+      assert folded(ctx) == {[@child], nil}
+      assert WorkflowRuns.children(ctx.other_project, [@parent]) == []
+    end
+
+    test "paging over folded rows repeats and skips nothing", ctx do
+      run!(ctx, @early, ~U[2026-11-05 09:00:00Z])
+      run!(ctx, @parent, ~U[2026-11-05 10:00:00Z])
+      run!(ctx, @child, ~U[2026-11-05 10:30:00Z], %{parent_run_id: @parent})
+      run!(ctx, @late, ~U[2026-11-05 11:00:00Z])
+
+      assert {[@late, @parent], cursor} = folded(ctx, %{"limit" => 2})
+      assert folded(ctx, %{"limit" => 2, "cursor" => cursor}) == {[@early], nil}
+    end
+
+    test "the unfolded list, as the API sees it, still returns the child", ctx do
+      run!(ctx, @parent, ~U[2026-11-05 10:00:00Z])
+      run!(ctx, @child, ~U[2026-11-05 10:01:00Z], %{parent_run_id: @parent})
+
+      assert ids(ctx) == {[@child, @parent], nil}
+    end
+  end
+
+  describe "latest_by_workflow_on_branch/2 and filter_values/1" do
+    defp on_main!(ctx, workflow, outcome, started_at, attrs \\ %{}) do
+      run_id = Ecto.UUID.generate()
+
+      stored_run(
+        ctx.account,
+        ctx.project,
+        Map.merge(
+          %{
+            run_id: run_id,
+            workflow: workflow,
+            outcome: outcome,
+            started_at: started_at,
+            source_commit: @commit_a,
+            source_branch: "main"
+          },
+          attrs
+        )
+      )
+
+      run_id
+    end
+
+    defp latest_on(ctx, branch) do
+      ctx.project
+      |> WorkflowRuns.latest_by_workflow_on_branch(branch)
+      |> Enum.map(&{&1.workflow, &1.run_id, &1.outcome})
+    end
+
+    test "the newest run of each workflow on the branch", ctx do
+      _failed = on_main!(ctx, "ci", "failed", ~U[2026-11-05 10:00:00Z])
+      passed = on_main!(ctx, "ci", "passed", ~U[2026-11-05 11:00:00Z])
+
+      _lint =
+        on_main!(ctx, "lint", "passed", ~U[2026-11-05 12:00:00Z], %{source_branch: "feature/x"})
+
+      stored_run(ctx.other, ctx.other_project, %{source_branch: "main", workflow: "deploy"})
+
+      assert latest_on(ctx, "main") == [{"ci", passed, "passed"}]
+    end
+
+    test "filter values list each workflow, environment and recent branch once", ctx do
+      on_main!(ctx, "ci", "passed", ~U[2026-11-05 10:00:00Z], %{environment: "prod"})
+      on_main!(ctx, "ci", "failed", ~U[2026-11-05 11:00:00Z], %{environment: "prod"})
+      on_main!(ctx, "lint", "passed", ~U[2026-11-05 12:00:00Z], %{source_branch: "feature/x"})
+      on_main!(ctx, "e2e", "passed", ~U[2026-11-05 13:00:00Z], %{source_branch: nil})
+      stored_run(ctx.other, ctx.other_project, %{workflow: "deploy", source_branch: "other"})
+
+      assert WorkflowRuns.filter_values(ctx.project) == %{
+               workflows: ["ci", "e2e", "lint"],
+               environments: ["prod"],
+               branches: ["feature/x", "main"]
+             }
     end
   end
 end

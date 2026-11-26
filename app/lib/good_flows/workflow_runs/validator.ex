@@ -101,7 +101,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
   `nil`. `source_dirty` is `false` when the document sent `false`. `ci` is
   the document's `ci` object. `link_tickets` holds `links.tickets`
   ASCII-lowercased and `link_threads` holds `links.threads` as sent; both
-  are `[]` when absent.
+  are `[]` when absent. `failed_jobs` holds the `name` of each `failed` or
+  `timed_out` result, in result order with repeats; `parent_run_id` is the
+  calling run or `nil`.
   """
   @type columns :: %{
           run_id: String.t(),
@@ -119,7 +121,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
           ci: map() | nil,
           host: map(),
           link_tickets: [String.t()],
-          link_threads: [String.t()]
+          link_threads: [String.t()],
+          failed_jobs: [String.t()],
+          parent_run_id: String.t() | nil
         }
 
   @doc "Maximum object and array nesting of a workflow-run body."
@@ -346,7 +350,9 @@ defmodule GoodFlows.WorkflowRuns.Validator do
       ci: Map.get(document, "ci"),
       host: document["host"],
       link_tickets: document |> link_list("tickets") |> Enum.map(&String.downcase(&1, :ascii)),
-      link_threads: link_list(document, "threads")
+      link_threads: link_list(document, "threads"),
+      failed_jobs: for(result <- document["results"], failed_status?(result), do: result["name"]),
+      parent_run_id: Map.get(document, "parent_run_id")
     }
   end
 

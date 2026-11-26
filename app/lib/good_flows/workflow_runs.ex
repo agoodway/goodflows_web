@@ -34,8 +34,10 @@ defmodule GoodFlows.WorkflowRuns do
   A first insert whose `source.commit` is the head of a `draft` or `open`
   change request of the project recomputes that verdict in the same
   transaction (`GoodFlows.ChangeRequests.recompute_for_commit/3`) and
-  records a `workflow_run_stored` event for it. An exact retry records
-  nothing.
+  records a `workflow_run_stored` event for it. Every first insert also
+  sends `pg_notify('workflow_runs', ...)`, which
+  `GoodFlows.ProjectEvents.Listener` broadcasts on `topic/1` once the
+  insert commits. An exact retry records and sends nothing.
 
   Insert and comparison queries run with `log: false` so the document never
   reaches Ecto logs, and with the timeout
@@ -46,9 +48,11 @@ defmodule GoodFlows.WorkflowRuns do
   alias GoodFlows.Accounts.{Account, ApiKey}
   alias GoodFlows.ChangeRequests
   alias GoodFlows.JsonDocument
+  alias GoodFlows.ProjectEvents.Listener
   alias GoodFlows.Projects.Project
   alias GoodFlows.Repo
   alias GoodFlows.StorageErrors
+  alias GoodFlows.TestReports
   alias GoodFlows.TestReports.Report
   alias GoodFlows.WorkflowRuns.{Run, StorageError, Store, Validator}
 
@@ -74,8 +78,13 @@ defmodule GoodFlows.WorkflowRuns do
     :source_branch,
     :ci,
     :host,
+    :failed_jobs,
     :inserted_at
   ]
+
+  @list_fields @summary_fields ++ [:parent_run_id]
+
+  @filter_recent_window 500
 
   @cursor_time ~r/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\z/
 
@@ -125,6 +134,14 @@ defmodule GoodFlows.WorkflowRuns do
 
   def ingest(%Account{}, %Project{}, _api_key, _document), do: {:error, :not_found}
 
+  @doc """
+  The PubSub topic on which every node announces a first insert of a run of
+  the project as `{:workflow_run_stored, project_id, run_id}`. An exact
+  retry and an upload that rolls back announce nothing.
+  """
+  @spec topic(Ecto.UUID.t()) :: String.t()
+  def topic(project_id), do: "workflow_runs:" <> project_id
+
   @doc "The timeout for the insert and comparison queries, in milliseconds."
   @spec db_timeout_ms() :: pos_integer()
   def db_timeout_ms,
@@ -155,30 +172,168 @@ defmodule GoodFlows.WorkflowRuns do
   """
   @spec list_runs(Account.t(), Project.t(), map()) ::
           {:ok, run_page()} | {:error, :not_found | Ecto.Changeset.t()}
+  def list_runs(account, project, params), do: list_runs(account, project, params, [])
+
+  @doc """
+  `list_runs/3` with options the API never sets, for the dashboard:
+
+    * `fold_children: true` leaves out each run whose `parent_run_id` names
+      a run stored in the same project (`children/2` lists them under their
+      parent). A run whose parent is not stored is still listed. The keyset
+      order and the cursor are the same as without it.
+
+  Rows also carry `parent_run_id`, which the JSON summary does not render.
+  """
+  @spec list_runs(Account.t(), Project.t(), map(), keyword()) ::
+          {:ok, run_page()} | {:error, :not_found | Ecto.Changeset.t()}
   def list_runs(
         %Account{id: account_id},
         %Project{account_id: account_id, id: project_id},
-        params
+        params,
+        opts
       )
       when is_map(params) do
     with {:ok, filters} <- list_params(params) do
       runs =
-        Run
+        from(r in Run, as: :run)
         |> where(account_id: ^account_id, project_id: ^project_id)
         |> apply_filters(filters)
+        |> fold_children(Keyword.get(opts, :fold_children, false))
         |> after_cursor(filters.cursor)
         |> order_by([r], desc: r.started_at, desc: r.run_id)
         |> limit(^(filters.limit + 1))
-        |> select([r], struct(r, ^@summary_fields))
+        |> select([r], struct(r, ^@list_fields))
         |> Repo.all()
 
       {page, rest} = Enum.split(runs, filters.limit)
-      next_cursor = if rest != [], do: encode_cursor(List.last(page))
+      next_cursor = if rest != [], do: cursor(List.last(page))
       {:ok, %{runs: page, next_cursor: next_cursor}}
     end
   end
 
-  def list_runs(%Account{}, %Project{}, _params), do: {:error, :not_found}
+  def list_runs(%Account{}, %Project{}, _params, _opts), do: {:error, :not_found}
+
+  defp fold_children(query, false), do: query
+
+  defp fold_children(query, true) do
+    stored_parent =
+      from p in Run,
+        where:
+          p.account_id == parent_as(:run).account_id and
+            p.project_id == parent_as(:run).project_id and
+            p.run_id == parent_as(:run).parent_run_id,
+        select: 1
+
+    where(query, [r], is_nil(r.parent_run_id) or not exists(stored_parent))
+  end
+
+  @doc """
+  The runs of `project` that one of `parent_run_ids` called (their
+  `parent_run_id` is in the list), newest first, with the list columns
+  including `parent_run_id`. One query on the parent index.
+  """
+  @spec children(Project.t(), [Ecto.UUID.t()]) :: [Run.t()]
+  def children(%Project{}, []), do: []
+
+  def children(%Project{account_id: account_id, id: project_id}, parent_run_ids) do
+    Repo.all(
+      from r in Run,
+        where:
+          r.project_id == ^project_id and r.parent_run_id in ^parent_run_ids and
+            r.account_id == ^account_id,
+        order_by: [desc: r.started_at, desc: r.run_id],
+        select: struct(r, ^@list_fields)
+    )
+  end
+
+  @project_workflows_cte """
+  WITH RECURSIVE w(workflow) AS (
+    (SELECT workflow FROM workflow_runs
+     WHERE account_id = $1 AND project_id = $2 ORDER BY workflow LIMIT 1)
+    UNION ALL
+    SELECT (SELECT r.workflow FROM workflow_runs r
+            WHERE r.account_id = $1 AND r.project_id = $2 AND r.workflow > w.workflow
+            ORDER BY r.workflow LIMIT 1)
+    FROM w WHERE w.workflow IS NOT NULL
+  )
+  """
+
+  @latest_by_workflow_sql """
+  #{@project_workflows_cte}
+  SELECT l.* FROM w CROSS JOIN LATERAL (
+    SELECT #{Enum.map_join(@summary_fields, ", ", &"r.#{&1}")} FROM workflow_runs r
+    WHERE r.account_id = $1 AND r.project_id = $2 AND r.workflow = w.workflow
+      AND r.source_branch = $3
+    ORDER BY r.started_at DESC, r.run_id DESC
+    LIMIT 1
+  ) l
+  WHERE w.workflow IS NOT NULL
+  ORDER BY l.workflow
+  """
+
+  @doc """
+  The newest run of each workflow on `branch` (by `started_at`, then
+  `run_id`), dirty or not, with summary columns only, ordered by workflow.
+  The project overview's default branch health (design D6).
+  """
+  @spec latest_by_workflow_on_branch(Project.t(), String.t()) :: [Run.t()]
+  def latest_by_workflow_on_branch(%Project{account_id: account_id, id: project_id}, branch)
+      when is_binary(branch) do
+    %{columns: names, rows: rows} =
+      Repo.query!(
+        @latest_by_workflow_sql,
+        [Ecto.UUID.dump!(account_id), Ecto.UUID.dump!(project_id), branch]
+      )
+
+    Enum.map(rows, &Repo.load(Run, {names, &1}))
+  end
+
+  @workflows_sql """
+  #{@project_workflows_cte}
+  SELECT workflow FROM w WHERE workflow IS NOT NULL ORDER BY workflow
+  """
+
+  @doc """
+  The values the run list's filter controls offer (design D7): the
+  project's distinct workflows, and the distinct environments and branches
+  among its newest #{@filter_recent_window} runs, each sorted.
+  """
+  @spec filter_values(Project.t()) :: %{
+          workflows: [String.t()],
+          environments: [String.t()],
+          branches: [String.t()]
+        }
+  def filter_values(%Project{account_id: account_id, id: project_id}) do
+    %{rows: workflows} =
+      Repo.query!(@workflows_sql, [Ecto.UUID.dump!(account_id), Ecto.UUID.dump!(project_id)])
+
+    recent =
+      from r in Run,
+        where: r.account_id == ^account_id and r.project_id == ^project_id,
+        order_by: [desc: r.started_at, desc: r.run_id],
+        limit: @filter_recent_window,
+        select: %{branch: r.source_branch, environment: r.environment}
+
+    %{
+      workflows: List.flatten(workflows),
+      environments:
+        Repo.all(
+          from e in subquery(recent),
+            where: not is_nil(e.environment),
+            distinct: true,
+            order_by: e.environment,
+            select: e.environment
+        ),
+      branches:
+        Repo.all(
+          from b in subquery(recent),
+            where: not is_nil(b.branch),
+            distinct: true,
+            order_by: b.branch,
+            select: b.branch
+        )
+    }
+  end
 
   @doc """
   The newest run of each workflow on `commit` (by `started_at`, then
@@ -210,7 +365,10 @@ defmodule GoodFlows.WorkflowRuns do
     |> Repo.all()
   end
 
-  @doc "The summaries of the project's runs with `run_ids`, in no order."
+  @doc """
+  The summaries of the project's runs with `run_ids`, in no order, with
+  `parent_run_id`.
+  """
   @spec summaries(Project.t(), [Ecto.UUID.t()]) :: [Run.t()]
   def summaries(%Project{}, []), do: []
 
@@ -219,7 +377,7 @@ defmodule GoodFlows.WorkflowRuns do
       from r in Run,
         where:
           r.account_id == ^account_id and r.project_id == ^project_id and r.run_id in ^run_ids,
-        select: struct(r, ^@summary_fields)
+        select: struct(r, ^@list_fields)
     )
   end
 
@@ -254,16 +412,9 @@ defmodule GoodFlows.WorkflowRuns do
         {:error, :not_found}
 
       run ->
-        {:ok, %{run: run, test_reports: report_summaries(account_id, project_id, run_id)}}
+        {:ok,
+         %{run: run, test_reports: TestReports.report_summaries(account_id, project_id, run_id)}}
     end
-  end
-
-  defp report_summaries(account_id, project_id, run_id) do
-    Report
-    |> where(account_id: ^account_id, project_id: ^project_id, workflow_run_id: ^run_id)
-    |> order_by([r], asc: r.job, asc: r.report_id)
-    |> select([r], struct(r, ^Report.summary_fields()))
-    |> Repo.all()
   end
 
   defp list_params(params) do
@@ -408,7 +559,11 @@ defmodule GoodFlows.WorkflowRuns do
     end
   end
 
-  defp encode_cursor(%Run{started_at: started_at, run_id: run_id}) do
+  @doc """
+  The `list_runs/4` cursor that continues the list after `run`.
+  """
+  @spec cursor(Run.t()) :: String.t()
+  def cursor(%Run{started_at: started_at, run_id: run_id}) do
     Base.url_encode64("#{DateTime.to_iso8601(started_at)}|#{run_id}", padding: false)
   end
 
@@ -473,6 +628,8 @@ defmodule GoodFlows.WorkflowRuns do
            timeout: db_timeout_ms()
          ) do
       {1, [%Run{id: id}]} ->
+        notify_stored(row)
+
         ChangeRequests.recompute_for_commit(
           row.project_id,
           row.source_commit,
@@ -484,6 +641,16 @@ defmodule GoodFlows.WorkflowRuns do
       {0, []} ->
         compare(row)
     end
+  end
+
+  # Design D4: Postgres delivers it only if the insert commits, and
+  # `GoodFlows.ProjectEvents.Listener` broadcasts it on `topic/1`.
+  defp notify_stored(row) do
+    Repo.query!(
+      "SELECT pg_notify($1, $2)",
+      [Listener.runs_channel(), row.project_id <> ":" <> row.run_id],
+      log: false
+    )
   end
 
   defp run_event(row, api_key) do
@@ -537,6 +704,8 @@ defmodule GoodFlows.WorkflowRuns do
       host: columns.host,
       link_tickets: columns.link_tickets,
       link_threads: columns.link_threads,
+      failed_jobs: columns.failed_jobs,
+      parent_run_id: columns.parent_run_id,
       payload: payload,
       payload_digest: JsonDocument.digest(payload),
       inserted_at: DateTime.utc_now()

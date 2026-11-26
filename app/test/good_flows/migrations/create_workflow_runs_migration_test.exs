@@ -47,8 +47,10 @@ defmodule GoodFlows.Migrations.CreateWorkflowRunsMigrationTest do
            }
 
     refute Map.has_key?(columns, "updated_at")
-    refute Map.has_key?(columns, "parent_run_id")
     refute Map.has_key?(columns, "caller_job")
+
+    assert columns["failed_jobs"] == %{type: "ARRAY", precision: nil, nullable: "NO"}
+    assert columns["parent_run_id"] == %{type: "uuid", precision: nil, nullable: "YES"}
 
     # Added by AddEnvelopeColumnsToWorkflowRuns. `graph` stays in `payload`.
     assert columns["source_branch"] == %{type: "text", precision: nil, nullable: "YES"}
@@ -125,6 +127,12 @@ defmodule GoodFlows.Migrations.CreateWorkflowRunsMigrationTest do
              "(account_id, project_id, source_branch, started_at DESC, run_id DESC)"
 
     assert indexes[@api_key_index] =~ "(api_key_id)"
+
+    assert indexes["workflow_runs_workflow_branch_index"] =~
+             "(account_id, project_id, workflow, source_branch, started_at DESC, run_id DESC)"
+
+    assert indexes["workflow_runs_parent_index"] =~
+             "(project_id, parent_run_id) WHERE (parent_run_id IS NOT NULL)"
 
     for definition <- Map.values(indexes) do
       refute definition =~ "environment"

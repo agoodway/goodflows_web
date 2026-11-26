@@ -12,7 +12,7 @@ The `goodflows` CLI uploads every workflow run to the project, with its outcome,
   
   The slug on the Projects page links here. The project slug in change request breadcrumbs links here too.
 - **Run list** at `…/projects/:slug/runs`. It shows all runs newest first, 50 per page, with Load more.
-  - Filters are kept in the URL with the API's parameter names: workflow, outcome, branch, commit (a full SHA only), environment, CI event and ticket.
+  - Filters are kept in the URL with the API's parameter names: workflow, outcome, branch, commit (a full SHA only), environment, CI event and ticket, plus `thread_url` and `graph_sha256`, which are set through the URL (for example from a link) and shown as removable filters.
   - A failed run's row names its failed jobs.
   - A run called by another stored run is folded under its parent while no filter is active.
   - New runs appear without a reload.
@@ -54,7 +54,7 @@ The `goodflows` CLI uploads every workflow run to the project, with its outcome,
   - `ProjectLive.Index` and both change request pages get the new links.
   - No new sidebar item.
 - **API:** the `WorkflowRunSummary` OpenAPI schema gains `failed_jobs`. No request changes and no new endpoints.
-- **goodflows CLI:** no companion change expected, because the change only adds a field. Not yet checked: whether its history commands tolerate unknown summary fields. Task 2.4 checks this in agoodway/goodflows before the API change ships.
+- **goodflows CLI:** no companion change needed, because the change only adds a field. Checked in agoodway/goodflows at commit `fa3eb28998703429bb085c24f0fab9a89e7adb43`: `src/reporting/history_client.rs` (`page/1`, used by `history list`) reads list summaries as untyped `serde_json::Value` and checks only the keys it needs (`run_id`, `workflow`, `outcome`, `started_at`, `duration_ms`, `environment`, `source`), and `src/output/history.rs` renders only named fields. No summary type uses `deny_unknown_fields`, so an extra `failed_jobs` key is accepted.
 - **Out of scope:**
   - charts, comparing runs, graph and timeline views
   - failure messages, which the test report format doesn't carry, and logs, which aren't stored

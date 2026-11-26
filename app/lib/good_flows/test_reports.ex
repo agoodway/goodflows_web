@@ -30,8 +30,9 @@ defmodule GoodFlows.TestReports do
   error is logged by SQLSTATE and constraint name only and raised as
   `GoodFlows.TestReports.StorageError` (a 500), never with its message.
 
-  There is no query, update, delete or retention API, no aggregation across
-  partitions and no link to Spry runs. Insert and comparison queries run
+  `failed_tests/3` is the only read of report contents: it computes a run's
+  failed tests inside Postgres. There is no update, delete or retention API,
+  no aggregation across partitions and no link to Spry runs. Insert and comparison queries run
   with `log: false` so the document never reaches Ecto logs, and with the
   timeout `config :good_flows, :test_report_db_timeout_ms` (default 15,000).
   """
@@ -39,6 +40,7 @@ defmodule GoodFlows.TestReports do
 
   alias GoodFlows.Accounts.{Account, ApiKey}
   alias GoodFlows.Projects.Project
+  alias GoodFlows.Repo
   alias GoodFlows.StorageErrors
   alias GoodFlows.TestReports.{Document, Report, StorageError, Store, Validator}
 
@@ -95,6 +97,160 @@ defmodule GoodFlows.TestReports do
   @spec db_timeout_ms() :: pos_integer()
   def db_timeout_ms,
     do: Application.get_env(:good_flows, :test_report_db_timeout_ms, @default_db_timeout_ms)
+
+  @doc """
+  The failed tests of each test report of the run `run_id` in `project`
+  (design D5), computed inside Postgres: report records never reach the
+  application.
+
+  For each report, ordered by `job` then `report_id`, it returns the report
+  summary (`GoodFlows.TestReports.Report.summary_fields/0`) and:
+
+    * `failed`: the first 200 tests, by record order, whose final
+      execution (the last `test_finished` of the same `group`, `path` and
+      `name`) is `failed` or `errored`
+    * `failed_total`: how many such tests the report has
+    * `retried`: the first 200 tests, by record order, whose final
+      execution passed after an earlier one failed or errored
+    * `retried_total`: how many such tests the report has
+
+  Each test is a map of `group`, `path`, `name`, `file`, `line`,
+  `duration_us` and `outcome`. A `run_id` that is not a lowercase canonical
+  UUID, or a project of another account, has no reports. The query runs
+  with `log: false` and `db_timeout_ms/0`.
+  """
+  @spec failed_tests(Account.t(), Project.t(), term()) :: [
+          %{
+            report: Report.t(),
+            failed: [map()],
+            failed_total: non_neg_integer(),
+            retried: [map()],
+            retried_total: non_neg_integer()
+          }
+        ]
+  def failed_tests(
+        %Account{id: account_id},
+        %Project{account_id: account_id, id: project_id},
+        run_id
+      ) do
+    if GoodFlows.WorkflowRuns.Validator.canonical_uuid?(run_id) do
+      tests = failed_test_rows(account_id, project_id, run_id)
+
+      account_id
+      |> report_summaries(project_id, run_id)
+      |> Enum.map(&report_failures(&1, Map.get(tests, &1.id, [])))
+    else
+      []
+    end
+  end
+
+  def failed_tests(%Account{}, %Project{}, _run_id), do: []
+
+  @failed_limit 200
+
+  @failed_tests_sql """
+  WITH finished AS (
+    SELECT tr.id AS report_id, rec.r, rec.i
+    FROM test_reports tr
+    CROSS JOIN LATERAL jsonb_array_elements(tr.payload->'report'->'records')
+      WITH ORDINALITY AS rec(r, i)
+    WHERE tr.account_id = $1 AND tr.project_id = $2 AND tr.workflow_run_id = $3
+      AND rec.r->>'event' = 'test_finished'
+  ),
+  executions AS (
+    SELECT report_id, r, i,
+      row_number() OVER test_key_desc AS latest,
+      bool_or(r->>'outcome' IN ('failed', 'errored')) OVER test_key AS ever_failed
+    FROM finished
+    WINDOW test_key AS (PARTITION BY report_id, r->>'group', r->'path', r->>'name'),
+      test_key_desc AS (PARTITION BY report_id, r->>'group', r->'path', r->>'name' ORDER BY i DESC)
+  ),
+  final AS (
+    SELECT report_id, r, i, ever_failed FROM executions WHERE latest = 1
+  ),
+  classified AS (
+    SELECT report_id, r, i,
+      CASE WHEN r->>'outcome' IN ('failed', 'errored') THEN 'failed' ELSE 'retried' END AS kind
+    FROM final
+    WHERE r->>'outcome' IN ('failed', 'errored') OR (r->>'outcome' = 'passed' AND ever_failed)
+  ),
+  numbered AS (
+    SELECT report_id, kind, r, i,
+      row_number() OVER (PARTITION BY report_id, kind ORDER BY i) AS n,
+      count(*) OVER (PARTITION BY report_id, kind) AS total
+    FROM classified
+  ),
+  shown AS (
+    SELECT report_id, kind, r, i, total FROM numbered WHERE n <= $4
+  )
+  SELECT report_id::text, kind,
+    jsonb_build_object(
+      'group', r->'group', 'path', r->'path', 'name', r->'name', 'file', r->'file',
+      'line', r->'line', 'duration_us', r->'duration_us', 'outcome', r->'outcome'
+    ),
+    total
+  FROM shown
+  ORDER BY report_id, kind, i
+  """
+
+  defp failed_test_rows(account_id, project_id, run_id) do
+    %{rows: rows} =
+      Repo.query!(
+        @failed_tests_sql,
+        [
+          Ecto.UUID.dump!(account_id),
+          Ecto.UUID.dump!(project_id),
+          Ecto.UUID.dump!(run_id),
+          @failed_limit
+        ],
+        log: false,
+        timeout: db_timeout_ms()
+      )
+
+    Enum.group_by(rows, &hd/1, fn [_report_id, kind, test, total] ->
+      {kind, test_fields(test), total}
+    end)
+  end
+
+  defp report_failures(report, rows) do
+    %{
+      report: report,
+      failed: for({"failed", test, _total} <- rows, do: test),
+      failed_total: total(rows, "failed"),
+      retried: for({"retried", test, _total} <- rows, do: test),
+      retried_total: total(rows, "retried")
+    }
+  end
+
+  defp total(rows, kind),
+    do: Enum.find_value(rows, 0, fn {row_kind, _test, total} -> row_kind == kind && total end)
+
+  defp test_fields(test) do
+    %{
+      group: test["group"],
+      path: test["path"] || [],
+      name: test["name"],
+      file: test["file"],
+      line: test["line"],
+      duration_us: test["duration_us"],
+      outcome: test["outcome"]
+    }
+  end
+
+  @doc """
+  The summaries of the test reports whose `workflow_run_id` is `run_id` in
+  the account's project, ordered by `job` then `report_id`, without report
+  contents. Shared by `failed_tests/3` and
+  `GoodFlows.WorkflowRuns.get_run/3`.
+  """
+  @spec report_summaries(Ecto.UUID.t(), Ecto.UUID.t(), Ecto.UUID.t()) :: [Report.t()]
+  def report_summaries(account_id, project_id, run_id) do
+    Report
+    |> where(account_id: ^account_id, project_id: ^project_id, workflow_run_id: ^run_id)
+    |> order_by([r], asc: r.job, asc: r.report_id)
+    |> select([r], struct(r, ^Report.summary_fields()))
+    |> Repo.all()
+  end
 
   defp store(project, api_key, payload, status) do
     row = row(project, api_key, payload, status)

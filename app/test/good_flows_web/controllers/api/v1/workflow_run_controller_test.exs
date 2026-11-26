@@ -456,6 +456,48 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
       assert next["next_cursor"] == nil
     end
 
+    test "summaries name the failed and timed-out jobs, for sk_ and pk_ keys", ctx do
+      result = fn name, status ->
+        %{
+          "name" => name,
+          "status" => status,
+          "exit_code" => if(status == "passed", do: 0, else: 1),
+          "command" => "run #{name}",
+          "error" => nil,
+          "duration_ms" => 1,
+          "started" => true,
+          "blocked_ms" => 0,
+          "queued_ms" => 0
+        }
+      end
+
+      failed =
+        Map.merge(minimal(), %{
+          "run_id" => "ffffffff-ffff-4fff-8fff-ffffffffffff",
+          "started_at" => "2026-11-06T12:00:00Z",
+          "outcome" => "failed",
+          "results" => [
+            result.("compile", "passed"),
+            result.("test", "failed"),
+            result.("lint", "timed_out"),
+            result.("deploy", "cancelled")
+          ]
+        })
+
+      passed =
+        Map.put(minimal(), "results", [result.("compile", "passed"), result.("lint", "skipped")])
+
+      for document <- [failed, passed] do
+        ctx.sk_conn |> upload(ctx.project.slug, Jason.encode!(document)) |> json_response(201)
+      end
+
+      for conn <- [ctx.sk_conn, ctx.pk_conn] do
+        page = conn |> list(ctx.project.slug) |> json_response(200)
+        assert_schema(page, "WorkflowRunListResponse", spec())
+        assert Enum.map(page["data"], & &1["failed_jobs"]) == [["test", "lint"], []]
+      end
+    end
+
     test "equal start times order by run_id descending", ctx do
       low =
         minimal() |> Map.put("run_id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") |> Jason.encode!()
@@ -892,8 +934,8 @@ defmodule GoodFlowsWeb.Api.V1.WorkflowRunControllerTest do
 
         for summary <- page["data"] do
           assert Map.keys(summary) |> Enum.sort() ==
-                   ~w(ci duration_ms environment graph_sha256 host id inserted_at max_in_flight
-                      outcome parallelism run_id source started_at workflow)
+                   ~w(ci duration_ms environment failed_jobs graph_sha256 host id inserted_at
+                      max_in_flight outcome parallelism run_id source started_at workflow)
         end
       end
     end

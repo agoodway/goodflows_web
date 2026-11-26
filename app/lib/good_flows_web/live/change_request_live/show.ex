@@ -37,6 +37,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   use GoodFlowsWeb, :live_view
 
   import GoodFlowsWeb.ChangeRequestComponents
+  import GoodFlowsWeb.WorkflowRunComponents
 
   alias GoodFlows.Accounts
   alias GoodFlows.ChangeRequests
@@ -130,7 +131,10 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
          breadcrumbs: [
            %{label: "Dashboard", to: ~p"/dashboard/accounts/#{account.id}"},
            %{label: "Projects", to: projects},
-           %{label: project.slug},
+           %{
+             label: project.slug,
+             to: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}"
+           },
            %{
              label: "Change requests",
              to: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/change-requests"
@@ -343,7 +347,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             <p :if={@shown.reasons == []} id="no-reasons" class="text-sm">
               {if @change_request.state == "merged",
                 do: "Nothing blocked the merge",
-                else: "Nothing blocks merging"}{if @shown.head, do: " at commit #{short(@shown.head)}"}.
+                else: "Nothing blocks merging"}{if @shown.head,
+                do: " at commit #{short_sha(@shown.head)}"}.
             </p>
             <ol :if={@shown.reasons != []} id="reasons" class="space-y-3">
               <li
@@ -506,7 +511,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
           >
             <span id={"scenario-set-#{source}"}>
               Version {set["version"]} ·
-              <.tag>{short(set["digest"])}</.tag>
+              <.tag>{short_sha(set["digest"])}</.tag>
               · {set_status(source, set)}
             </span>
           </:item>
@@ -568,13 +573,13 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             empty={@evidence.runs == []}
           >
             <:col :let={run} label="Run">
-              <.tag>{short(run.run_id)}</.tag>
+              <.tag>{short_sha(run.run_id)}</.tag>
             </:col>
             <:col :let={run} label="Set">
               <span class="whitespace-nowrap">{set_version_label(run)}</span>
             </:col>
             <:col :let={run} label="Commit">
-              <.tag>{short(run.commit)}</.tag>
+              <.tag>{short_sha(run.commit)}</.tag>
             </:col>
             <:col :let={run} label="Finished">
               <span class="whitespace-nowrap font-mono text-xs">{format_time(run.finished_at)}</span>
@@ -610,7 +615,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             id="workflow-runs-summary"
             class="block text-right font-normal normal-case tracking-normal text-muted"
           >
-            {required_passed(@evidence.workflows)} · newest clean run of each workflow on {short(
+            {required_passed(@evidence.workflows)} · newest clean run of each workflow on {short_sha(
               @loaded.verdict.head
             )}
           </span>
@@ -627,14 +632,23 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         >
           <:col :let={row} label="Workflow">
             <span class="flex flex-col items-end gap-0.5 md:items-start">
-              <.tag>{row.workflow}</.tag>
+              <.link
+                :if={row.run}
+                id={"workflow-run-#{row.workflow}-link"}
+                navigate={run_path(@current_account, @project, row.run)}
+                class="ui-link"
+                aria-label={"Run of #{row.workflow}"}
+              >
+                <.tag>{row.workflow}</.tag>
+              </.link>
+              <.tag :if={!row.run}>{row.workflow}</.tag>
               <span class="text-xs text-muted">
                 {if row.required, do: "Required", else: "Not required"}
               </span>
             </span>
           </:col>
           <:col :let={row} label="Outcome">
-            <.status_badge kind={outcome_kind(row.run)}>{outcome_label(row.run)}</.status_badge>
+            <.outcome_badge outcome={row.run && row.run.outcome} />
           </:col>
           <:col :let={row} label="Started">
             <span :if={row.run} class="whitespace-nowrap font-mono text-xs">
@@ -643,12 +657,12 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
           </:col>
           <:col :let={row} label="Duration">
             <span :if={row.run} class="whitespace-nowrap font-mono text-xs">
-              {format_duration(row.run.duration_ms)}
+              {duration(row.run.duration_ms)}
             </span>
           </:col>
           <:col :let={row} label="Trigger">
             <span :if={row.run} class="flex flex-col items-end gap-0.5 md:items-start">
-              <span class="text-xs">{trigger(row.run.ci)}</span>
+              <span class="text-xs">{if row.run.ci, do: trigger(row.run.ci), else: "Local run"}</span>
               <.text_link
                 :if={ci_url(row.run.ci)}
                 id={"workflow-run-#{row.workflow}-ci"}
@@ -679,7 +693,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
       <.panel id="details-panel" title="Details" icon="hero-document-text">
         <.list>
           <:item title="Head">
-            <.tag :if={@change_request.head}>{short(@change_request.head)}</.tag>
+            <.tag :if={@change_request.head}>{short_sha(@change_request.head)}</.tag>
             <span :if={!@change_request.head} id="no-head" class="text-muted">No head yet</span>
           </:item>
           <:item title="Source branch">
@@ -714,7 +728,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
           <% @change_request.state == "merged" -> %>
             <.list>
               <:item title="Merged commit">
-                <.tag>{short(@change_request.merged_commit)}</.tag>
+                <.tag>{short_sha(@change_request.merged_commit)}</.tag>
               </:item>
               <:item title="Into">
                 <.tag>{@change_request.merged_target_branch}</.tag>
@@ -800,7 +814,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
           maxlength="10000"
         />
         <p class="mt-2 font-mono text-xs text-muted">
-          Answers head {short(@dialog.head) || "none"}
+          Answers head {short_sha(@dialog.head) || "none"}
         </p>
         <.dialog_actions>
           <.button type="button" variant="ghost" phx-click="cancel_answer">Cancel</.button>
@@ -1168,7 +1182,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
           </:trigger>
           <:title>Intent set v{@data["version"]}</:title>
           <:description>
-            {scenario_counts(@set.rows)} · digest {short(@data["digest"])}
+            {scenario_counts(@set.rows)} · digest {short_sha(@data["digest"])}
           </:description>
           <.form
             for={@form}
@@ -1222,12 +1236,12 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         <.fact label="Version" id={"qa-set-#{@source}-version"}>
           <span class="inline-flex flex-wrap items-center gap-1">
             <.tag>v{@data["version"]}</.tag>
-            <.tag>{short(@data["digest"])}</.tag>
+            <.tag>{short_sha(@data["digest"])}</.tag>
           </span>
         </.fact>
         <.fact :if={@source == "diff"} label="Revision" id="qa-set-diff-revision">
           <.tag :if={@version && @version.front_matter["revision"]}>
-            {short(@version.front_matter["revision"])}
+            {short_sha(@version.front_matter["revision"])}
           </.tag>
           <:sub>
             {if @data["graded"], do: "Names the head", else: "Does not name the head"}
@@ -1244,9 +1258,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         <.fact label="Results from" id={"qa-set-#{@source}-run"}>
           <span :if={!@set.run_id} class="text-muted">No counted run</span>
           <span :if={@set.run_id} class="inline-flex flex-wrap items-center gap-1">
-            <.tag>{short(@set.run_id)}</.tag>
+            <.tag>{short_sha(@set.run_id)}</.tag>
             <span :if={@set.run}>on</span>
-            <.tag :if={@set.run}>{short(@set.run.commit)}</.tag>
+            <.tag :if={@set.run}>{short_sha(@set.run.commit)}</.tag>
           </span>
           <:sub :if={@set.run}>
             Finished <span class="font-mono">{format_time(@set.run.finished_at)}</span>
@@ -1590,32 +1604,6 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     "#{passed} of #{length(required)} required passed"
   end
 
-  defp outcome_label(nil), do: "Missing"
-  defp outcome_label(run), do: run.outcome |> String.replace("_", " ") |> String.capitalize()
-
-  defp outcome_kind(%{outcome: "passed"}), do: "primary"
-  defp outcome_kind(%{outcome: "failed"}), do: "error"
-  defp outcome_kind(_run), do: "neutral"
-
-  defp format_duration(nil), do: nil
-  defp format_duration(ms) when ms < 1_000, do: "#{ms}ms"
-  defp format_duration(ms) when ms < 60_000, do: "#{Float.round(ms / 1_000, 1)}s"
-
-  defp format_duration(ms) do
-    seconds = div(ms, 1_000)
-    "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
-  end
-
-  defp trigger(nil), do: "Local run"
-
-  defp trigger(ci) do
-    event = ci["event"] || ci["provider"]
-    if ci["attempt"], do: "#{event} · attempt #{ci["attempt"]}", else: event
-  end
-
-  defp ci_url(%{"url" => url}) when is_binary(url), do: url
-  defp ci_url(_ci), do: nil
-
   defp door_label("one_way"), do: "One-way door"
   defp door_label("two_way"), do: "Two-way door"
   defp door_label(other), do: other
@@ -1642,8 +1630,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
 
   defp item_dom_id(item), do: "item-" <> String.replace(item.id, ":", "-")
 
-  defp short(nil), do: nil
-  defp short(sha), do: String.slice(sha, 0, 7)
+  defp run_path(account, project, run),
+    do: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/runs/#{run.run_id}"
 
   defp show_path(account, project, number),
     do: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/change-requests/#{number}"
@@ -1699,7 +1687,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     do: [line(set_title(source), [], context.names[source] && "#qa-set-#{source}")]
 
   defp subject_lines(%{"rule" => "scenario_set_approval", "subject" => [digest]}, context),
-    do: [line("Intent set, digest", [short(digest)], context.names["intent"] && "#qa-set-intent")]
+    do: [
+      line("Intent set, digest", [short_sha(digest)], context.names["intent"] && "#qa-set-intent")
+    ]
 
   defp subject_lines(%{"rule" => rule, "subject" => [number]}, context)
        when rule in ~w(parent_not_merged parent_closed),
@@ -1708,7 +1698,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   defp subject_lines(%{"rule" => rule, "subject" => [value]}, _context)
        when is_map_key(@subject_labels, rule) do
     {label, kind} = @subject_labels[rule]
-    [line(label, [if(kind == :sha, do: short(value), else: value)])]
+    [line(label, [if(kind == :sha, do: short_sha(value), else: value)])]
   end
 
   defp subject_lines(%{"subject" => subject}, _context), do: [line(nil, subject)]

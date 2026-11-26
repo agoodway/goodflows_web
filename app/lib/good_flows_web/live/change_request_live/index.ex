@@ -42,7 +42,10 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Index do
            breadcrumbs: [
              %{label: "Dashboard", to: ~p"/dashboard/accounts/#{account.id}"},
              %{label: "Projects", to: ~p"/dashboard/accounts/#{account.id}/projects"},
-             %{label: project.slug},
+             %{
+               label: project.slug,
+               to: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}"
+             },
              %{label: "Change requests"}
            ],
            refresh_scheduled: false

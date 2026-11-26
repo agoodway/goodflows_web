@@ -129,6 +129,93 @@ defmodule GoodFlows.ChangeRequestsTest do
     end
   end
 
+  describe "dashboard reads" do
+    alias GoodFlows.ChangeRequests.Verdict
+
+    defp force_state_and_verdict!(ctx, state, verdict_state, attrs \\ %{}) do
+      cr = create!(ctx, attrs)
+      Repo.update_all(from(c in ChangeRequest, where: c.id == ^cr.id), set: [state: state])
+      Repo.delete_all(from v in Verdict, where: v.change_request_id == ^cr.id)
+
+      if verdict_state do
+        %Verdict{}
+        |> Verdict.changeset(%{
+          change_request_id: cr.id,
+          state: verdict_state,
+          policy_version: 1,
+          reasons: [],
+          inputs: %{},
+          computed_at: DateTime.utc_now()
+        })
+        |> Repo.insert!()
+      end
+
+      cr
+    end
+
+    defp touch!(cr, updated_at),
+      do:
+        Repo.update_all(from(c in ChangeRequest, where: c.id == ^cr.id),
+          set: [updated_at: updated_at]
+        )
+
+    test "verdict_counts counts active change requests, a missing verdict as pending", ctx do
+      force_state_and_verdict!(ctx, "open", "blocked")
+      force_state_and_verdict!(ctx, "open", "blocked")
+      force_state_and_verdict!(ctx, "open", "mergeable")
+      force_state_and_verdict!(ctx, "draft", nil)
+      force_state_and_verdict!(ctx, "merged", "mergeable")
+      force_state_and_verdict!(ctx, "closed", "blocked")
+
+      assert ChangeRequests.verdict_counts(ctx.project) == %{
+               "mergeable" => 1,
+               "needs_review" => 0,
+               "blocked" => 2,
+               "pending" => 1
+             }
+
+      other = project_fixture(ctx.account)
+
+      assert ChangeRequests.verdict_counts(other) ==
+               %{"mergeable" => 0, "needs_review" => 0, "blocked" => 0, "pending" => 0}
+    end
+
+    test "recent_active orders active change requests by updated_at", ctx do
+      old = force_state_and_verdict!(ctx, "open", "blocked")
+      new = force_state_and_verdict!(ctx, "draft", nil)
+      merged = force_state_and_verdict!(ctx, "merged", "mergeable")
+      touch!(old, ~U[2026-11-01 10:00:00.000000Z])
+      touch!(new, ~U[2026-11-02 10:00:00.000000Z])
+      touch!(merged, ~U[2026-11-03 10:00:00.000000Z])
+
+      assert [first, second] = ChangeRequests.recent_active(ctx.project, 5)
+      assert {first.number, first.verdict} == {new.number, nil}
+      assert {second.number, second.verdict.state} == {old.number, "blocked"}
+      assert [%{number: number}] = ChangeRequests.recent_active(ctx.project, 1)
+      assert number == new.number
+    end
+
+    test "at_head finds the change requests whose head is the commit, in this project", ctx do
+      cr = create!(ctx) |> facts!(ctx, sha(1))
+      _elsewhere = create!(ctx, %{"source_branch" => "feat/other"}) |> facts!(ctx, sha(2))
+
+      other_project = project_fixture(ctx.account, %{default_branch: "main"})
+
+      {:ok, other} =
+        ChangeRequests.create(ctx.account, other_project, ctx.api_key, %{
+          "title" => "Other",
+          "source_branch" => "feat/login"
+        })
+
+      facts!(other, ctx, sha(1))
+
+      assert [%ChangeRequest{id: id}] = ChangeRequests.at_head(ctx.project, sha(1))
+      assert id == cr.id
+      assert ChangeRequests.at_head(ctx.project, sha(3)) == []
+      assert ChangeRequests.at_head(ctx.project, nil) == []
+    end
+  end
+
   describe "list/2" do
     test "pages by number descending and filters", ctx do
       [one, two, three] = for _ <- 1..3, do: create!(ctx)

@@ -135,7 +135,7 @@ A result with `child_run_id` SHALL link to that run's detail page when it is sto
 - **THEN** `call-suite` links to C's detail page
 
 ### Requirement: The detail page shows failed tests
-The detail page SHALL list, for each test report of the run, the tests whose final execution failed or errored, grouped by report job and partition, each with its group, path, name, file, line, duration and outcome. A test that failed or errored and later passed in the same report SHALL be listed apart as passed on retry and MUST NOT count as failed. Each report SHALL list at most 200 failed tests and say how many more there are.
+The detail page SHALL list, for each test report of the run, the tests whose final execution failed or errored, grouped by report job and partition, each with its group, path, name, file, line, duration and outcome. A test that failed or errored and later passed in the same report SHALL be listed apart as passed on retry and MUST NOT count as failed. Each report SHALL list at most 200 failed tests and at most 200 tests passed on retry, and say how many more of each there are.
 
 #### Scenario: Failed test
 - **WHEN** a report for job `test` has a `test_finished` for `GC.AlphaTest` `rejects bad input` in `test/gc/alpha_test.exs` line 42 with outcome `failed`
