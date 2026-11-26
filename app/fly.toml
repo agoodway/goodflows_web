@@ -12,7 +12,7 @@ kill_timeout = "60s"
   release_command = "/app/bin/migrate"
 
 [env]
-  PHX_HOST = "goodflows.fly.dev"
+  PHX_HOST = "app.goodflows.dev"
   PORT = "8080"
   # Fly Postgres and the private network are IPv6 only.
   ECTO_IPV6 = "true"
