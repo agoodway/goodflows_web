@@ -12,7 +12,9 @@ install:
     mix deps.get
     mix assets.setup
 
-deploy:
+# Deploy to Fly from app/ (one machine; release command is /app/bin/migrate)
+deploy *args:
+    fly deploy --ha=false {{args}}
 
 test:
     mix test
