@@ -5,8 +5,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Index do
   `draft` and `open`) lives in the URL. Every account member can view it;
   it writes nothing.
 
-  A merged row shows the verdict state at merge and marks a merge without
-  a mergeable verdict; a closed row shows no verdict. Every row's review
+  A merged row shows a verdict only when it merged without a mergeable
+  one (the verdict at merge, marked so); a closed row shows no verdict. Every row's review
   count is the stored verdict's (the merge report keeps none). The page
   refreshes 500 ms after a project event, keeping the filter and every
   loaded row.
@@ -122,7 +122,10 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Index do
         </:col>
         <:col :let={{_id, cr}} label="Verdict">
           <div
-            :if={cr.state != "closed"}
+            :if={
+              cr.state in ~w(draft open) or
+                (cr.state == "merged" and cr.merged_without_mergeable_verdict)
+            }
             id={"verdict-#{cr.number}"}
             class="flex flex-col items-start gap-1"
           >

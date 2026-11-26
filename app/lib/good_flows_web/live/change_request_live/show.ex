@@ -275,7 +275,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         <:subtitle>
           <span class="inline-flex flex-wrap items-center gap-2">
             <.state_badge state={@change_request.state} />
-            <span :if={@shown} id="header-verdict"><.verdict_badge state={@shown.state} /></span>
+            <span :if={@shown && @active?} id="header-verdict">
+              <.verdict_badge state={@shown.state} />
+            </span>
             <span class="inline-flex flex-wrap items-center gap-1">
               <.tag>{@change_request.source_branch}</.tag>
               <span aria-hidden="true">→</span>
@@ -295,7 +297,11 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         </.notice>
       </div>
 
-      <.panel id="verdict-panel" title="Verdict reasons" icon="hero-scale">
+      <.panel
+        id="verdict-panel"
+        title={if @change_request.state == "merged", do: "Verdict at merge", else: "Verdict reasons"}
+        icon="hero-scale"
+      >
         <%= cond do %>
           <% @change_request.state == "closed" -> %>
             <p class="text-sm text-muted">

@@ -165,6 +165,17 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
       assert verdict(ctx.sk_conn, ctx.slug, blocked.number)["state"] == "blocked"
       merge!(ctx, blocked.number)
+      clean = create!(ctx)
+      facts!(ctx.sk_conn, ctx.slug, clean.number, sha(2))
+      claims!(ctx.sk_conn, ctx.slug, clean.number, sha(2), %{"cr" => clean.number})
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{ctx.slug}/workflow-runs", run_document(sha(2), "passed"))
+        |> json_response(201)
+
+      assert verdict(ctx.sk_conn, ctx.slug, clean.number)["state"] == "mergeable"
+      merge!(ctx, clean.number)
       closed = create!(ctx)
       close!(ctx, closed.number)
       Repo.update_all(Verdict, set: [state: "mergeable", review: %{"items" => 2, "cleared" => 2}])
@@ -172,6 +183,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       {:ok, view, _html} = live(ctx.conn, list_path(ctx, "?state=merged"))
       assert has_element?(view, "#verdict-#{blocked.number}", "Blocked")
       assert has_element?(view, "#review-count-#{blocked.number}", "2 of 2")
+      refute has_element?(view, "#verdict-#{clean.number}")
 
       assert has_element?(
                view,
@@ -375,7 +387,8 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       refute has_element?(view, "button[phx-click=open_answer]")
       assert has_element?(view, "#merged-unmergeable-notice", "Needs review")
       assert has_element?(view, "#merged-without-lease", "Merged without a lease")
-      assert has_element?(view, "#header-verdict", "Needs review")
+      refute has_element?(view, "#header-verdict")
+      assert has_element?(view, "#verdict-panel", "Verdict at merge")
       assert has_element?(view, "#evidence-panel", "Last computed evidence")
       assert has_element?(view, "#evidence-frozen", "merged")
       assert has_element?(view, "#evidence-panel", "Review count")
