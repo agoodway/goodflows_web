@@ -184,6 +184,7 @@ Every one of these is in `GoodFlowsWeb.CoreComponents` unless noted.
 | `editor_dialog/1`, `dialog_actions/1` | Every modal form or message | `modal modal-open`, `modal-box`, `modal-action` |
 | `confirm_dialog/1` | Every one-action confirmation | `data-confirm`, a hand-built confirm modal |
 | `menu/1` | A menu opened from a trigger | Hand-written `dropdown` markup |
+| `popover/1` | A quick form or explanation beside a control, opened from its trigger | Hand-built floating panels, `dropdown` markup holding forms |
 | `code_block/1` | Shell commands and config files | `<pre>` blocks |
 | `empty_state/1` | Empty results, with the action that fills them | Centered placeholder text |
 | `form_actions/1` | The button row at the end of a form | A hand-written flex row |
@@ -222,6 +223,21 @@ event. Focus moves to the first control in the dialog body when it opens,
 stays inside the dialog, and returns to the control that opened it on close.
 The dialog header is a plain title bar; the window-control dots, glow border
 and scanlines of the GoodIssues modal are intentionally left out here.
+
+`popover/1` is the browser's own popover (`popover="auto"`): its trigger is
+an `outline` `<.button>` unless the `:trigger` slot names another variant,
+and it opens a `base-200` panel with a `--line` border, 2px radius and a menu
+shadow, with an optional `:title` (styled as a section heading) and muted
+`:description`. It opens and closes on the client (Escape and a click
+outside close it) and sits above everything. The `.Popover` hook places it
+on its `side` (`align` along it), flips it when there isn't room, keeps it
+inside the viewport, and points a small arrow at the trigger. Close it with
+`hide_popover/2` or a `"gf:popover"` push event. `for` lets one panel serve
+many controls. `on_open` and `on_close` push events so the server can load
+content only while it is open. A trigger with `refused` stays focusable but
+reads as disabled, is described by the reason, and opens nothing. Use
+`menu/1` for lists of links and `editor_dialog/1` for anything that needs
+the page's full attention.
 
 Shared components own presentation, while their callers own resource state,
 permissions, URLs, and event handling.

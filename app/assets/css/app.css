@@ -316,6 +316,50 @@
     background: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
 
+  /* Popovers (`popover/1`): a native top-layer panel the `.Popover` hook places beside its trigger. */
+  .popover-panel {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    max-width: calc(100vw - 1rem);
+    overflow: visible;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.125rem;
+    background: var(--color-base-200);
+    color: var(--color-base-content);
+    font-size: 0.8125rem;
+    box-shadow: 0 8px 24px oklch(0% 0 0 / 0.25);
+  }
+
+  .popover-arrow {
+    position: absolute;
+    display: none;
+    width: 0.625rem;
+    height: 0.625rem;
+    rotate: 45deg;
+    border: 0 solid var(--line);
+    background: var(--color-base-200);
+  }
+
+  .popover-panel[data-placement] > .popover-arrow { display: block; }
+  .popover-panel[data-placement="bottom"] > .popover-arrow { top: -6px; border-top-width: 1px; border-left-width: 1px; }
+  .popover-panel[data-placement="top"] > .popover-arrow { bottom: -6px; border-right-width: 1px; border-bottom-width: 1px; }
+  .popover-panel[data-placement="right"] > .popover-arrow { left: -6px; border-left-width: 1px; border-bottom-width: 1px; }
+  .popover-panel[data-placement="left"] > .popover-arrow { right: -6px; border-right-width: 1px; border-top-width: 1px; }
+
+  .popover-heading { display: grid; gap: 0.25rem; margin-bottom: 0.75rem; }
+
+  .popover-title {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .popover-description { color: var(--text-muted); }
+
   .skip-link {
     position: absolute;
     top: -4rem;
@@ -447,6 +491,7 @@
   .ui-button-danger:hover { background: color-mix(in oklch, var(--color-error) 20%, transparent); }
 
   .ui-button:disabled,
+  .ui-button[aria-disabled="true"],
   .ui-button.phx-submit-loading,
   .phx-submit-loading .ui-button { opacity: 0.5; cursor: not-allowed; }
 

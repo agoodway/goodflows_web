@@ -87,7 +87,9 @@ defmodule GoodFlowsWeb.CoreComponents do
       <.button phx-click="go" variant="primary">Send</.button>
       <.button navigate={~p"/"} variant="ghost" size="sm">Home</.button>
   """
-  attr :rest, :global, include: ~w(href navigate patch method download name value disabled type)
+  attr :rest, :global,
+    include: ~w(href navigate patch method download name value disabled type popovertarget)
+
   attr :class, :any, default: nil
   attr :variant, :string, default: "soft", values: ~w(primary soft ghost outline danger)
   attr :size, :string, default: "md", values: ~w(sm md)
@@ -731,6 +733,350 @@ defmodule GoodFlowsWeb.CoreComponents do
   end
 
   @doc """
+  Renders a popover: a button that opens a small panel of content beside it,
+  such as a quick form or details that don't need their own page or dialog.
+
+  It is the browser's own popover (`popover="auto"`), so it needs no server
+  round-trip to open or close: it opens from its trigger, closes on Escape,
+  a click outside or the trigger again, sits in the top layer (never clipped
+  by a scrolling pane or covered by a `z-index`), and the tab order runs from
+  the trigger into it. The `.Popover` hook places it on its `side` of the
+  trigger, flipping to the other side when there isn't room, and keeps it
+  there while the page scrolls or resizes or its content changes. A LiveView
+  patch keeps it open.
+
+  The panel's id is `id` and the trigger's `<id>-trigger`. Put `autofocus` on
+  a field inside to focus it on opening. To open or close it from a binding,
+  use `show_popover/2`, `hide_popover/2` or `toggle_popover/2`, such as
+  `phx-click={hide_popover("key-note")}` on a Cancel button; from the server,
+  `push_event(socket, "gf:popover", %{id: "key-note", action: "hide"})`, such
+  as after a save succeeds (so a form with errors stays open).
+
+  To have the server follow the panel, give `on_open` and/or `on_close`:
+  every time the panel actually opens or closes (from its trigger, Escape,
+  a click outside, another popover opening or a binding), the hook pushes
+  that event with no payload, to the LiveView or LiveComponent holding the
+  `target` selector's element (or the panel's own). A nested popover's
+  `toggle` and hide command bubble through this panel and are ignored. A
+  panel still open when the LiveView reconnects pushes `on_open` again.
+  Popovers without them push nothing. Use it to load content only while the
+  panel is open.
+
+  Use `menu/1` for a list of navigation links; use this for anything with a
+  form or explanation in it.
+
+  ## Examples
+
+      <.popover id="key-note">
+        <:trigger size="sm">Add note</:trigger>
+        <:title>Key note</:title>
+        <:description>Shown to everyone who can see this key.</:description>
+        <.form for={@form} phx-submit="save_note">
+          <.input field={@form[:note]} type="textarea" label="Note" autofocus />
+          <.button variant="primary" size="sm">Save note</.button>
+        </.form>
+      </.popover>
+
+      <.popover id="run-help" side="right" align="start">
+        <:trigger variant="ghost" size="sm" aria-label="About required workflows">
+          <.icon name="hero-information-circle" />
+        </:trigger>
+        A required workflow must pass before a change request can merge.
+      </.popover>
+  """
+  attr :id, :string, required: true, doc: "the panel's id; the trigger's is `<id>-trigger`"
+
+  attr :side, :string,
+    default: "bottom",
+    values: ~w(top right bottom left),
+    doc: "the side of the trigger the panel opens on, when there is room"
+
+  attr :align, :string,
+    default: "center",
+    values: ~w(start center end),
+    doc: "the panel's alignment with the trigger along that side"
+
+  attr :class, :any, default: "w-72", doc: "classes added to the panel's, such as a width"
+
+  attr :width, :string,
+    default: nil,
+    values: [nil, "trigger"],
+    doc: "`\"trigger\"` sizes the panel to the trigger's width, as a field's dropdown"
+
+  attr :arrow, :boolean,
+    default: true,
+    doc: "whether an arrow points from the panel at the trigger"
+
+  attr :for, :string,
+    default: nil,
+    doc:
+      "the id of a control elsewhere the panel opens beside, in place of its own trigger: " <>
+        "one panel shared by many controls, opened with a `\"gf:popover\"` push event"
+
+  attr :on_open, :string,
+    default: nil,
+    doc: "an event pushed (no payload) each time the panel opens; nil pushes nothing"
+
+  attr :on_close, :string,
+    default: nil,
+    doc: "an event pushed (no payload) each time the panel closes; nil pushes nothing"
+
+  attr :show_on_mount, :boolean,
+    default: false,
+    doc:
+      "open the panel as soon as it is added, for a panel the server renders only " <>
+        "while it should be open"
+
+  attr :restore_focus, :boolean,
+    default: false,
+    doc:
+      "when the panel closes and focus is inside it or lost to the page, focus " <>
+        "returns to its trigger. A click that already moved focus elsewhere keeps it"
+
+  attr :target, :string,
+    default: nil,
+    doc:
+      "a query selector of an element in the LiveView or LiveComponent that receives " <>
+        "`on_open` and `on_close`; default the panel's own"
+
+  attr :rest, :global, doc: "attributes added to the panel"
+
+  slot :trigger, doc: "the trigger button's label (required without `for`)" do
+    attr :variant, :string, doc: "a `button/1` variant; default `outline`"
+    attr :size, :string, doc: "a `button/1` size"
+    attr :icon, :string, doc: "a `button/1` leading icon"
+    attr :class, :any, doc: "classes added to the button's, for layout only"
+    attr :disabled, :boolean
+
+    attr :refused, :string,
+      doc:
+        "why the panel can't open right now: the trigger stays focusable but reads as " <>
+          "disabled, is described by the reason, and opens nothing"
+
+    attr :title, :string, doc: "the button's tooltip"
+    attr :"aria-label", :string
+    attr :describedby, :string, doc: "the id of text that further describes the trigger"
+  end
+
+  slot :title, doc: "the panel's heading, which also names it"
+  slot :description, doc: "a muted line under the title"
+  slot :inner_block
+
+  def popover(assigns) do
+    trigger = List.first(assigns.trigger)
+    refused = trigger && trigger[:refused]
+
+    assigns =
+      assign(assigns,
+        trigger: trigger,
+        refused: refused,
+        trigger_attrs:
+          trigger &&
+            assigns_to_attributes(trigger, [
+              :variant,
+              :size,
+              :icon,
+              :class,
+              :refused,
+              :describedby
+            ]),
+        trigger_describedby:
+          [refused && "#{assigns.id}-refused", trigger && trigger[:describedby]]
+          |> Enum.filter(& &1)
+          |> Enum.join(" ")
+      )
+
+    ~H"""
+    <.button
+      :if={@for == nil}
+      id={"#{@id}-trigger"}
+      type="button"
+      popovertarget={!@refused && @id}
+      aria-haspopup="dialog"
+      aria-disabled={@refused && "true"}
+      aria-describedby={@trigger_describedby != "" && @trigger_describedby}
+      variant={@trigger[:variant] || "outline"}
+      size={@trigger[:size] || "md"}
+      icon={@trigger[:icon]}
+      class={@trigger[:class]}
+      {@trigger_attrs}
+    >
+      {render_slot(@trigger)}
+    </.button>
+    <span :if={@for == nil && @refused} id={"#{@id}-refused"} class="sr-only">{@refused}</span>
+    <div
+      id={@id}
+      popover="auto"
+      role="dialog"
+      aria-labelledby={@title != [] && "#{@id}-title"}
+      aria-describedby={@description != [] && "#{@id}-description"}
+      phx-hook=".Popover"
+      phx-mounted={JS.ignore_attributes(["style", "data-placement"])}
+      data-trigger={@for || "#{@id}-trigger"}
+      data-side={@side}
+      data-align={@align}
+      data-width={@width}
+      data-on-open={@on_open}
+      data-on-close={@on_close}
+      data-show-on-mount={@show_on_mount && "true"}
+      data-restore-focus={@restore_focus && "true"}
+      data-event-target={@target}
+      class={["popover-panel", @class]}
+      {@rest}
+    >
+      <span
+        :if={@arrow}
+        id={"#{@id}-arrow"}
+        class="popover-arrow"
+        aria-hidden="true"
+        phx-mounted={JS.ignore_attributes("style")}
+      />
+      <div :if={@title != [] || @description != []} class="popover-heading">
+        <p :if={@title != []} id={"#{@id}-title"} class="popover-title">{render_slot(@title)}</p>
+        <p :if={@description != []} id={"#{@id}-description"} class="popover-description">
+          {render_slot(@description)}
+        </p>
+      </div>
+      {render_slot(@inner_block)}
+    </div>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".Popover">
+      // Places a native popover beside its trigger and reports opens and
+      // closes to the server when asked. Events from a nested popover are
+      // ignored, so closing one inside cannot close or report its parent.
+      const GAP = 8
+      const MARGIN = 8
+      const ARROW = 10
+      const ARROW_INSET = 12
+      const OPPOSITE = {top: "bottom", bottom: "top", left: "right", right: "left"}
+
+      export default {
+        mounted() {
+          this.place = () => this.position()
+          this.resizeObserver = new ResizeObserver(this.place)
+          // The browser closes the popover on Escape; a window-level binding (a dialog's) must not also run.
+          this.onEscape = (e) => {
+            if (e.key === "Escape" && this.el.matches(":popover-open")) e.stopPropagation()
+          }
+
+          this.el.addEventListener("beforetoggle", (e) => {
+            if (e.target !== this.el) return
+            if (e.newState === "open") requestAnimationFrame(this.place)
+          })
+          this.el.addEventListener("toggle", (e) => {
+            if (e.target !== this.el) return
+            if (e.newState === "open") { this.position(); this.follow() }
+            else { this.unfollow(); this.restoreFocus() }
+            this.report(e.newState)
+          })
+          this.el.addEventListener("gf:popover", (e) => {
+            if (e.target !== this.el) return
+            this.act(e.detail.action)
+          })
+          this.handleEvent("gf:popover", ({id, action}) => {
+            if (id === this.el.id) this.act(action)
+          })
+
+          if (this.el.dataset.showOnMount === "true") this.act("show")
+          else this.reportIfOpen()
+        },
+
+        // Reconnects remount the server while the browser may keep the popover open.
+        reconnected() { this.reportIfOpen() },
+
+        destroyed() { this.unfollow() },
+
+        reportIfOpen() {
+          if (this.el.matches(":popover-open")) this.report("open")
+        },
+
+        report(state) {
+          const {onOpen, onClose, eventTarget} = this.el.dataset
+          const event = state === "open" ? onOpen : onClose
+          if (!event) return
+          this.pushEventTo(eventTarget || this.el, event, {})
+        },
+
+        // Restore lost focus without overriding a deliberate click on another control.
+        restoreFocus() {
+          if (this.el.dataset.restoreFocus !== "true") return
+          const active = document.activeElement
+          if (active && active !== document.body && !this.el.contains(active)) return
+          const trigger = document.getElementById(this.el.dataset.trigger)
+          if (trigger) trigger.focus()
+        },
+
+        act(action) {
+          if (action === "show") this.el.showPopover()
+          else if (action === "hide") this.el.hidePopover()
+          else this.el.togglePopover()
+        },
+
+        follow() {
+          window.addEventListener("scroll", this.place, {capture: true, passive: true})
+          window.addEventListener("resize", this.place, {passive: true})
+          document.addEventListener("keydown", this.onEscape)
+          this.resizeObserver.observe(this.el)
+        },
+
+        unfollow() {
+          window.removeEventListener("scroll", this.place, {capture: true})
+          window.removeEventListener("resize", this.place)
+          document.removeEventListener("keydown", this.onEscape)
+          this.resizeObserver.disconnect()
+        },
+
+        position() {
+          const trigger = document.getElementById(this.el.dataset.trigger)
+          if (!trigger || !this.el.matches(":popover-open")) return
+
+          const t = trigger.getBoundingClientRect()
+          if (this.el.dataset.width === "trigger") this.el.style.width = `${Math.round(t.width)}px`
+          const p = this.el.getBoundingClientRect()
+          const vw = document.documentElement.clientWidth
+          const vh = document.documentElement.clientHeight
+          const room = {top: t.top, bottom: vh - t.bottom, left: t.left, right: vw - t.right}
+          const needed = (side) => (side === "top" || side === "bottom" ? p.height : p.width) + GAP + MARGIN
+
+          const {side: preferred, align} = this.el.dataset
+          let side = preferred
+          if (room[side] < needed(side) && room[OPPOSITE[side]] > room[side]) side = OPPOSITE[side]
+
+          const vertical = side === "top" || side === "bottom"
+          const along = (start, size, panel) =>
+            align === "start" ? start : align === "end" ? start + size - panel : start + (size - panel) / 2
+          const clamp = (value, size, max) => Math.min(Math.max(value, MARGIN), Math.max(MARGIN, max - size - MARGIN))
+
+          const top = vertical
+            ? (side === "bottom" ? t.bottom + GAP : t.top - GAP - p.height)
+            : along(t.top, t.height, p.height)
+          const left = vertical
+            ? along(t.left, t.width, p.width)
+            : (side === "right" ? t.right + GAP : t.left - GAP - p.width)
+
+          const placedTop = Math.round(clamp(top, p.height, vh))
+          const placedLeft = Math.round(clamp(left, p.width, vw))
+          this.el.style.top = `${placedTop}px`
+          this.el.style.left = `${placedLeft}px`
+          this.el.dataset.placement = side
+
+          const arrow = document.getElementById(`${this.el.id}-arrow`)
+          if (!arrow) return
+          const pointAt = (middle, start, size) =>
+            Math.round(Math.min(Math.max(middle - start - ARROW / 2, ARROW_INSET), size - ARROW_INSET - ARROW))
+          // Arrow offsets start inside the border, at clientLeft and clientTop.
+          arrow.style.left = vertical
+            ? `${pointAt(t.left + t.width / 2, placedLeft + this.el.clientLeft, p.width)}px`
+            : ""
+          arrow.style.top = vertical
+            ? ""
+            : `${pointAt(t.top + t.height / 2, placedTop + this.el.clientTop, p.height)}px`
+        },
+      }
+    </script>
+    """
+  end
+
+  @doc """
   Renders a [Heroicon](https://heroicons.com). This is the only way to
   render an icon.
 
@@ -969,6 +1315,18 @@ defmodule GoodFlowsWeb.CoreComponents do
          "opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"}
     )
   end
+
+  @doc "Opens the `popover/1` with the given id."
+  def show_popover(js \\ %JS{}, id), do: popover_action(js, id, "show")
+
+  @doc "Closes the `popover/1` with the given id."
+  def hide_popover(js \\ %JS{}, id), do: popover_action(js, id, "hide")
+
+  @doc "Opens the `popover/1` with the given id, or closes it if it is open."
+  def toggle_popover(js \\ %JS{}, id), do: popover_action(js, id, "toggle")
+
+  defp popover_action(js, id, action),
+    do: JS.dispatch(js, "gf:popover", to: "##{id}", detail: %{action: action})
 
   @doc """
   Translates an error message using gettext.
