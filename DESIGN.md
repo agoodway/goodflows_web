@@ -237,6 +237,20 @@ the data table border style, and links in the `text_link/1` color. Use it for
 any rendered Markdown; never `raw/1` anything that has not passed the
 sanitizer.
 
+Image evidence (an unexpired artifact whose content type is `image/*`) shows
+as an `.evidence-gallery` strip: each `.evidence-shot` is an `.evidence-thumb`
+button with its file name under it as an `.evidence-caption`, next to a
+download icon link. Other evidence is a list of names, each with the same
+download icon (`hero-arrow-down-tray`, labelled `Download <path>`, in the
+neutral `.evidence-download` color rather than the link accent) or
+`Expired`. Neither shows content
+types or sizes. The strip scrolls sideways with scroll snap, and its
+thumbnails are narrow enough that the next one peeks in at 400px. A
+thumbnail opens an `editor_dialog/1` of size `lg` showing the image whole
+(`.evidence-full`), with previous and next buttons, the arrow keys, and an
+`Open original` link. Images load through the members-only download route;
+the CSP allows the object store's origin in `img-src` for its redirect.
+
 A dialog is rendered conditionally by its LiveView and names the event that
 closes it. Escape, the ESC button and a click outside the panel all push that
 event. Focus moves to the first control in the dialog body when it opens,

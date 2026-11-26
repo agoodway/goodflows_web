@@ -10,4 +10,12 @@ defmodule GoodFlowsWeb.Plugs.CSPNonceTest do
     assert policy =~ "script-src 'self' 'nonce-#{nonce}'"
     assert html_response(conn, 200) =~ ~s(nonce="#{nonce}")
   end
+
+  test "images may load from the object store, where evidence downloads redirect", %{conn: conn} do
+    conn = get(conn, ~p"/")
+
+    [policy] = get_resp_header(conn, "content-security-policy")
+
+    assert policy =~ "img-src 'self' https://fake-object-store.invalid data: blob:;"
+  end
 end

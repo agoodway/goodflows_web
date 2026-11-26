@@ -129,7 +129,7 @@ defmodule GoodFlowsWeb.CoreComponents do
 
       <.text_link navigate={~p"/users/register"}>Sign up</.text_link>
   """
-  attr :rest, :global, include: ~w(href navigate patch method download)
+  attr :rest, :global, include: ~w(href navigate patch method download target rel title)
   slot :inner_block, required: true
 
   def text_link(assigns) do
@@ -1151,7 +1151,7 @@ defmodule GoodFlowsWeb.CoreComponents do
   attr :id, :string, required: true
   attr :title, :string, required: true
   attr :on_cancel, :string, required: true, doc: "the event pushed when the dialog is dismissed"
-  attr :size, :string, default: "md", values: ~w(sm md)
+  attr :size, :string, default: "md", values: ~w(sm md lg), doc: "lg fits a full-size image"
   slot :inner_block, required: true
 
   def editor_dialog(assigns) do

@@ -1433,24 +1433,113 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       assert has_element?(view, "#{dom}-failed-step", "Failed at 3")
       assert has_element?(view, "#{dom}-reason", ~s(Banner read "Saved"))
 
-      shot_item = "#{dom}-evidence-shot-3"
-      assert has_element?(view, "#{dom}-evidence > li:first-child#{shot_item}")
-      assert has_element?(view, shot_item, "shots/shot-3.png")
-      assert has_element?(view, shot_item, "image/png")
-      assert has_element?(view, shot_item, "117.2 KiB")
-
       href =
         "/dashboard/accounts/#{ctx.account.id}/projects/#{ctx.slug}/verify-runs/#{run.run_id}/artifacts/shot-3"
 
-      assert has_element?(view, "#{shot_item}-download[href='#{href}']", "Download")
+      shot_item = "#{dom}-gallery > li#{dom}-evidence-shot-3"
+      assert has_element?(view, "#{shot_item} img[src='#{href}']")
 
-      log_item = "#{dom}-evidence-log-1"
+      assert has_element?(
+               view,
+               "#{shot_item} a#scenario-diff-retry-backoff-evidence-shot-3-download[href='#{href}'][aria-label='Download shots/shot-3.png']"
+             )
+
+      assert has_element?(
+               view,
+               "#{shot_item} .evidence-caption[title='shots/shot-3.png']",
+               "shot-3.png"
+             )
+
+      refute render(view) =~ "image/png"
+      refute render(view) =~ "KiB"
+
+      log_item = "#{dom}-evidence > li#{dom}-evidence-log-1"
       assert has_element?(view, log_item, "Expired")
       refute has_element?(view, "#{log_item} a")
 
       assert has_element?(view, "#scenario-diff-D2-reason", "it broke")
       refute has_element?(view, "#scenario-diff-D2-failed-step")
       refute html =~ "X-Amz-Signature"
+    end
+
+    test "image evidence shows as thumbnails that open a lightbox stepping through them", ctx do
+      cr = head_cr!(ctx)
+      fm = diff_fm(sha(1), [scenario("retry-backoff")])
+      digest = upload_set!(ctx, cr.number, set_body_with_cli_digests(fm))
+
+      [before, after_, expired_shot, log] = ["before", "after", "gone", "log"]
+
+      failed = result("retry-backoff", "failed", ["shot-1", "log-1", "shot-2", "shot-3"])
+
+      run =
+        final_run!(ctx, digest, "diff", [failed], [
+          {artifact("shot-1", before), before},
+          {artifact("log-1", log, "text/plain"), log},
+          {artifact("shot-2", after_), after_},
+          {artifact("shot-3", expired_shot), expired_shot}
+        ])
+
+      Repo.update_all(
+        from(a in GoodFlows.VerifyRuns.Artifact,
+          where: a.verify_run_id == ^run.id and a.artifact_id == "shot-3"
+        ),
+        set: [expired: true]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      toggle(view, "diff", "retry-backoff")
+
+      dom = "#scenario-diff-retry-backoff"
+
+      path =
+        &"/dashboard/accounts/#{ctx.account.id}/projects/#{ctx.slug}/verify-runs/#{run.run_id}/artifacts/#{&1}"
+
+      assert has_element?(
+               view,
+               "#{dom}-gallery li:nth-child(1) img[src='#{path.("shot-1")}']"
+             )
+
+      assert has_element?(
+               view,
+               "#{dom}-gallery li:nth-child(2) img[src='#{path.("shot-2")}']"
+             )
+
+      refute has_element?(view, "#{dom}-gallery li:nth-child(3)")
+      refute has_element?(view, "#{dom}-thumb-log-1")
+      refute has_element?(view, "#evidence-lightbox")
+
+      view |> element("#{dom}-thumb-shot-2") |> render_click()
+      assert has_element?(view, "#evidence-lightbox-image[src='#{path.("shot-2")}']")
+      assert has_element?(view, "#evidence-lightbox-position", "2 of 2")
+
+      view |> element("#evidence-lightbox-next") |> render_click()
+      assert has_element?(view, "#evidence-lightbox-image[src='#{path.("shot-1")}']")
+
+      render_keydown(view, "evidence_key", %{"key" => "ArrowLeft"})
+      assert has_element?(view, "#evidence-lightbox-image[src='#{path.("shot-2")}']")
+      assert has_element?(view, "#evidence-lightbox-original[href='#{path.("shot-2")}']")
+
+      render_keydown(view, "close_evidence", %{"key" => "Escape"})
+      refute has_element?(view, "#evidence-lightbox")
+      refute render(view) =~ "X-Amz-Signature"
+    end
+
+    test "a scenario with no image evidence has no thumbnails", ctx do
+      cr = head_cr!(ctx)
+      fm = diff_fm(sha(1), [scenario("retry-backoff")])
+      digest = upload_set!(ctx, cr.number, set_body_with_cli_digests(fm))
+      log = "log"
+
+      _run =
+        final_run!(ctx, digest, "diff", [result("retry-backoff", "failed", ["log-1"])], [
+          {artifact("log-1", log, "text/plain"), log}
+        ])
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      toggle(view, "diff", "retry-backoff")
+
+      assert has_element?(view, "#scenario-diff-retry-backoff-evidence-log-1")
+      refute has_element?(view, "#scenario-diff-retry-backoff-gallery")
     end
 
     test "a set with no counted run shows the text and says there is no result", ctx do
@@ -1493,7 +1582,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
       assert has_element?(
                view,
-               "#scenario-diff-D1-evidence-shot-1-download[href$='/verify-runs/#{run.run_id}/artifacts/shot-1']"
+               "#scenario-diff-D1-thumb-shot-1 img[src$='/verify-runs/#{run.run_id}/artifacts/shot-1']"
              )
     end
   end

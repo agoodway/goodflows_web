@@ -98,6 +98,18 @@ defmodule GoodFlows.Caches.ObjectStore do
   @spec configured?() :: boolean()
   def configured?, do: config()[:bucket] not in [nil, ""]
 
+  @doc """
+  The origin (scheme, host and port) presigned GET URLs point at, or nil
+  when no bucket is configured. Pages allow it as an image source.
+  """
+  @spec download_origin() :: String.t() | nil
+  def download_origin do
+    if configured?() do
+      uri = URI.parse(presign_get("origin", %{expires_in: 60}))
+      URI.to_string(%{uri | userinfo: nil, path: nil, query: nil, fragment: nil})
+    end
+  end
+
   @doc "The configured store settings."
   @spec config() :: keyword()
   def config, do: Application.get_env(:good_flows, __MODULE__, [])

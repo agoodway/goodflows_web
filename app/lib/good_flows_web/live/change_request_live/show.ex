@@ -27,7 +27,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   with `GoodFlowsWeb.ScenarioMarkdown` only when its digest matches, and
   from the run the row's result came from, the failed step, reason and
   evidence, each linking to `GoodFlowsWeb.VerifyRunArtifactController`
-  unless expired. Open rows are kept in `open_scenarios`.
+  unless expired. Open rows are kept in `open_scenarios`. Image evidence
+  also shows as a strip of thumbnails; a thumbnail opens the `lightbox`,
+  which steps through that scenario's images.
 
   The page reloads 500 ms after a project event, keeping an open answer
   dialog and the open scenario rows.
@@ -139,7 +141,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
          dialog: nil,
          answer_form: nil,
          set_form: set_form(),
-         open_scenarios: MapSet.new()
+         open_scenarios: MapSet.new(),
+         lightbox: nil
        )
        |> load(change_request)}
     else
@@ -765,6 +768,12 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
       </.panel>
     </div>
 
+    <.evidence_lightbox
+      :if={@lightbox}
+      box={@lightbox}
+      artifact_path={&artifact_path(@current_account, @project, &1, &2)}
+    />
+
     <.editor_dialog
       :if={@dialog}
       id="answer-dialog"
@@ -862,6 +871,33 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
 
     {:noreply, assign(socket, open_scenarios: open)}
   end
+
+  def handle_event(
+        "open_evidence",
+        %{"source" => source, "id" => id, "artifact" => artifact_id},
+        socket
+      ) do
+    with {run_id, images} <- scenario_images(socket.assigns.evidence, source, id),
+         index when is_integer(index) <- Enum.find_index(images, &(&1.id == artifact_id)) do
+      {:noreply, assign(socket, lightbox: %{run_id: run_id, images: images, index: index})}
+    else
+      _not_an_image -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("step_evidence", %{"by" => by}, socket),
+    do: {:noreply, step_lightbox(socket, String.to_integer(by))}
+
+  def handle_event("evidence_key", %{"key" => "ArrowLeft"}, socket),
+    do: {:noreply, step_lightbox(socket, -1)}
+
+  def handle_event("evidence_key", %{"key" => "ArrowRight"}, socket),
+    do: {:noreply, step_lightbox(socket, 1)}
+
+  def handle_event("evidence_key", _params, socket), do: {:noreply, socket}
+
+  def handle_event("close_evidence", _params, socket),
+    do: {:noreply, assign(socket, lightbox: nil)}
 
   def handle_event("cancel_answer", _params, socket),
     do: {:noreply, close_dialog(socket)}
@@ -990,6 +1026,26 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         evidence.sets,
         &(&1.source == source and Enum.any?(&1.rows, fn r -> r["id"] == id end))
       )
+
+  defp scenario_images(nil, _source, _id), do: nil
+
+  defp scenario_images(evidence, source, id) do
+    with %{} = set <- Enum.find(evidence.sets, &(&1.source == source)),
+         %{"run_id" => run_id} when is_binary(run_id) <- Enum.find(set.rows, &(&1["id"] == id)),
+         %{evidence: artifacts} <- get_in(set.details, [run_id, id]) do
+      {run_id, Enum.filter(artifacts, &image?/1)}
+    else
+      _no_result -> nil
+    end
+  end
+
+  defp image?(artifact),
+    do: !artifact.expired and String.starts_with?(artifact.content_type || "", "image/")
+
+  defp step_lightbox(%{assigns: %{lightbox: nil}} = socket, _by), do: socket
+
+  defp step_lightbox(%{assigns: %{lightbox: box}} = socket, by),
+    do: assign(socket, lightbox: %{box | index: Integer.mod(box.index + by, length(box.images))})
 
   defp close_dialog(socket), do: assign(socket, dialog: nil, answer_form: nil)
 
@@ -1251,6 +1307,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
           <.scenario_details
             dom_id={"scenario-#{@source}-#{row["id"]}"}
             section={@set.sections[row["id"]]}
+            source={@source}
+            scenario_id={row["id"]}
             run_id={row["run_id"]}
             detail={row["run_id"] && get_in(@set.details, [row["run_id"], row["id"]])}
             artifact_path={@artifact_path}
@@ -1278,12 +1336,19 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   end
 
   attr :dom_id, :string, required: true
+  attr :source, :string, required: true
+  attr :scenario_id, :string, required: true
   attr :section, :any, required: true, doc: "`{:ok, text}`, `:unmatched` or nil"
   attr :run_id, :string, default: nil
   attr :detail, :map, default: nil
   attr :artifact_path, :any, required: true
 
   defp scenario_details(assigns) do
+    {images, files} =
+      Enum.split_with((assigns.detail && assigns.detail.evidence) || [], &image?/1)
+
+    assigns = assign(assigns, images: images, files: files)
+
     ~H"""
     <div class="space-y-4">
       <%= case @section do %>
@@ -1317,25 +1382,59 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
           >
             No failed step, reason or evidence recorded.
           </p>
-          <ul :if={@detail.evidence != []} id={"#{@dom_id}-evidence"} class="space-y-1">
+          <ul :if={@images != []} id={"#{@dom_id}-gallery"} class="evidence-gallery">
             <li
-              :for={artifact <- @detail.evidence}
+              :for={artifact <- @images}
+              id={"#{@dom_id}-evidence-#{artifact.id}"}
+              class="evidence-shot"
+            >
+              <button
+                id={"#{@dom_id}-thumb-#{artifact.id}"}
+                type="button"
+                class="evidence-thumb"
+                phx-click="open_evidence"
+                phx-value-source={@source}
+                phx-value-id={@scenario_id}
+                phx-value-artifact={artifact.id}
+                aria-label={"View #{artifact.path || artifact.id} full size"}
+              >
+                <img src={@artifact_path.(@run_id, artifact.id)} alt="" loading="lazy" />
+              </button>
+              <span class="flex items-center justify-between gap-1">
+                <span class="evidence-caption" title={artifact.path || artifact.id}>
+                  {Path.basename(artifact.path || artifact.id)}
+                </span>
+                <.link
+                  id={"#{@dom_id}-evidence-#{artifact.id}-download"}
+                  class="evidence-download"
+                  href={@artifact_path.(@run_id, artifact.id)}
+                  aria-label={"Download #{artifact.path || artifact.id}"}
+                  title="Download"
+                >
+                  <.icon name="hero-arrow-down-tray" class="size-4" />
+                </.link>
+              </span>
+            </li>
+          </ul>
+          <ul :if={@files != []} id={"#{@dom_id}-evidence"} class="space-y-1">
+            <li
+              :for={artifact <- @files}
               id={"#{@dom_id}-evidence-#{artifact.id}"}
               class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
             >
               <span class="min-w-0 break-all font-mono">{artifact.path || artifact.id}</span>
-              <span class="text-muted">{artifact.content_type}</span>
-              <span class="whitespace-nowrap font-mono text-muted">{format_size(artifact.size)}</span>
               <%= if artifact.expired do %>
                 <.status_badge>Expired</.status_badge>
               <% else %>
-                <.text_link
+                <.link
                   id={"#{@dom_id}-evidence-#{artifact.id}-download"}
+                  class="evidence-download"
                   href={@artifact_path.(@run_id, artifact.id)}
                   aria-label={"Download #{artifact.path || artifact.id}"}
+                  title="Download"
                 >
-                  Download
-                </.text_link>
+                  <.icon name="hero-arrow-down-tray" class="size-4" />
+                </.link>
               <% end %>
             </li>
           </ul>
@@ -1345,10 +1444,68 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     """
   end
 
-  defp format_size(nil), do: nil
-  defp format_size(bytes) when bytes < 1_024, do: "#{bytes} B"
-  defp format_size(bytes) when bytes < 1_048_576, do: "#{Float.round(bytes / 1_024, 1)} KiB"
-  defp format_size(bytes), do: "#{Float.round(bytes / 1_048_576, 1)} MiB"
+  attr :box, :map, required: true
+  attr :artifact_path, :any, required: true
+
+  defp evidence_lightbox(assigns) do
+    assigns =
+      assign(assigns,
+        image: Enum.at(assigns.box.images, assigns.box.index),
+        count: length(assigns.box.images)
+      )
+
+    assigns = assign(assigns, name: assigns.image.path || assigns.image.id)
+
+    ~H"""
+    <.editor_dialog id="evidence-lightbox" title={@name} on_cancel="close_evidence" size="lg">
+      <div phx-window-keydown="evidence_key" class="space-y-4">
+        <img
+          id="evidence-lightbox-image"
+          src={@artifact_path.(@box.run_id, @image.id)}
+          alt={@name}
+          class="evidence-full"
+        />
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div :if={@count > 1} class="flex items-center gap-2">
+            <.button
+              id="evidence-lightbox-prev"
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon="hero-chevron-left"
+              phx-click="step_evidence"
+              phx-value-by="-1"
+            >
+              <span class="sr-only">Previous image</span>
+            </.button>
+            <span id="evidence-lightbox-position" class="font-mono text-xs text-muted">
+              {@box.index + 1} of {@count}
+            </span>
+            <.button
+              id="evidence-lightbox-next"
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon="hero-chevron-right"
+              phx-click="step_evidence"
+              phx-value-by="1"
+            >
+              <span class="sr-only">Next image</span>
+            </.button>
+          </div>
+          <.text_link
+            id="evidence-lightbox-original"
+            href={@artifact_path.(@box.run_id, @image.id)}
+            target="_blank"
+            rel="noopener"
+          >
+            Open original
+          </.text_link>
+        </div>
+      </div>
+    </.editor_dialog>
+    """
+  end
 
   defp artifact_path(account, project, run_id, artifact_id),
     do:
