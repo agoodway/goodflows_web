@@ -261,15 +261,17 @@ defmodule GoodFlows.ScenarioSets do
 
   @doc """
   Records a decision (`:approve` or `:reject`) on the current intent
-  digest from a normalized body (`digest`, and `note` for a rejection).
-  The current policy's `scenarios.approver` decides who may. Returns
+  digest from a normalized body (`digest`, and `note` for a rejection),
+  by `account_user` through `api_key` (channel `cli`), or with a nil key
+  from the dashboard (channel `dashboard`). The current policy's
+  `scenarios.approver` decides who may. Returns
   `{:ok, :created, decision}`, `{:ok, :retry, decision}` when the digest's
   latest decision was made by the same membership with the same `decision`
   and `note`, or `:not_active`, `:forbidden`, `{:invalid_body, errors}` or
   `:stale_digest` (checked in that order, so a change request that is not
   live is always `:not_active`).
   """
-  @spec decide(ChangeRequest.t(), AccountUser.t(), ApiKey.t(), :approve | :reject, term()) ::
+  @spec decide(ChangeRequest.t(), AccountUser.t(), ApiKey.t() | nil, :approve | :reject, term()) ::
           {:ok, :created | :retry, Decision.t()}
           | {:error,
              :forbidden | :not_active | :stale_digest | {:invalid_body, DocumentErrors.errors()}}
@@ -336,7 +338,12 @@ defmodule GoodFlows.ScenarioSets do
   defp decide_locked(change_request, account_user, api_key, attrs) do
     change_request = ChangeRequests.lock_active(change_request)
 
-    case record_decision(change_request, Review.cli_actor(account_user, api_key), attrs) do
+    actor =
+      if api_key,
+        do: Review.cli_actor(account_user, api_key),
+        else: Review.dashboard_actor(account_user)
+
+    case record_decision(change_request, actor, attrs) do
       {:created, decision} ->
         ChangeRequests.recompute(change_request)
         {:created, decision}

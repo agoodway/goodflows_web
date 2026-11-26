@@ -938,6 +938,72 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       assert has_element?(view, decisions, "Check Retry-After")
     end
 
+    test "a member approves the intent set version shown, and a new version asks again", ctx do
+      cr = head!(ctx, %{"change_id" => "add-export"})
+      v1 = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      assert has_element?(view, "#qa-set-intent-decision option[value=approve]", "Approve v1")
+      view |> form("#qa-set-intent-decide", %{"answer" => "approve"}) |> render_change()
+      assert has_element?(view, "#set-decision-dialog", "1 must scenario")
+      assert has_element?(view, "#set-decision-dialog", short_id(v1))
+      view |> form("#set-decision-form", %{}) |> render_submit()
+
+      assert has_element?(view, "#qa-set-intent-status", "Approved")
+      refute has_element?(view, "#qa-set-intent-decide")
+      assert has_element?(view, "#qa-set-intent-decisions", "Approved by #{ctx.user.email}")
+      assert has_element?(view, "#qa-set-intent-decisions", "dashboard")
+      assert [%{decision: "approve", channel: "dashboard"}] = ScenarioSets.decisions(cr, v1)
+
+      _v2 =
+        set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1"), scenario("S2")])))
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      assert has_element?(view, "#qa-set-intent-status", "Not approved")
+      assert has_element?(view, "#qa-set-intent-decision option[value=approve]", "Approve v2")
+    end
+
+    test "rejecting needs a note, and a set replaced mid-dialog is not decided", ctx do
+      cr = head!(ctx, %{"change_id" => "add-export"})
+      v1 = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      view |> form("#qa-set-intent-decide", %{"answer" => "reject"}) |> render_change()
+      view |> form("#set-decision-form", %{"answer" => %{"note" => " "}}) |> render_submit()
+      assert has_element?(view, "#set-decision-dialog", "Write a note")
+      assert ScenarioSets.decisions(cr, v1) == []
+
+      _v2 = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S2")])))
+
+      view
+      |> form("#set-decision-form", %{"answer" => %{"note" => "Too thin"}})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error", "The scenario set changed")
+      assert ScenarioSets.decisions(cr, v1) == []
+      assert has_element?(view, "#qa-set-intent-decision option[value=approve]", "Approve v2")
+    end
+
+    test "a member the approver rule excludes sees who may approve instead", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{"scenarios" => %{"approver" => "other_member"}})
+      {_key, token} = api_key_fixture(ctx.membership, %{type: :private})
+      author = api_conn(token)
+      number = create_cr(author, ctx.slug, %{"change_id" => "add-export"})["number"]
+
+      _ =
+        author
+        |> post_json(
+          cr_path(ctx.slug, number, "/scenario-sets"),
+          set_body(intent_fm("add-export"))
+        )
+        |> json_response(201)
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, number))
+
+      refute has_element?(view, "#qa-set-intent-decide")
+      assert has_element?(view, "#qa-set-intent-who", "Another member must approve this set")
+    end
+
     test "a graded intent set with only a dirty run shows No result", ctx do
       policy!(ctx.sk_conn, ctx.slug, %{
         "scenarios" => %{"require_approved_intent" => true, "approver" => "any"}

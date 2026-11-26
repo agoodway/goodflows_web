@@ -3,9 +3,9 @@ defmodule GoodFlows.ScenarioSets.Decision do
   One `approve` or `reject` decision on a scenario set digest of a change
   request, with the membership and key that made it, the `note` (null for
   approvals), the time and the `channel` (`cli` for every decision made
-  through the API). The integer id orders decisions. Intent digests take
-  decisions through the approval routes and `scenario_set_approval`
-  answers; diff digests only through `diff_set_weakened` answers. The
+  through the API, `dashboard` for one made signed in). The integer id
+  orders decisions. Intent digests take decisions through the approval
+  routes, the dashboard's QA panel and `scenario_set_approval` answers; diff digests only through `diff_set_weakened` answers. The
   digest names the source, since `source` is part of the hashed bytes.
   """
   use Ecto.Schema
