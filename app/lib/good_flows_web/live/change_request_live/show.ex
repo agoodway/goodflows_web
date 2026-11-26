@@ -18,7 +18,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   is bound to the head the page showed. Actions a member may not take,
   under the policy's `scenarios.approver`, are hidden, and the domain
   refuses them anyway. On the QA panel, a member the approver rule allows
-  approves or rejects the intent set version shown, bound to its digest
+  approves or rejects the intent set version shown from a popover, bound
+  to its digest
   (`GoodFlows.ScenarioSets.decide/5` with no key, channel `dashboard`).
 
   The page reloads 500 ms after a project event, keeping an open answer
@@ -126,8 +127,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
          ],
          refresh_scheduled: false,
          dialog: nil,
-         set_dialog: nil,
-         answer_form: nil
+         answer_form: nil,
+         set_form: set_form()
        )
        |> load(change_request)}
     else
@@ -522,11 +523,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
             :for={set <- @evidence.sets}
             set={set}
             emails={@emails}
-            decide={
-              if @active? and set.source == "intent" and !@set_dialog,
-                do: decide_state(@may_approve?, set)
-            }
+            decide={if @active? and set.source == "intent", do: decide_state(@may_approve?, set)}
             who={who_may_answer(@approver)}
+            form={@set_form}
           />
         </div>
         <div id="verify-runs-section" class="mt-8 space-y-3">
@@ -781,94 +780,28 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         </.dialog_actions>
       </.form>
     </.editor_dialog>
-
-    <.editor_dialog
-      :if={@set_dialog}
-      id="set-decision-dialog"
-      title={"#{answer_label(@set_dialog.answer)} intent set v#{@set_dialog.version}"}
-      on_cancel="cancel_set_decision"
-    >
-      <.form for={@answer_form} id="set-decision-form" phx-submit="submit_set_decision">
-        <p class="mb-4 break-words text-sm">
-          {if @set_dialog.answer == "approve",
-            do: "Approve this exact version of the intent set:",
-            else: "Reject this exact version of the intent set:"}
-          {@set_dialog.counts}.
-        </p>
-        <.input
-          :if={@set_dialog.answer == "reject"}
-          field={@answer_form[:note]}
-          type="textarea"
-          label="Note"
-          maxlength="10000"
-        />
-        <p class="mt-2 font-mono text-xs text-muted">
-          Version v{@set_dialog.version} · digest {short(@set_dialog.digest)}
-        </p>
-        <.dialog_actions>
-          <.button type="button" variant="ghost" phx-click="cancel_set_decision">Cancel</.button>
-          <.button
-            id="set-decision-confirm"
-            type="submit"
-            variant="primary"
-            phx-disable-with="Saving…"
-          >
-            {answer_label(@set_dialog.answer)}
-          </.button>
-        </.dialog_actions>
-      </.form>
-    </.editor_dialog>
     """
   end
 
   @impl true
-  def handle_event("open_set_decision", %{"answer" => answer, "digest" => digest}, socket)
+  def handle_event("decide_set", %{"digest" => digest, "answer" => answer} = params, socket)
       when answer in ~w(approve reject) do
-    set =
-      socket.assigns.evidence && Enum.find(socket.assigns.evidence.sets, &(&1.source == "intent"))
+    %{evidence: evidence, current_scope: scope, current_account: account} = socket.assigns
+    set = evidence && Enum.find(evidence.sets, &(&1.source == "intent"))
+    note = get_in(params, ["set_decision", "note"]) || ""
 
-    if set && set.set["digest"] == digest &&
-         decide_state(socket.assigns.may_approve?, set) == :may do
-      {:noreply,
-       assign(socket,
-         set_dialog: %{
-           answer: answer,
-           digest: digest,
-           version: set.set["version"],
-           counts: scenario_counts(set.rows)
-         },
-         answer_form: to_form(%{"note" => ""}, as: :answer)
-       )}
+    with true <- set != nil and decide_state(socket.assigns.may_approve?, set) == :may,
+         membership when membership != nil <- Accounts.get_account_user(scope.user, account) do
+      body =
+        if answer == "reject",
+          do: %{"digest" => digest, "note" => note},
+          else: %{"digest" => digest}
+
+      socket.assigns.change_request
+      |> ScenarioSets.decide(membership, nil, String.to_existing_atom(answer), body)
+      |> set_decided(answer, note, socket)
     else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("open_set_decision", _params, socket), do: {:noreply, socket}
-
-  def handle_event("cancel_set_decision", _params, socket),
-    do: {:noreply, close_dialog(socket)}
-
-  def handle_event("submit_set_decision", _params, %{assigns: %{set_dialog: nil}} = socket),
-    do: {:noreply, socket}
-
-  def handle_event("submit_set_decision", params, socket) do
-    params = params["answer"] || %{}
-    %{set_dialog: dialog, current_scope: scope, current_account: account} = socket.assigns
-
-    case Accounts.get_account_user(scope.user, account) do
-      nil ->
-        {:noreply, socket |> close_dialog() |> put_flash(:error, error_message(:forbidden))}
-
-      membership ->
-        body =
-          if dialog.answer == "reject",
-            do: %{"digest" => dialog.digest, "note" => params["note"]},
-            else: %{"digest" => dialog.digest}
-
-        socket.assigns.change_request
-        |> ScenarioSets.decide(membership, nil, String.to_existing_atom(dialog.answer), body)
-        |> set_decided(dialog, params, socket)
+      _refused -> {:noreply, socket}
     end
   end
 
@@ -949,23 +882,35 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     {:noreply, socket |> close_dialog() |> put_flash(:error, error_message(reason)) |> reload()}
   end
 
-  defp set_decided({:ok, _status, _decision}, dialog, _params, socket) do
-    message =
-      if dialog.answer == "approve", do: "Intent set approved.", else: "Intent set rejected."
+  defp set_decided({:ok, _status, _decision}, answer, _note, socket) do
+    message = if answer == "approve", do: "Intent set approved.", else: "Intent set rejected."
 
-    {:noreply, socket |> close_dialog() |> put_flash(:info, message) |> reload()}
+    {:noreply,
+     socket
+     |> assign(set_form: set_form())
+     |> hide_set_popover()
+     |> put_flash(:info, message)
+     |> reload()}
   end
 
-  defp set_decided({:error, {:invalid_body, _errors}}, _dialog, params, socket) do
+  defp set_decided({:error, {:invalid_body, _errors}}, _answer, note, socket) do
     error = {:note, {"Write a note so the author knows what to change.", []}}
 
     {:noreply,
-     assign(socket, answer_form: to_form(params, as: :answer, errors: [error], action: :validate))}
+     assign(socket,
+       set_form: to_form(%{"note" => note}, as: :set_decision, errors: [error], action: :validate)
+     )}
   end
 
-  defp set_decided({:error, reason}, _dialog, _params, socket) do
-    {:noreply, socket |> close_dialog() |> put_flash(:error, error_message(reason)) |> reload()}
+  defp set_decided({:error, reason}, _answer, _note, socket) do
+    {:noreply,
+     socket |> hide_set_popover() |> put_flash(:error, error_message(reason)) |> reload()}
   end
+
+  defp set_form, do: to_form(%{"note" => ""}, as: :set_decision)
+
+  defp hide_set_popover(socket),
+    do: push_event(socket, "gf:popover", %{id: "qa-set-intent-decide", action: "hide"})
 
   defp decide_state(may_approve?, %{set: data}) do
     cond do
@@ -997,7 +942,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   defp error_message(:not_active), do: "This change request is no longer open"
   defp error_message(:stale_digest), do: "The scenario set changed. Review the items again."
 
-  defp close_dialog(socket), do: assign(socket, dialog: nil, set_dialog: nil, answer_form: nil)
+  defp close_dialog(socket), do: assign(socket, dialog: nil, answer_form: nil)
 
   @impl true
   def handle_info({:project_event, _project_id}, %{assigns: %{refresh_scheduled: true}} = socket),
@@ -1083,6 +1028,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   attr :emails, :map, required: true
   attr :decide, :atom, default: nil, doc: "`:may`, `:may_not` or nil (no control)"
   attr :who, :string, default: nil
+  attr :form, :any, default: nil
 
   defp qa_set(assigns) do
     assigns =
@@ -1104,24 +1050,57 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         <span :if={!@data["graded"]} id={"qa-set-#{@source}-not-graded"}>
           <.status_badge dot>Not graded</.status_badge>
         </span>
-        <form
-          :if={@decide == :may}
-          id={"qa-set-#{@source}-decide"}
-          phx-change="open_set_decision"
-          class="[&_.ui-field]:m-0"
-        >
-          <input type="hidden" name="digest" value={@data["digest"]} />
-          <.input
-            type="select"
-            id={"qa-set-#{@source}-decision"}
-            name="answer"
-            value=""
-            prompt={"Decide on v#{@data["version"]}…"}
-            options={[{"Approve v#{@data["version"]}", "approve"}, {"Reject", "reject"}]}
-            class="ui-input ui-select h-7 min-h-0 w-auto py-0 pl-2.5 pr-8 text-xs"
-            aria-label={"Decide on intent set v#{@data["version"]}"}
-          />
-        </form>
+        <.popover :if={@decide == :may} id={"qa-set-#{@source}-decide"} align="start" class="w-80">
+          <:trigger
+            size="sm"
+            variant="soft"
+            icon="hero-check-badge"
+            class="h-6 min-h-0 px-2 py-0 text-xs"
+          >
+            Decide on v{@data["version"]}
+          </:trigger>
+          <:title>Intent set v{@data["version"]}</:title>
+          <:description>
+            {scenario_counts(@set.rows)} · digest {short(@data["digest"])}
+          </:description>
+          <.form
+            for={@form}
+            id={"qa-set-#{@source}-decision-form"}
+            phx-submit="decide_set"
+            class="space-y-3"
+          >
+            <input type="hidden" name="digest" value={@data["digest"]} />
+            <.input
+              field={@form[:note]}
+              type="textarea"
+              label="Note (needed to reject)"
+              maxlength="10000"
+            />
+            <div class="flex justify-end gap-2">
+              <.button
+                id={"qa-set-#{@source}-reject"}
+                type="submit"
+                name="answer"
+                value="reject"
+                variant="ghost"
+                size="sm"
+              >
+                Reject
+              </.button>
+              <.button
+                id={"qa-set-#{@source}-approve"}
+                type="submit"
+                name="answer"
+                value="approve"
+                variant="primary"
+                size="sm"
+                phx-disable-with="Saving…"
+              >
+                Approve v{@data["version"]}
+              </.button>
+            </div>
+          </.form>
+        </.popover>
         <span :if={@decide == :may_not} id={"qa-set-#{@source}-who"} class="text-xs text-muted">
           {@who}
         </span>

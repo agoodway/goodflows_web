@@ -970,11 +970,13 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       v1 = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
 
-      assert has_element?(view, "#qa-set-intent-decision option[value=approve]", "Approve v1")
-      view |> form("#qa-set-intent-decide", %{"answer" => "approve"}) |> render_change()
-      assert has_element?(view, "#set-decision-dialog", "1 must scenario")
-      assert has_element?(view, "#set-decision-dialog", short_id(v1))
-      view |> form("#set-decision-form", %{}) |> render_submit()
+      assert has_element?(view, "#qa-set-intent-decide-trigger", "Decide on v1")
+      assert has_element?(view, "#qa-set-intent-decide", "1 must scenario")
+      assert has_element?(view, "#qa-set-intent-decide", short_id(v1))
+
+      view
+      |> form("#qa-set-intent-decision-form")
+      |> render_submit(%{"answer" => "approve"})
 
       assert has_element?(view, "#qa-set-intent-status", "Approved")
       refute has_element?(view, "#qa-set-intent-decide")
@@ -987,28 +989,33 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
       assert has_element?(view, "#qa-set-intent-status", "Not approved")
-      assert has_element?(view, "#qa-set-intent-decision option[value=approve]", "Approve v2")
+      assert has_element?(view, "#qa-set-intent-approve", "Approve v2")
     end
 
-    test "rejecting needs a note, and a set replaced mid-dialog is not decided", ctx do
+    test "rejecting needs a note, and a set replaced while open is not decided", ctx do
       cr = head!(ctx, %{"change_id" => "add-export"})
       v1 = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S1")])))
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
 
-      view |> form("#qa-set-intent-decide", %{"answer" => "reject"}) |> render_change()
-      view |> form("#set-decision-form", %{"answer" => %{"note" => " "}}) |> render_submit()
-      assert has_element?(view, "#set-decision-dialog", "Write a note")
+      view
+      |> form("#qa-set-intent-decision-form", %{"set_decision" => %{"note" => " "}})
+      |> render_submit(%{"answer" => "reject"})
+
+      assert has_element?(view, "#qa-set-intent-decide", "Write a note")
       assert ScenarioSets.decisions(cr, v1) == []
 
       _v2 = set!(ctx, cr.number, set_body(intent_fm("add-export", [scenario("S2")])))
 
-      view
-      |> form("#set-decision-form", %{"answer" => %{"note" => "Too thin"}})
-      |> render_submit()
+      # The popover still holds v1's digest, as a page that hasn't reloaded yet would.
+      render_submit(view, "decide_set", %{
+        "answer" => "reject",
+        "digest" => v1,
+        "set_decision" => %{"note" => "Too thin"}
+      })
 
       assert has_element?(view, "#flash-error", "The scenario set changed")
       assert ScenarioSets.decisions(cr, v1) == []
-      assert has_element?(view, "#qa-set-intent-decision option[value=approve]", "Approve v2")
+      assert has_element?(view, "#qa-set-intent-approve", "Approve v2")
     end
 
     test "a member the approver rule excludes sees who may approve instead", ctx do
