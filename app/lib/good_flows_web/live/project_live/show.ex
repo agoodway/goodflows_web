@@ -91,6 +91,19 @@ defmodule GoodFlowsWeb.ProjectLive.Show do
         <:subtitle>
           Default branch <code id="project-default-branch">{@project.default_branch}</code>
         </:subtitle>
+        <:actions>
+          <.button
+            id="review-policy-link"
+            variant="outline"
+            size="sm"
+            icon="hero-scale"
+            navigate={
+              ~p"/dashboard/accounts/#{@current_account.id}/projects/#{@project.slug}/review-policy"
+            }
+          >
+            Review policy
+          </.button>
+        </:actions>
       </.header>
 
       <.panel id="change-requests-card" title="Change requests" icon="hero-arrows-right-left">

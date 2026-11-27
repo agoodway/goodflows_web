@@ -385,7 +385,15 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
               </li>
             </ol>
             <p class="mt-4 font-mono text-xs text-muted">
-              Policy version {@shown.policy_version}
+              <.link
+                id="verdict-policy-link"
+                navigate={
+                  ~p"/dashboard/accounts/#{@current_account.id}/projects/#{@project.slug}/review-policy?#{%{version: @shown.policy_version}}"
+                }
+                class="underline decoration-base-300 underline-offset-2 hover:decoration-current"
+              >
+                Policy version {@shown.policy_version}
+              </.link>
               <span :if={@shown.computed_at}>· computed {format_time(@shown.computed_at)}</span>
               <span :if={@change_request.state == "merged"}>· at merge</span>
             </p>
