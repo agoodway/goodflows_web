@@ -15,6 +15,12 @@ fail_fast = false
 MIX_ENV = "test"
 CI = "true"
 
+# Server origin and sk_ key come from GOODFLOWS_URL and GOODFLOWS_API_KEY.
+# history uploads every run, so change requests can see ci results per head.
+[reporting]
+project = "goodflows-web"
+history = true
+
 [environments.orb.settings]
 parallelism = 4
 

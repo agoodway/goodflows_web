@@ -27,6 +27,18 @@ if ((${#missing[@]})); then
   time sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
 fi
 
+echo 'Installing goodflows 0.10.0'
+if [[ "$(goodflows --version 2>/dev/null)" != 'goodflows 0.10.0' ]]; then
+  archive=$(mktemp)
+  curl --fail --location --retry 3 --silent --show-error \
+    https://github.com/agoodway/goodflows/releases/download/v0.10.0/goodflows-v0.10.0-x86_64-unknown-linux-gnu.tar.gz -o "$archive"
+  echo "3d9679b6d2affbd5b73991064353007afdb0bc64987ca46f3b7cde151ebceede  $archive" | sha256sum -c -
+  extracted=$(mktemp -d)
+  tar -xzf "$archive" -C "$extracted" goodflows
+  sudo install -m 755 "$extracted/goodflows" /usr/local/bin/goodflows
+  rm -rf "$archive" "$extracted"
+fi
+
 echo 'Preparing Elixir 1.19.4 and OTP 28.1.1'
 # Hex's Ubuntu 22.04 builds use the same OpenSSL 3 / ncurses 6 ABI as Debian 12 and 13.
 otp_home="$toolchains/otp-28.1.1"
