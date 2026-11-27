@@ -18,7 +18,7 @@ defmodule GoodFlowsWeb do
   """
 
   @doc "Static asset paths served by `Plug.Static` and known to verified routes."
-  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt)
+  def static_paths, do: ~w(assets fonts images favicon.ico favicon.svg robots.txt)
 
   @doc "Imports for `use GoodFlowsWeb, :router`."
   def router do
