@@ -337,6 +337,23 @@ defmodule GoodFlowsWeb.Api.V1.StoredChangeControllerTest do
       assert versions_count() == 1
     end
 
+    test "a body that is not JSON is 400 and one that is not application/json is 415", ctx do
+      assert %{"errors" => %{"detail" => _}} =
+               ctx.sk_conn |> post_json(changes_path(ctx), "{") |> json_response(400)
+
+      body = Jason.encode!(%{"files" => files(), "source" => @source})
+
+      for type <- ["text/plain", "application/x-www-form-urlencoded"] do
+        assert ctx.sk_conn
+               |> put_req_header("content-type", type)
+               |> post(changes_path(ctx), body)
+               |> json_response(415),
+               type
+      end
+
+      assert versions_count() == 0
+    end
+
     test "a malformed source or an extra key is refused", ctx do
       for body <- [
             %{"files" => files()},
@@ -368,9 +385,9 @@ defmodule GoodFlowsWeb.Api.V1.StoredChangeControllerTest do
       assert %{"data" => %{"status" => "archived", "version" => 1}} =
                ctx.sk_conn |> push_change(ctx, archived) |> json_response(201)
 
-      assert %{"errors" => %{"detail" => detail}} =
-               ctx.sk_conn |> push_change(ctx, files()) |> json_response(409)
-
+      refused = ctx.sk_conn |> push_change(ctx, files()) |> json_response(409)
+      assert_schema(refused, "StoredChangeArchivedResponse", ApiSpec.spec())
+      assert %{"errors" => %{"error" => "change_archived", "detail" => detail}} = refused
       assert detail =~ "add-login"
 
       assert ctx.sk_conn
@@ -457,6 +474,36 @@ defmodule GoodFlowsWeb.Api.V1.StoredChangeControllerTest do
       one_row = count_queries(fn -> ctx.sk_conn |> get(changes_path(ctx, "?limit=1")) end)
       three_rows = count_queries(fn -> ctx.sk_conn |> get(changes_path(ctx, "?limit=3")) end)
       assert one_row == three_rows
+    end
+
+    test "the versions list pages newest first and refuses a bad limit or cursor", ctx do
+      for text <- ~w(one two three) do
+        changed = Map.put(files(), "change.md", change_md("add-login") <> text <> "\n")
+        ctx.sk_conn |> push_change(ctx, changed) |> json_response(201)
+      end
+
+      path = changes_path(ctx, "/add-login/versions")
+      page = ctx.sk_conn |> get(path <> "?limit=2") |> json_response(200)
+      assert_schema(page, "StoredChangeVersionListResponse", ApiSpec.spec())
+      assert Enum.map(page["data"], & &1["version"]) == [3, 2]
+      assert is_binary(page["next_cursor"])
+
+      rest =
+        ctx.sk_conn |> get(path <> "?limit=2&cursor=#{page["next_cursor"]}") |> json_response(200)
+
+      assert Enum.map(rest["data"], & &1["version"]) == [1]
+      assert rest["next_cursor"] == nil
+
+      for query <- ["?limit=0", "?limit=201", "?limit=x", "?cursor=nope"] do
+        assert ctx.sk_conn |> get(path <> query) |> json_response(422), query
+      end
+
+      for conn <- [ctx.sk_conn, ctx.pk_conn] do
+        assert %{"errors" => %{"detail" => detail}} =
+                 conn |> get(changes_path(ctx, "/nope/versions")) |> json_response(404)
+
+        assert detail =~ "No stored change nope in this project"
+      end
     end
 
     test "a change is read with its files and linked change requests", ctx do
@@ -628,5 +675,10 @@ defmodule GoodFlowsWeb.Api.V1.StoredChangeControllerTest do
 
       if verb == "post", do: assert(op["requestBody"]["required"])
     end
+
+    assert %{"$ref" => ref} =
+             paths[base]["post"]["responses"]["409"]["content"]["application/json"]["schema"]
+
+    assert ref =~ "StoredChangeArchivedResponse"
   end
 end

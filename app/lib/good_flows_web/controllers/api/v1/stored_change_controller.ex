@@ -18,8 +18,8 @@ defmodule GoodFlowsWeb.Api.V1.StoredChangeController do
   alias GoodFlowsWeb.Plugs.{JsonBody, LoadChangeRequest}
 
   alias GoodFlowsWeb.Schemas.{
-    ConflictResponse,
     ErrorResponse,
+    StoredChangeArchivedResponse,
     StoredChangeLinkedResponse,
     StoredChangeListResponse,
     StoredChangePushRequest,
@@ -81,7 +81,9 @@ defmodule GoodFlowsWeb.Api.V1.StoredChangeController do
       not_found: {"No such project in this account", "application/json", ErrorResponse},
       not_acceptable: @not_acceptable,
       request_timeout: {"Body was not received in time", "application/json", ErrorResponse},
-      conflict: {"The change's latest version is archived", "application/json", ConflictResponse},
+      conflict:
+        {"The change's latest version is archived", "application/json",
+         StoredChangeArchivedResponse},
       request_entity_too_large: {"Body exceeds 16 MiB", "application/json", ErrorResponse},
       unsupported_media_type:
         {"Not `application/json`, or a `Content-Encoding` other than `identity`",
@@ -188,11 +190,9 @@ defmodule GoodFlowsWeb.Api.V1.StoredChangeController do
   @doc "Lists versions."
   def versions(conn, %{"change_id" => change_id} = params) do
     with {:ok, page} <-
-           StoredChanges.list_versions(
-             conn.assigns.project,
-             change_id,
-             Map.take(params, ~w(limit cursor))
-           ) do
+           conn.assigns.project
+           |> StoredChanges.list_versions(change_id, Map.take(params, ~w(limit cursor)))
+           |> named(change_id) do
       render(conn, :versions,
         versions: page.versions,
         next_cursor: page.next_cursor,

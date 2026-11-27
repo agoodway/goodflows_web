@@ -277,7 +277,7 @@ Run these against a local GoodFlows Web server with one account, one project `we
 
 1. Push `add-logout` twice; no change request links it.
 2. `DELETE .../changes/add-logout`.
-   - Expect: `204`; a second delete is `404`; `GET .../changes/add-logout` and `.../versions/1` are `404`, and the event feed has one event naming `add-logout`.
+   - Expect: `204`; a second delete is `404`; `GET .../changes/add-logout` and `.../versions/1` are `404`, and the event feed has one `change_deleted` event naming `add-logout`.
 3. Push `add-logout` again.
    - Expect: `201` with version 1 and `replaced_version` null.
 

@@ -1,7 +1,7 @@
 ---
 format: goodflows-change/1
 id: add-stored-changes
-status: approved
+status: archived
 size: project
 door: one_way
 capabilities: [stored-changes]
@@ -193,6 +193,12 @@ decisions:
     by: agent
     why: "Found while building: the code renders only D19's fields to pk_ keys in the versions list, but the requirement said only that pk_ keys list versions with the pusher null, so it was silent on the other fields"
     rejected: [leave the field list to D19 alone]
+  - id: D31
+    question: "How are the build's four held questions settled: the push's strict JSON refusals, the versions list's 404 and 422, scenario 15's event count, and a code on the archived 409?"
+    answer: "A push body that is not valid JSON is 400, and one that is not application/json is 415, as on the other strict JSON routes. On the versions list an unknown id is 404 for every key, pk_ included, and a malformed limit or cursor is 422. Scenario 15 step 2 expects one change_deleted event naming add-logout. The archived 409 body is errors: {error: change_archived, detail}"
+    by: user
+    why: "tbrewer's answers, given 2026-11-27, to the build's held questions: yes to each recommendation, with the change re-approved with these edits"
+    rejected: [leave the transport refusals and the versions list's 422 unstated, 403 for pk_ keys on an unknown id's versions list, one event of any type naming add-logout, a detail message only on the archived 409]
 left_to_builder:
   - Table layout, how file text and parsed fields are stored, and how the identical-push comparison is computed, as long as it compares the set of paths and every file's bytes
   - Project event type names and payloads, as long as each names the change id and, for a push, the version number

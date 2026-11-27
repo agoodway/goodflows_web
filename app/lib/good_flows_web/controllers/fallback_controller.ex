@@ -65,6 +65,7 @@ defmodule GoodFlowsWeb.FallbackController do
     |> put_status(:conflict)
     |> json(%{
       errors: %{
+        error: "change_archived",
         detail: "#{change_id} is archived and takes no further pushes; give a new change a new id"
       }
     })
