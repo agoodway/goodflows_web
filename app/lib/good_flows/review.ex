@@ -23,6 +23,11 @@ defmodule GoodFlows.Review do
   it used (nil in the dashboard) and the channel (`cli` or `dashboard`);
   the answer, its decisions, its task and its events record that actor.
 
+  `approve_all/5` approves several `unmapped_area` or `undriven_feature`
+  items from the dashboard in one transaction with the same checks and
+  effects per item, refusing all of them if any is answered at the head
+  already, and recomputes the verdict once.
+
   A `diff_set_weakened` answer acts on the stored verdict's diff digest
   after it is stored: `reject` records a `reject` decision with its note,
   and `approve` records an `approve` decision, with this answer's
@@ -169,6 +174,67 @@ defmodule GoodFlows.Review do
     end
   end
 
+  @bulk_kinds ~w(unmapped_area undriven_feature)
+
+  @doc """
+  Approves the items `item_ids` at `head` in one transaction, each with
+  `note` (or nil), as `answer/4` would one by one, then recomputes the
+  verdict once. Only `unmapped_area` and `undriven_feature` items can be
+  approved together. It stores nothing when the change request is not
+  active (`:not_active`), `head` is not current (`{:stale_head, head}`),
+  any id is not an item at the head or not of those kinds (`:not_found`),
+  any item already has an answer at the head (`:answered`), or the note is
+  invalid (`{:invalid_body, errors}`). Returns `{:ok, answers}`.
+  """
+  @spec approve_all(ChangeRequest.t(), actor(), String.t() | nil, [String.t()], String.t() | nil) ::
+          {:ok, [Answer.t()]}
+          | {:error,
+             :not_active
+             | :not_found
+             | :answered
+             | {:stale_head, String.t() | nil}
+             | {:invalid_body, DocumentErrors.errors()}}
+  def approve_all(
+        %ChangeRequest{} = change_request,
+        %{account_user: %AccountUser{}, channel: "dashboard"} = actor,
+        head,
+        [_ | _] = item_ids,
+        note
+      ) do
+    body = %{"head" => head, "answer" => "approve", "note" => note}
+
+    with :ok <- ChangeRequests.require_active(change_request),
+         {:ok, attrs} <- answer_body(body) do
+      Repo.transaction(fn ->
+        change_request
+        |> ChangeRequests.lock_active()
+        |> approve_all_locked(actor, Enum.uniq(item_ids), attrs)
+      end)
+      |> case do
+        {:ok, answers} -> {:ok, Repo.preload(answers, :account_user)}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp approve_all_locked(change_request, actor, ids, attrs) do
+    if attrs.head != change_request.head,
+      do: Repo.rollback({:stale_head, change_request.head})
+
+    verdict = Repo.get!(Verdict, change_request.id)
+    items = Map.new(Items.build(verdict.reasons, Packet.claims(change_request)), &{&1.id, &1})
+
+    unless Enum.all?(ids, &(items[&1] && items[&1].kind in @bulk_kinds)),
+      do: Repo.rollback(:not_found)
+
+    answered = current_answers(change_request)
+    if Enum.any?(ids, &Map.has_key?(answered, &1)), do: Repo.rollback(:answered)
+
+    answers = Enum.map(ids, &store_answer(change_request, actor, items[&1], attrs))
+    ChangeRequests.recompute(change_request)
+    answers
+  end
+
   # A `reject` or `request_change` note must not be only whitespace, as
   # for the scenario set rejection body.
   defp answer_body(body) do
@@ -249,6 +315,18 @@ defmodule GoodFlows.Review do
       })
     end
 
+    answer = store_answer(change_request, actor, item, attrs)
+
+    if item.kind == "diff_set_weakened",
+      do: record_diff_decision(change_request, verdict, claims, actor, answer)
+
+    ChangeRequests.recompute(change_request)
+    answer
+  end
+
+  # Stores the answer, supersedes the item's earlier one at the head and
+  # records its events; the caller recomputes the verdict.
+  defp store_answer(change_request, actor, item, attrs) do
     now = DateTime.utc_now()
     supersede(change_request, item.id, attrs.head, now)
 
@@ -266,11 +344,6 @@ defmodule GoodFlows.Review do
         account_user_id: actor.account_user.id,
         api_key_id: actor.api_key && actor.api_key.id
       })
-
-    if item.kind == "diff_set_weakened",
-      do: record_diff_decision(change_request, verdict, claims, actor, answer)
-
-    ChangeRequests.recompute(change_request)
 
     ProjectEvents.record(
       change_request.project_id,

@@ -76,18 +76,18 @@ The detail page SHALL show the change request's number, title, state, verdict st
 - **THEN** the page shows `No head yet` as its head
 
 ### Requirement: The detail page explains the verdict
-The detail page SHALL list every reason of the stored verdict in stored order, each with its outcome, message, rule and subject (the subject is left out when it is empty). With no reasons it MUST say that no rule fired at the head. A merged change request SHALL show the reasons stored with the merge report, not the stored verdict.
+The detail page SHALL explain every reason of the stored verdict as `goodflows/specs/change-request-dashboard/spec.md` requires ("The verdict panel summarizes an active verdict" and "The verdict at merge lists its reasons grouped by rule"): blocked and pending reasons with their outcome, message, rule and subject, and needs-review reasons as counts of review items by kind. With no reasons it MUST say that no rule fired at the head. A merged change request SHALL show the reasons stored with the merge report, not the stored verdict.
 
 #### Scenario: Needs review
 - **WHEN** change request 46's verdict is `needs_review` with reasons `one_way_door` (subject `[]`) and `path_match` (subject `["priv/repo/migrations/**"]`)
-- **THEN** the page shows `Needs review`, the message `The claims call this change a one-way door` with rule `one_way_door` and no subject, and the message `The diff touches paths matching priv/repo/migrations/**` with rule `path_match` and subject `priv/repo/migrations/**`
+- **THEN** the page shows `Needs review` and summarizes the reasons as 1 one-way door and 1 sensitive path, each linking to its review item group, where the sensitive path item shows `priv/repo/migrations/**` and its matched files
 
 #### Scenario: Mergeable with no reasons
 - **WHEN** change request 46's verdict is `mergeable` with no reasons
 - **THEN** the page shows `Mergeable` and says that no rule fired at the head
 
 ### Requirement: The detail page shows the review packet
-For a change request in state `draft` or `open`, the detail page SHALL show the review packet at the current head: each item's kind as a readable name, its message, and its current answer at the head with who gave it, when, and the option and note. An item with no answer at the head MUST say so. The page MUST NOT show answers given at other heads. A merged or closed change request SHALL show no review items.
+For a change request in state `draft` or `open`, the detail page SHALL show the review packet at the current head, grouped by kind as `goodflows/specs/change-request-dashboard/spec.md` requires: each item's kind as a readable name, its message, its subject, and its current answer at the head with who gave it, when, and the option and note. An item with no answer at the head MUST say so. The page MUST NOT show answers given at other heads. A merged or closed change request SHALL show no review items.
 
 #### Scenario: Answered and unanswered items
 - **WHEN** change request 46 has a `one_way_door` item approved by member T at the current head and a `sensitive_path` item with no answer at the head
@@ -143,7 +143,7 @@ While a member has a change request page open, a committed project event for tha
 
 #### Scenario: Reasons change while the state holds
 - **WHEN** a member has change request 46 open with reasons `one_way_door` and `should_not_run`, and a verify run clears `should_not_run`
-- **THEN** the page shows only the `one_way_door` reason without the member reloading
+- **THEN** the verdict summary shows only the one-way door count, without the scenario not run, without the member reloading
 
 #### Scenario: Retarget while open
 - **WHEN** a member has change request 46 open and it is retargeted from `main` to `release/2`

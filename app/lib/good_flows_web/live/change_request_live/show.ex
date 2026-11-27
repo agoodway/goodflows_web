@@ -13,6 +13,13 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   closed change request shows them from its stored verdict, marked as
   frozen, with only `Counts` or `Not counted` for verify runs.
 
+  On a `draft` or `open` change request, the verdict panel lists the
+  `blocked` and `pending` reasons (and any `needs_review` reason no item
+  holds), grouped by rule and outcome, and summarizes the rest as item
+  counts by kind linking to the review items, which are grouped by kind
+  with each item's subject. A merged change request lists every reason at
+  merge, grouped the same way.
+
   On a `draft` or `open` change request, a member answers review items
   here (`GoodFlows.Review.answer/4` with a `dashboard` actor). The answer
   is bound to the head the page showed. Actions a member may not take,
@@ -31,8 +38,12 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   also shows as a strip of thumbnails; a thumbnail opens the `lightbox`,
   which steps through that scenario's images.
 
+  A member approves every unanswered `unmapped_area` or `undriven_feature`
+  item at once from its group (`GoodFlows.Review.approve_all/5`); the list
+  in its dialog is fixed when it opens.
+
   The page reloads 500 ms after a project event, keeping an open answer
-  dialog and the open scenario rows.
+  or bulk dialog and the open scenario rows.
   """
   use GoodFlowsWeb, :live_view
 
@@ -46,6 +57,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   alias GoodFlows.Projects
   alias GoodFlows.Repo
   alias GoodFlows.Review
+  alias GoodFlows.Review.Items
   alias GoodFlows.Review.Packet
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ScenarioSets
@@ -144,6 +156,8 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
          refresh_scheduled: false,
          dialog: nil,
          answer_form: nil,
+         bulk: nil,
+         bulk_form: nil,
          set_form: set_form(),
          open_scenarios: MapSet.new(),
          lightbox: nil
@@ -296,7 +310,18 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     assigns =
       assign(assigns,
         shown: shown_verdict(assigns.change_request, assigns.loaded.verdict),
-        subject_context: subject_context(assigns)
+        subject_context: subject_context(assigns),
+        item_groups: item_groups(assigns.packet)
+      )
+
+    assigns =
+      assign(assigns,
+        listed:
+          for(
+            group <- listed_groups(assigns.shown, assigns.packet),
+            do: Map.put(group, :entries, reason_entries(group, assigns.subject_context))
+          ),
+        summary: Enum.reject(assigns.item_groups, &(&1.kind == "scenario_set_approval"))
       )
 
     ~H"""
@@ -350,40 +375,66 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
                 else: "Nothing blocks merging"}{if @shown.head,
                 do: " at commit #{short_sha(@shown.head)}"}.
             </p>
-            <ol :if={@shown.reasons != []} id="reasons" class="space-y-3">
+            <ol :if={@listed != []} id="reasons" class="space-y-3">
               <li
-                :for={{reason, index} <- Enum.with_index(@shown.reasons)}
+                :for={{group, index} <- Enum.with_index(@listed)}
                 id={"reason-#{index}"}
-                data-rule={reason["rule"]}
+                data-rule={group.rule}
+                data-outcome={group.outcome}
                 class="space-y-1 border-b border-base-300 pb-3 last:border-b-0 last:pb-0"
               >
-                <div class="flex flex-wrap items-center gap-2">
-                  <.verdict_badge state={reason["outcome"]} />
-                  <span class="text-sm">{reason["message"]}</span>
+                <div :for={{entry, e} <- Enum.with_index(group.entries)} class="space-y-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <.verdict_badge :if={e == 0} state={group.outcome} />
+                    <span class="text-sm">{entry.message}</span>
+                  </div>
+                  <ul
+                    :if={entry.lines != []}
+                    id={"reason-#{index}-#{e}-subject"}
+                    class="space-y-1 text-sm"
+                  >
+                    <li :for={line <- entry.lines} class="break-words">
+                      <.link
+                        :if={line.href}
+                        href={line.href}
+                        class="underline decoration-base-300 underline-offset-2 hover:decoration-current"
+                      >
+                        {line.text}
+                      </.link>
+                      <span :if={!line.href && line.text}>{line.text}</span>
+                      <.tag :for={tag <- line.tags}>{tag}</.tag>
+                    </li>
+                  </ul>
                 </div>
-                <ul
-                  :if={subject_lines(reason, @subject_context) != []}
-                  id={"reason-#{index}-subject"}
-                  class="space-y-1 text-sm"
-                >
-                  <li :for={line <- subject_lines(reason, @subject_context)} class="break-words">
-                    <.link
-                      :if={line.href}
-                      href={line.href}
-                      class="underline decoration-base-300 underline-offset-2 hover:decoration-current"
-                    >
-                      {line.text}
-                    </.link>
-                    <span :if={!line.href && line.text}>{line.text}</span>
-                    <.tag :for={tag <- line.tags}>{tag}</.tag>
-                  </li>
-                </ul>
                 <p class="text-xs text-muted">
                   Rule
-                  <.tag>{reason["rule"]}</.tag>
+                  <.tag>{group.rule}</.tag>
                 </p>
               </li>
             </ol>
+            <div
+              :if={@summary != []}
+              id="review-summary"
+              class={[
+                "flex flex-wrap items-center gap-x-2 gap-y-1 text-sm",
+                @listed != [] && "mt-3 border-t border-base-300 pt-3"
+              ]}
+            >
+              <.verdict_badge state="needs_review" />
+              <%= for {group, i} <- Enum.with_index(@summary) do %>
+                <span :if={i > 0} aria-hidden="true" class="text-muted">·</span>
+                <.link
+                  id={"summary-#{group.kind}"}
+                  href={"#review-group-#{group.kind}"}
+                  class="underline decoration-base-300 underline-offset-2 hover:decoration-current"
+                >
+                  {summary_label(group)}
+                </.link>
+              <% end %>
+              <span id="summary-cleared" class="font-mono text-xs text-muted">
+                · {cleared(@loaded.verdict)}
+              </span>
+            </div>
             <p class="mt-4 font-mono text-xs text-muted">
               <.link
                 id="verdict-policy-link"
@@ -409,74 +460,99 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         <p :if={@packet.items == []} id="no-items" class="text-sm text-muted">
           Nothing at this head needs a person.
         </p>
-        <ul :if={@packet.items != []} class="space-y-4">
-          <li
-            :for={item <- @packet.items}
-            id={item_dom_id(item)}
-            class="space-y-2 border-b border-base-300 pb-4 last:border-b-0 last:pb-0"
+        <div :if={@packet.items != []} class="space-y-4">
+          <section
+            :for={group <- @item_groups}
+            id={"review-group-#{group.kind}"}
+            data-kind={group.kind}
+            class="scroll-mt-24 space-y-3 border-b border-base-300 pb-4 last:border-b-0 last:pb-0"
           >
             <div class="flex flex-wrap items-center gap-2">
-              <.status_badge>{kind_label(item.kind)}</.status_badge>
-              <span class="break-words text-sm">{item.message}</span>
-            </div>
-            <p :if={item.kind == "question"} class="break-words text-sm font-medium">
-              {item.data[:text]}
-            </p>
-            <p
-              :if={item.kind == "open_item"}
-              id={"#{item_dom_id(item)}-risk"}
-              class="break-words text-sm font-medium"
-            >
-              {item.data[:risk]}
-              <span :if={item.data[:location]} class="block font-mono text-xs text-muted">
-                {item.data[:location]}
+              <h3 class="font-mono text-xs font-semibold uppercase tracking-wide">
+                {kind_label(group.kind)}
+              </h3>
+              <span :if={group.message} class="break-words text-sm text-muted">
+                {group.message}
               </span>
-            </p>
-            <p
-              :if={item.kind in ~w(failed_scenario not_run) and item.data[:reason]}
-              id={"#{item_dom_id(item)}-result"}
-              class="break-words text-sm font-medium"
-            >
-              {item.data[:reason]}
-              <span :if={item.data[:failed_step]} class="block font-mono text-xs text-muted">
-                Failed at {item.data[:failed_step]}
-              </span>
-            </p>
-            <p :if={item.answer} id={"#{item_dom_id(item)}-answer"} class="text-sm">
-              {answer_verb(item.answer)} by {email(@emails, item.answer.account_user_id)}
-              <span class="whitespace-nowrap font-mono text-xs text-muted">
-                · {format_time(item.answer.inserted_at)}
-              </span>
-              <span :if={item.answer.note} class="block break-words text-muted">
-                “{item.answer.note}”
-              </span>
-            </p>
-            <p :if={!item.answer} id={"#{item_dom_id(item)}-unanswered"} class="text-sm text-muted">
-              No answer at this head.
-            </p>
-            <%= if may_answer?(item, @may_approve?, @membership) do %>
-              <div class="flex flex-wrap gap-2">
-                <.button
-                  :for={answer <- item.answers}
-                  id={"#{item_dom_id(item)}-#{answer}"}
-                  type="button"
-                  variant="soft"
-                  size="sm"
-                  phx-click="open_answer"
-                  phx-value-item={item.id}
-                  phx-value-answer={answer}
-                  aria-label={"#{answer_label(answer)}: #{kind_label(item.kind)}"}
+              <span class="ml-auto inline-flex flex-wrap items-center gap-2">
+                <span
+                  id={"review-group-#{group.kind}-cleared"}
+                  class="font-mono text-xs text-muted"
                 >
-                  {answer_label(answer)}
+                  {group.cleared} of {length(group.items)} cleared
+                </span>
+                <.button
+                  :if={bulk_kind?(group.kind) && @membership && unanswered(group) != []}
+                  id={"bulk-#{group.kind}"}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  phx-click="open_bulk"
+                  phx-value-kind={group.kind}
+                >
+                  Approve all {length(unanswered(group))}…
                 </.button>
-              </div>
-            <% else %>
-              <p id={"#{item_dom_id(item)}-who"} class="text-xs text-muted">
-                {who_may_answer(@approver)}
-              </p>
-            <% end %>
-          </li>
-        </ul>
+              </span>
+            </div>
+            <ul class="divide-y divide-base-300">
+              <li
+                :for={item <- group.items}
+                id={item_dom_id(item)}
+                data-state={item_state(item)}
+                class="grid gap-x-4 gap-y-2 py-3 first:pt-1 last:pb-0 sm:grid-cols-[9.5rem_minmax(0,1fr)_auto] sm:items-start"
+              >
+                <div id={"#{item_dom_id(item)}-state"} class="sm:pt-0.5">
+                  <.status_badge kind={state_kind(item)} dot>
+                    {state_label(item)}
+                  </.status_badge>
+                  <span :if={!item.answer} class="sr-only">
+                    at this head
+                  </span>
+                </div>
+                <div class={["min-w-0 space-y-1", item.answer && "text-muted"]}>
+                  <p :if={item.message != group.message} class="break-words text-sm">
+                    {item.message}
+                  </p>
+                  <.item_subject item={item} names={@subject_context.names} />
+                  <p
+                    :if={item.answer}
+                    id={"#{item_dom_id(item)}-answer"}
+                    class="font-mono text-xs text-muted"
+                  >
+                    {if item.answer.option, do: "Option #{item.answer.option} · "}by {email(
+                      @emails,
+                      item.answer.account_user_id
+                    )} · {format_time(item.answer.inserted_at)}
+                    <span :if={item.answer.note} class="block break-words font-sans text-sm italic">
+                      “{item.answer.note}”
+                    </span>
+                  </p>
+                </div>
+                <%= if may_answer?(item, @may_approve?, @membership) do %>
+                  <div class="-ml-2 flex flex-wrap gap-1 sm:ml-0 sm:justify-end">
+                    <.button
+                      :for={answer <- other_answers(item)}
+                      id={"#{item_dom_id(item)}-#{answer}"}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      phx-click="open_answer"
+                      phx-value-item={item.id}
+                      phx-value-answer={answer}
+                      aria-label={"#{answer_label(answer)}: #{kind_label(item.kind)}"}
+                    >
+                      {answer_label(answer)}
+                    </.button>
+                  </div>
+                <% else %>
+                  <p id={"#{item_dom_id(item)}-who"} class="text-xs text-muted sm:text-right">
+                    {who_may_answer(@approver)}
+                  </p>
+                <% end %>
+              </li>
+            </ul>
+          </section>
+        </div>
         <div :if={@tasks != []} id="open-tasks" class="mt-6 space-y-2">
           <h3 class="font-mono text-xs font-semibold uppercase tracking-wide text-muted">
             Open tasks
@@ -837,10 +913,86 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
         </.dialog_actions>
       </.form>
     </.editor_dialog>
+
+    <.editor_dialog
+      :if={@bulk}
+      id="bulk-dialog"
+      title={"Approve #{length(@bulk.items)} #{summary_noun(@bulk.kind, length(@bulk.items))}"}
+      on_cancel="cancel_bulk"
+    >
+      <.form for={@bulk_form} id="bulk-form" phx-submit="submit_bulk">
+        <p class="mb-2 text-sm">
+          This approves each of these items at this head. Items already answered keep their answer.
+        </p>
+        <ul
+          id="bulk-items"
+          class="mb-4 max-h-64 space-y-1 overflow-y-auto rounded border border-base-300 p-2"
+        >
+          <li :for={item <- @bulk.items} class="break-all font-mono text-xs">
+            {bulk_line(item)}
+          </li>
+        </ul>
+        <.input
+          field={@bulk_form[:note]}
+          type="textarea"
+          label="Note (optional)"
+          maxlength="10000"
+        />
+        <p class="mt-2 font-mono text-xs text-muted">
+          Answers head {short_sha(@bulk.head) || "none"}
+        </p>
+        <.dialog_actions>
+          <.button type="button" variant="ghost" phx-click="cancel_bulk">Cancel</.button>
+          <.button id="bulk-confirm" type="submit" variant="primary" phx-disable-with="Saving…">
+            Approve {length(@bulk.items)}
+          </.button>
+        </.dialog_actions>
+      </.form>
+    </.editor_dialog>
     """
   end
 
   @impl true
+  def handle_event("open_bulk", %{"kind" => kind}, socket) do
+    %{packet: packet, membership: membership} = socket.assigns
+    group = Enum.find(item_groups(packet), &(&1.kind == kind))
+
+    if group && bulk_kind?(kind) && membership && unanswered(group) != [] do
+      {:noreply,
+       assign(socket,
+         bulk: %{kind: kind, head: packet.head, items: unanswered(group)},
+         bulk_form: to_form(%{"note" => ""}, as: :bulk)
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("cancel_bulk", _params, socket), do: {:noreply, close_bulk(socket)}
+
+  def handle_event("submit_bulk", _params, %{assigns: %{bulk: nil}} = socket),
+    do: {:noreply, socket}
+
+  def handle_event("submit_bulk", %{"bulk" => params}, socket) do
+    %{bulk: bulk, current_scope: scope, current_account: account} = socket.assigns
+    note = if params["note"] in [nil, ""], do: nil, else: params["note"]
+
+    case Accounts.get_account_user(scope.user, account) do
+      nil ->
+        {:noreply, socket |> close_bulk() |> put_flash(:error, "You can't answer this item")}
+
+      membership ->
+        socket.assigns.change_request
+        |> Review.approve_all(
+          Review.dashboard_actor(membership),
+          bulk.head,
+          Enum.map(bulk.items, & &1.id),
+          note
+        )
+        |> bulk_approved(params, socket)
+    end
+  end
+
   def handle_event("decide_set", %{"digest" => digest, "answer" => answer} = params, socket)
       when answer in ~w(approve reject) do
     %{evidence: evidence, current_scope: scope, current_account: account} = socket.assigns
@@ -1035,6 +1187,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   defp error_message({:stale_head, _head}),
     do: "A new head was reported. Review the items at the new head."
 
+  defp error_message(:answered),
+    do: "Some of these items were answered meanwhile. Nothing was approved; review them again."
+
   defp error_message(:not_found), do: "This item no longer needs an answer at this head."
   defp error_message(:forbidden), do: "You can't answer this item"
   defp error_message(:not_active), do: "This change request is no longer open"
@@ -1070,6 +1225,40 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     do: assign(socket, lightbox: %{box | index: Integer.mod(box.index + by, length(box.images))})
 
   defp close_dialog(socket), do: assign(socket, dialog: nil, answer_form: nil)
+  defp close_bulk(socket), do: assign(socket, bulk: nil, bulk_form: nil)
+
+  defp bulk_approved({:ok, answers}, _params, socket) do
+    {:noreply,
+     socket
+     |> close_bulk()
+     |> put_flash(:info, "#{length(answers)} items approved.")
+     |> reload()}
+  end
+
+  defp bulk_approved({:error, {:invalid_body, _errors}}, params, socket) do
+    error = {:note, {"must be at most 10,000 bytes", []}}
+
+    {:noreply,
+     assign(socket,
+       bulk_form: to_form(params, as: :bulk, errors: [error], action: :validate)
+     )}
+  end
+
+  defp bulk_approved({:error, :not_found}, params, socket),
+    do:
+      bulk_approved(
+        {:error,
+         "Some of these items no longer need an answer at this head. Nothing was approved."},
+        params,
+        socket
+      )
+
+  defp bulk_approved({:error, message}, _params, socket) when is_binary(message),
+    do: {:noreply, socket |> close_bulk() |> put_flash(:error, message) |> reload()}
+
+  defp bulk_approved({:error, reason}, _params, socket) do
+    {:noreply, socket |> close_bulk() |> put_flash(:error, error_message(reason)) |> reload()}
+  end
 
   @impl true
   def handle_info({:project_event, _project_id}, %{assigns: %{refresh_scheduled: true}} = socket),
@@ -1649,6 +1838,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
       names: Map.new((assigns.evidence && assigns.evidence.sets) || [], &{&1.source, &1.names}),
       question_ids: for(q <- (assigns.claims || %{})["questions"] || [], do: q["id"]),
       review?: assigns.packet != nil,
+      item_ids: MapSet.new((assigns.packet && assigns.packet.items) || [], & &1.id),
       parent_path: &show_path(assigns.current_account, assigns.project, &1)
     }
   end
@@ -1694,10 +1884,18 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   defp subject_lines(%{"rule" => "scenario_results_missing", "subject" => [source]}, context),
     do: [line(set_title(source), [], context.names[source] && "#qa-set-#{source}")]
 
-  defp subject_lines(%{"rule" => "scenario_set_approval", "subject" => [digest]}, context),
-    do: [
-      line("Intent set, digest", [short_sha(digest)], context.names["intent"] && "#qa-set-intent")
-    ]
+  defp subject_lines(%{"rule" => "scenario_set_approval", "subject" => [digest]}, context) do
+    id = Items.id("scenario_set_approval", [digest])
+
+    href =
+      cond do
+        MapSet.member?(context.item_ids, id) -> "#" <> item_dom_id(%{id: id})
+        context.names["intent"] -> "#qa-set-intent"
+        true -> nil
+      end
+
+    [line("Intent set, digest", [short_sha(digest)], href)]
+  end
 
   defp subject_lines(%{"rule" => rule, "subject" => [number]}, context)
        when rule in ~w(parent_not_merged parent_closed),
@@ -1715,4 +1913,293 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
 
   defp plural_count(1, one, _many), do: "1 #{one}"
   defp plural_count(n, _one, many), do: "#{n} #{many}"
+
+  @bulk_kinds ~w(unmapped_area undriven_feature)
+  @outcome_rank %{"blocked" => 0, "pending" => 1, "needs_review" => 2}
+
+  @summary_nouns %{
+    "scenario_set_approval" => {"set approval", "set approvals"},
+    "diff_only_set" => {"diff-only set", "diff-only sets"},
+    "diff_set_weakened" => {"weakened diff scenario", "weakened diff scenarios"},
+    "failed_scenario" => {"failed scenario", "failed scenarios"},
+    "not_run" => {"scenario not run", "scenarios not run"},
+    "spec_gap" => {"spec gap", "spec gaps"},
+    "one_way_door" => {"one-way door", "one-way doors"},
+    "unproven_claim" => {"unproven claim", "unproven claims"},
+    "open_item" => {"open risk", "open risks"},
+    "question" => {"question", "questions"},
+    "sensitive_path" => {"sensitive path", "sensitive paths"},
+    "size" => {"size limit", "size limits"},
+    "unmapped_area" => {"unmapped file", "unmapped files"},
+    "undriven_feature" => {"undriven feature", "undriven features"}
+  }
+
+  defp bulk_kind?(kind), do: kind in @bulk_kinds
+
+  # A question can be chosen again with another option; any other answer
+  # is not offered again once given.
+  defp other_answers(%{answer: nil} = item), do: item.answers
+  defp other_answers(%{kind: "question"} = item), do: item.answers
+  defp other_answers(item), do: Enum.reject(item.answers, &(&1 == item.answer.answer))
+
+  attr :path, :string, required: true
+
+  # A path that may wrap after each slash instead of inside a name.
+  defp path_text(assigns) do
+    assigns = assign(assigns, parts: String.split(assigns.path, "/"))
+
+    ~H"""
+    <span :for={{part, i} <- Enum.with_index(@parts)}>{if i > 0, do: "/"}<wbr :if={i > 0} />{part}</span>
+    """
+  end
+
+  defp item_state(%{answer: nil}), do: "open"
+  defp item_state(%{answer: %{answer: answer}}) when answer in ~w(approve choose), do: "cleared"
+  defp item_state(_item), do: "changes"
+
+  defp state_kind(item) do
+    case item_state(item) do
+      "open" -> "neutral"
+      "cleared" -> "primary"
+      "changes" -> "error"
+    end
+  end
+
+  defp state_label(%{answer: nil}), do: "No answer"
+  defp state_label(%{answer: %{answer: "approve"}}), do: "Approved"
+  defp state_label(%{answer: %{answer: "choose"}}), do: "Chosen"
+  defp state_label(%{answer: %{answer: "reject"}}), do: "Rejected"
+  defp state_label(%{answer: %{answer: "request_change"}}), do: "Change requested"
+
+  # The packet's items by kind, in the order each kind first appears, with
+  # unanswered items first in each group.
+  defp item_groups(nil), do: []
+
+  defp item_groups(packet) do
+    by_kind = Enum.group_by(packet.items, & &1.kind)
+
+    for kind <- packet.items |> Enum.map(& &1.kind) |> Enum.uniq() do
+      items = Enum.sort_by(by_kind[kind], &(&1.answer != nil))
+      messages = items |> Enum.map(& &1.message) |> Enum.uniq()
+
+      %{
+        kind: kind,
+        items: items,
+        message: if(match?([_], messages), do: hd(messages)),
+        cleared: Enum.count(items, &(&1.answer && &1.answer.answer in ~w(approve choose)))
+      }
+    end
+  end
+
+  defp unanswered(group), do: Enum.filter(group.items, &(&1.answer == nil))
+
+  defp summary_noun(kind, count) do
+    {one, many} = Map.get(@summary_nouns, kind, {kind, kind})
+    if count == 1, do: one, else: many
+  end
+
+  defp summary_label(group),
+    do: "#{length(group.items)} #{summary_noun(group.kind, length(group.items))}"
+
+  # The reasons the verdict panel lists one by one: all of them without a
+  # packet (merged), else those no review item holds. Reasons of one rule
+  # and outcome share an entry; each message keeps its subjects.
+  defp listed_groups(nil, _packet), do: []
+
+  defp listed_groups(shown, packet) do
+    item_rules = MapSet.new((packet && packet.items) || [], & &1.rule)
+
+    shown.reasons
+    |> Enum.reject(
+      &(packet != nil and &1["outcome"] == "needs_review" and
+          MapSet.member?(item_rules, &1["rule"]))
+    )
+    |> Enum.with_index()
+    |> Enum.group_by(fn {reason, _index} -> {reason["outcome"], reason["rule"]} end)
+    |> Enum.sort_by(fn {{outcome, _rule}, [{_reason, index} | _]} ->
+      {Map.get(@outcome_rank, outcome, 3), index}
+    end)
+    |> Enum.map(fn {{outcome, rule}, pairs} ->
+      %{outcome: outcome, rule: rule, reasons: Enum.map(pairs, &elem(&1, 0))}
+    end)
+  end
+
+  defp reason_entries(group, context) do
+    group.reasons
+    |> Enum.chunk_by(& &1["message"])
+    |> Enum.map(fn [first | _] = reasons ->
+      %{message: first["message"], lines: Enum.flat_map(reasons, &subject_lines(&1, context))}
+    end)
+  end
+
+  defp bulk_line(%{kind: "undriven_feature", data: data}),
+    do: Enum.join(Enum.filter([data[:title], data[:id]], & &1), " · ")
+
+  defp bulk_line(%{data: %{paths: [_ | _] = paths}}), do: Enum.join(paths, ", ")
+  defp bulk_line(item), do: Enum.join(item.subject, " ")
+
+  attr :item, :map, required: true
+  attr :names, :map, required: true
+
+  defp item_subject(%{item: %{kind: "unmapped_area"}} = assigns) do
+    ~H"""
+    <code
+      :for={path <- @item.data[:paths] || @item.subject}
+      id={"#{item_dom_id(@item)}-subject"}
+      class="block break-words font-mono text-xs"
+    >
+      <.path_text path={path} />
+    </code>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "undriven_feature"}} = assigns) do
+    ~H"""
+    <div id={"#{item_dom_id(@item)}-subject"} class="space-y-1 text-sm">
+      <p class="break-words font-medium">
+        {@item.data[:title] || @item.data[:id]}
+        <.tag>{@item.data[:id]}</.tag>
+      </p>
+      <p :for={path <- @item.data[:paths] || []} class="break-words font-mono text-xs text-muted">
+        <.path_text path={path} />
+      </p>
+    </div>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "sensitive_path"}} = assigns) do
+    ~H"""
+    <div id={"#{item_dom_id(@item)}-subject"} class="space-y-1 text-sm">
+      <p>
+        Pattern
+        <.tag>{@item.data[:glob]}</.tag>
+      </p>
+      <p :for={file <- @item.data[:files] || []} class="flex flex-wrap items-baseline gap-2">
+        <code class="break-words font-mono text-xs"><.path_text path={file.path} /></code>
+        <span class="whitespace-nowrap font-mono text-xs text-muted">
+          +{file.additions} −{file.deletions}
+        </span>
+      </p>
+    </div>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "one_way_door"}} = assigns) do
+    ~H"""
+    <p
+      :if={@item.data[:door_reason]}
+      id={"#{item_dom_id(@item)}-subject"}
+      class="break-words text-sm font-medium"
+    >
+      {@item.data[:door_reason]}
+    </p>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "question"}} = assigns) do
+    ~H"""
+    <p id={"#{item_dom_id(@item)}-subject"} class="break-words text-sm font-medium">
+      {@item.data[:text]}
+    </p>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "open_item"}} = assigns) do
+    ~H"""
+    <p id={"#{item_dom_id(@item)}-risk"} class="break-words text-sm font-medium">
+      {@item.data[:risk]}
+      <span :if={@item.data[:location]} class="block font-mono text-xs text-muted">
+        {@item.data[:location]}
+      </span>
+    </p>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: kind, subject: [source, id]}} = assigns)
+       when kind in ~w(failed_scenario not_run) do
+    assigns = assign(assigns, source: source, id: id, name: assigns.names[source][id])
+
+    ~H"""
+    <p id={"#{item_dom_id(@item)}-subject"} class="break-words text-sm">
+      <.link
+        :if={@name}
+        href={"#scenario-#{@source}-#{@id}"}
+        class="underline decoration-base-300 underline-offset-2 hover:decoration-current"
+      >
+        {set_title(@source)} · scenario {@id}: {@name}
+      </.link>
+      <span :if={!@name}>{set_title(@source)} · scenario {@id}</span>
+    </p>
+    <p
+      :if={@item.data[:reason]}
+      id={"#{item_dom_id(@item)}-result"}
+      class="break-words text-sm font-medium"
+    >
+      {@item.data[:reason]}
+      <span :if={@item.data[:failed_step]} class="block font-mono text-xs text-muted">
+        Failed at {@item.data[:failed_step]}
+      </span>
+    </p>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "unproven_claim"}} = assigns) do
+    ~H"""
+    <div id={"#{item_dom_id(@item)}-subject"} class="space-y-1 text-sm">
+      <p :for={claim <- @item.data[:claims] || []} class="break-words">
+        <span class="font-medium">{claim.fact}</span>
+        <span class="block font-mono text-xs text-muted">
+          Proof {claim.proof}, needs {@item.data[:min_proof_level]}{if claim.location,
+            do: " · #{claim.location}"}
+        </span>
+      </p>
+    </div>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "spec_gap"}} = assigns) do
+    ~H"""
+    <p id={"#{item_dom_id(@item)}-subject"} class="break-words text-sm">
+      {Enum.join(@item.subject, " › ")}
+    </p>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "diff_set_weakened"}} = assigns) do
+    ~H"""
+    <p id={"#{item_dom_id(@item)}-subject"} class="break-words text-sm">
+      Diff set · scenario {@item.data[:id]}
+      <span :if={@item.data[:change]} class="text-muted">
+        · {@item.data[:change]}{if @item.data[:from_priority] != @item.data[:to_priority],
+          do: " (#{@item.data[:from_priority] || "none"} → #{@item.data[:to_priority] || "none"})"}
+      </span>
+    </p>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: "size"}} = assigns) do
+    ~H"""
+    <p id={"#{item_dom_id(@item)}-subject"} class="font-mono text-xs text-muted">
+      {@item.data[:changed_files]} files, {@item.data[:changed_lines]} lines · limits {@item.data[
+        :max_changed_files
+      ] || "none"} files, {@item.data[:max_changed_lines] || "none"} lines
+    </p>
+    """
+  end
+
+  defp item_subject(%{item: %{kind: kind}} = assigns)
+       when kind in ~w(diff_only_set scenario_set_approval) do
+    ~H"""
+    <p id={"#{item_dom_id(@item)}-subject"} class="text-sm">
+      {if @item.kind == "diff_only_set", do: "Diff set", else: "Intent set"}{if @item.data[
+                                                                                  :version
+                                                                                ],
+                                                                                do:
+                                                                                  " v#{@item.data[:version]}"}
+      <.tag :if={@item.data[:digest]}>{short_sha(@item.data[:digest])}</.tag>
+    </p>
+    """
+  end
+
+  defp item_subject(assigns), do: ~H""
 end

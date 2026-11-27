@@ -239,7 +239,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
   end
 
   describe "detail" do
-    test "needs_review explains each reason, with no subject for []", ctx do
+    test "needs_review is summarized by kind and each item shows its subject", ctx do
       policy!(ctx.sk_conn, ctx.slug, %{
         "paths" => [%{"glob" => "priv/repo/migrations/**", "outcome" => "needs_review"}]
       })
@@ -255,13 +255,77 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
 
       assert has_element?(view, "#header-verdict", "Needs review")
-      door = "#reasons li[data-rule=one_way_door]"
-      assert has_element?(view, door, "The claims call this change a one-way door")
-      refute has_element?(view, door <> " [id$=-subject]")
+      refute has_element?(view, "#reasons")
 
-      path = "#reasons li[data-rule=path_match]"
-      assert has_element?(view, path, "The diff touches paths matching priv/repo/migrations/**")
-      assert has_element?(view, path <> " [id$=-subject]", "priv/repo/migrations/**")
+      assert has_element?(
+               view,
+               "#summary-one_way_door[href='#review-group-one_way_door']",
+               "1 one-way door"
+             )
+
+      assert has_element?(
+               view,
+               "#summary-sensitive_path[href='#review-group-sensitive_path']",
+               "1 sensitive path"
+             )
+
+      assert has_element?(view, "#summary-cleared", "0 of 2 cleared")
+      refute has_element?(view, "#verdict-panel", "priv/repo/migrations/1.exs")
+
+      path = "#review-group-sensitive_path ##{item_id(ctx, cr.number, "sensitive_path")}-subject"
+      assert has_element?(view, path, "priv/repo/migrations/**")
+      assert has_element?(view, path, "priv/repo/migrations/1.exs")
+      assert has_element?(view, "#review-group-one_way_door", "one-way door")
+    end
+
+    test "pending and blocked reasons stay listed; many unmapped files collapse", ctx do
+      evidence = %{"required_workflows" => ["ci"]}
+
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "evidence" => evidence,
+        "coverage" => %{"unmapped_areas" => "needs_review"}
+      })
+
+      cr = create!(ctx)
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{ctx.slug}/feature-index", %{
+          "features" => [feature("lib", ["lib/**"])]
+        })
+        |> json_response(201)
+
+      paths = for n <- 1..6, do: "scripts/#{n}.sh"
+      facts!(ctx.sk_conn, ctx.slug, cr.number, sha(1), files: Enum.map(paths, &file/1))
+      claims!(ctx.sk_conn, ctx.slug, cr.number, sha(1), %{"cr" => cr.number})
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      pending = "#reasons li[data-rule=required_workflow_missing][data-outcome=pending]"
+      assert has_element?(view, pending, "ci")
+      assert has_element?(view, "#summary-unmapped_area", "6 unmapped files")
+      refute has_element?(view, "#reasons", "scripts/1.sh")
+      assert has_element?(view, "#review-group-unmapped_area li", "scripts/6.sh")
+      assert has_element?(view, "#review-group-unmapped_area-cleared", "0 of 6 cleared")
+
+      policy!(
+        ctx.sk_conn,
+        ctx.slug,
+        %{"evidence" => evidence, "coverage" => %{"unmapped_areas" => "blocked"}},
+        1
+      )
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      blocked = "#reasons li[data-rule=unmapped_area][data-outcome=blocked]"
+      assert has_element?(view, "#reasons > li[data-outcome=pending]", "ci")
+      assert has_element?(view, "#reasons > li:first-child[data-outcome=blocked]")
+
+      for path <- paths, do: assert(has_element?(view, blocked, path))
+
+      refute has_element?(
+               view,
+               "#reasons li[data-rule=unmapped_area] + li[data-rule=unmapped_area]"
+             )
     end
 
     test "mergeable says nothing blocks merging; no head says so", ctx do
@@ -318,13 +382,14 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       door_id = item_id(ctx, cr.number, "one_way_door")
       path_id = item_id(ctx, cr.number, "sensitive_path")
       assert has_element?(view, "#review-cleared", "1 of 2 cleared")
-      assert has_element?(view, "##{door_id}-answer", "Approved by")
-      assert has_element?(view, "##{path_id}-unanswered", "No answer at this head")
+      assert has_element?(view, "##{door_id}-answer", "by ")
+      assert has_element?(view, "##{path_id}[data-state=open] ##{path_id}-state", "No answer")
+      assert has_element?(view, "##{door_id}[data-state=cleared] ##{door_id}-state", "Approved")
 
       facts!(ctx.sk_conn, ctx.slug, cr.number, sha(2), files: [file("priv/a.sql")])
       claims!(ctx.sk_conn, ctx.slug, cr.number, sha(2), %{"cr" => cr.number, "door" => "one_way"})
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
-      assert has_element?(view, "##{door_id}-unanswered")
+      assert has_element?(view, "##{door_id}-state", "No answer")
       assert has_element?(view, "#review-cleared", "0 of 2 cleared")
     end
 
@@ -370,9 +435,9 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
         assert has_element?(view, dom, location)
       end
 
-      subject = "#reasons [data-rule='open_items'] [id$='-subject'] a[href='#review-panel']"
-      assert has_element?(view, subject, "1 question · 2 open risks")
-      refute has_element?(view, "#reasons", "Ids can collide")
+      assert has_element?(view, "#summary-question[href='#review-group-question']", "1 question")
+      assert has_element?(view, "#summary-open_item", "2 open risks")
+      refute has_element?(view, "#verdict-panel", "Ids can collide")
     end
 
     test "failed and not run scenario items show the run's reason and failed step", ctx do
@@ -411,7 +476,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
       assert has_element?(
                view,
-               "#reasons [data-rule=should_failed] a[href='#scenario-intent-S1']",
+               "#review-group-failed_scenario a[href='#scenario-intent-S1']",
                "Intent set · scenario S1: Scenario S1"
              )
     end
@@ -429,6 +494,14 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       assert has_element?(view, "#merged-without-lease", "Merged without a lease")
       refute has_element?(view, "#header-verdict")
       assert has_element?(view, "#verdict-panel", "Verdict at merge")
+
+      assert has_element?(
+               view,
+               "#reasons li[data-rule=one_way_door][data-outcome=needs_review]",
+               "one-way door"
+             )
+
+      refute has_element?(view, "#review-summary")
       assert has_element?(view, "#evidence-panel", "Last computed evidence")
       assert has_element?(view, "#evidence-frozen", "merged")
       assert has_element?(view, "#evidence-panel", "Review count")
@@ -610,13 +683,13 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
     test "a verify run that changes the reasons but not the state", ctx do
       {cr, digest} = graded!(ctx, "one_way")
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
-      assert has_element?(view, "#reasons", "should_not_run")
+      assert has_element?(view, "#summary-not_run")
 
       run!(ctx, digest, [result("S1"), result("S2")], "2026-11-20T11:00:00Z")
       _ = project_event(view, ctx)
       assert has_element?(view, "#header-verdict", "Needs review")
-      assert has_element?(view, "#reasons", "one_way_door")
-      refute has_element?(view, "#reasons", "should_not_run")
+      assert has_element?(view, "#summary-one_way_door")
+      refute has_element?(view, "#summary-not_run")
     end
 
     test "a retarget", ctx do
@@ -655,6 +728,132 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
   end
 
   describe "answers" do
+    # Four unmapped files and one sensitive path at head sha(1).
+    defp unmapped!(ctx, head \\ sha(1)) do
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "paths" => [%{"glob" => "priv/**", "outcome" => "needs_review"}],
+        "coverage" => %{"unmapped_areas" => "needs_review"}
+      })
+
+      _ =
+        ctx.sk_conn
+        |> post_json("/api/v1/projects/#{ctx.slug}/feature-index", %{
+          "features" => [feature("lib", ["lib/**"]), feature("db", ["priv/**"])]
+        })
+        |> json_response(201)
+
+      cr = create!(ctx)
+      files = for(n <- 1..4, do: file("scripts/#{n}.sh")) ++ [file("priv/a.sql")]
+      facts!(ctx.sk_conn, ctx.slug, cr.number, head, files: files)
+      claims!(ctx.sk_conn, ctx.slug, cr.number, head, %{"cr" => cr.number})
+
+      items =
+        for item <- packet(ctx.sk_conn, ctx.slug, cr.number)["items"],
+            item["kind"] == "unmapped_area",
+            into: %{},
+            do: {hd(item["subject"]), item["id"]}
+
+      {cr, items}
+    end
+
+    test "bulk approve approves only the unanswered unmapped files, once", ctx do
+      {cr, items} = unmapped!(ctx)
+      body = &Map.merge(%{"head" => sha(1)}, &1)
+
+      _ =
+        ctx.sk_conn
+        |> answer(ctx.slug, cr.number, items["scripts/1.sh"], body.(%{"answer" => "approve"}))
+        |> json_response(201)
+
+      _ =
+        ctx.sk_conn
+        |> answer(
+          ctx.slug,
+          cr.number,
+          items["scripts/2.sh"],
+          body.(%{"answer" => "request_change", "note" => "move it"})
+        )
+        |> json_response(201)
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      refute has_element?(view, "#bulk-sensitive_path")
+
+      states =
+        view
+        |> element("#review-group-unmapped_area")
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("li[data-state]")
+        |> LazyHTML.attribute("data-state")
+
+      assert states == ["open", "open", "cleared", "changes"]
+
+      view |> element("#bulk-unmapped_area", "Approve all 2") |> render_click()
+
+      assert has_element?(view, "#bulk-items li", "scripts/3.sh")
+      assert has_element?(view, "#bulk-items li", "scripts/4.sh")
+      refute has_element?(view, "#bulk-items", "scripts/1.sh")
+      refute has_element?(view, "#bulk-items", "scripts/2.sh")
+
+      view |> form("#bulk-form", bulk: %{note: "scripts only"}) |> render_submit()
+      refute has_element?(view, "#bulk-dialog")
+
+      bulk =
+        Repo.all(from a in Answer, where: is_nil(a.superseded_at) and a.channel == "dashboard")
+
+      assert Enum.sort(Enum.map(bulk, & &1.item_id)) ==
+               Enum.sort([items["scripts/3.sh"], items["scripts/4.sh"]])
+
+      assert Enum.all?(bulk, &(&1.answer == "approve" and &1.note == "scripts only"))
+      assert Enum.all?(bulk, &(&1.head == sha(1) and &1.account_user_id == ctx.membership.id))
+
+      assert %Answer{answer: "request_change"} =
+               Repo.one(
+                 from a in Answer,
+                   where: a.item_id == ^items["scripts/2.sh"] and is_nil(a.superseded_at)
+               )
+
+      assert has_element?(view, "#review-group-unmapped_area-cleared", "3 of 4 cleared")
+      assert has_element?(view, "#review-cleared", "3 of 5 cleared")
+
+      events =
+        Repo.all(
+          from e in GoodFlows.ProjectEvents.Event,
+            where: e.type == "answer_recorded" and is_nil(e.actor_key_id)
+        )
+
+      assert length(events) == 2
+    end
+
+    test "bulk approve stores nothing when the head moved or a listed item was answered", ctx do
+      {cr, items} = unmapped!(ctx)
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      view |> element("#bulk-unmapped_area") |> render_click()
+
+      _ =
+        ctx.sk_conn
+        |> answer(ctx.slug, cr.number, items["scripts/3.sh"], %{
+          "head" => sha(1),
+          "answer" => "request_change",
+          "note" => "not this one"
+        })
+        |> json_response(201)
+
+      _ = project_event(view, ctx)
+      assert has_element?(view, "#bulk-items li", "scripts/3.sh")
+      view |> form("#bulk-form", bulk: %{note: ""}) |> render_submit()
+
+      assert render(view) =~ "answered meanwhile"
+      assert Repo.aggregate(from(a in Answer, where: a.answer == "approve"), :count) == 0
+
+      view |> element("#bulk-unmapped_area", "Approve all 3") |> render_click()
+      facts!(ctx.sk_conn, ctx.slug, cr.number, sha(2), files: [file("scripts/1.sh")])
+      view |> form("#bulk-form", bulk: %{note: ""}) |> render_submit()
+
+      assert render(view) =~ "A new head was reported"
+      assert Repo.aggregate(from(a in Answer, where: a.answer == "approve"), :count) == 0
+    end
+
     test "approve stores the member's answer at the head the page showed", ctx do
       cr = create!(ctx)
       one_way!(ctx, cr.number, sha(1))
@@ -671,7 +870,8 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       view |> form("#answer-form", answer: %{note: ""}) |> render_submit()
 
       refute has_element?(view, "#answer-dialog")
-      assert has_element?(view, "##{door_id}-answer", "Approved by #{ctx.user.email}")
+      assert has_element?(view, "##{door_id}-answer", "by #{ctx.user.email}")
+      assert has_element?(view, "##{door_id}-state", "Approved")
       assert has_element?(view, "#review-cleared", "1 of 1 cleared")
       assert has_element?(view, "#header-verdict", "Mergeable")
 
@@ -704,7 +904,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       view |> form("#answer-form", answer: %{option: "drop", note: ""}) |> render_submit()
 
       assert [%Answer{answer: "choose", option: "drop", channel: "dashboard"}] = Repo.all(Answer)
-      assert has_element?(view, "##{question_id}-answer", "Chose drop")
+      assert has_element?(view, "##{question_id}-answer", "Option drop")
     end
 
     test "request change with an empty note shows the field error and stores nothing", ctx do
@@ -735,7 +935,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       assert render(view) =~ "A new head was reported. Review the items at the new head."
       refute has_element?(view, "#answer-dialog")
       assert has_element?(view, "#details-panel", String.slice(sha(2), 0, 7))
-      assert has_element?(view, "##{door_id}-unanswered")
+      assert has_element?(view, "##{door_id}-state", "No answer")
     end
 
     test "the author under other_member sees no actions on the set approval", ctx do
