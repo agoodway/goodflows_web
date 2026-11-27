@@ -51,3 +51,8 @@ npm-debug.log
 *.swp
 *.swo
 .vscode/
+
+# Fly.io app config (kept local)
+/fly.toml
+/fly.just
+/scripts/env-to-fly-secrets.sh

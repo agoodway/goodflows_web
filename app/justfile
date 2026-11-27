@@ -1,3 +1,5 @@
+import? 'fly.just'
+
 up:
   bash scripts/start_dev.sh
 
@@ -12,10 +14,6 @@ install:
     mix deps.get
     mix assets.setup
 
-# Deploy to Fly from app/ (one machine; release command is /app/bin/migrate)
-deploy *args:
-    fly deploy --ha=false {{args}}
-
 test:
     mix test
 
@@ -28,7 +26,3 @@ build:
 clean:
     mix clean
     rm -rf _build deps
-
-# Sync .env.prod to Fly secrets (dry-run by default, pass --execute to apply)
-fly-secrets *args:
-    ./scripts/env-to-fly-secrets.sh -f .env.prod {{args}}
