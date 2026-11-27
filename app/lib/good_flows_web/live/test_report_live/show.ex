@@ -94,16 +94,49 @@ defmodule GoodFlowsWeb.TestReportLive.Show do
       end
 
     {:noreply,
-     assign(socket,
+     socket
+     |> assign(
        search: search,
        sort: sort,
        page: page,
        outcome: outcome,
        tests: result.tests,
        total: result.total,
-       counts: result.counts,
-       search_form: to_form(%{"q" => search})
-     )}
+       counts: result.counts
+     )
+     |> init_filter_bar()}
+  end
+
+  # Search is an always-on input; outcome is a chip that is always set,
+  # labelled with each outcome's count. Clear all returns both to the
+  # page's default: failures when there are any, otherwise all. Both keep their URL params (`q`, `outcome`).
+  defp init_filter_bar(socket) do
+    %{outcome: outcome, search: search, counts: counts} = socket.assigns
+
+    search_config =
+      LiveFilter.text(:q,
+        label: "Search",
+        custom_param: "q",
+        always_on: true,
+        hide_label: true,
+        placeholder: "Search tests",
+        operators: [:eq],
+        default_operator: :eq
+      )
+
+    outcome_config =
+      LiveFilter.select(:outcome,
+        label: "Outcome",
+        custom_param: "outcome",
+        options: for({value, label} <- @filter_labels, do: {"#{label} #{counts[value]}", value}),
+        default_visible: true,
+        default_value: if(counts["failed"] > 0, do: "failed", else: "all")
+      )
+
+    LiveFilter.init(socket, [search_config, outcome_config], [
+      LiveFilter.Filter.new(search_config, :eq, if(search != "", do: search)),
+      LiveFilter.Filter.new(outcome_config, :eq, outcome)
+    ])
   end
 
   # Failures first when there are any, otherwise every test.
@@ -123,8 +156,10 @@ defmodule GoodFlowsWeb.TestReportLive.Show do
   end
 
   @impl true
-  def handle_event("search", %{"q" => q}, socket) do
-    {:noreply, push_patch(socket, to: tests_path(socket.assigns, q: String.trim(q), page: 1))}
+  def handle_info({:livefilter, :updated, params}, socket) do
+    q = String.trim(params["q"] || "")
+    path = tests_path(socket.assigns, outcome: params["outcome"], q: q, page: 1)
+    {:noreply, push_patch(socket, to: path)}
   end
 
   @impl true
@@ -213,38 +248,16 @@ defmodule GoodFlowsWeb.TestReportLive.Show do
         </.list>
       </.panel>
 
-      <.panel id="tests-panel" title="Tests" icon="hero-beaker">
+      <.panel
+        id="tests-panel"
+        title="Tests"
+        icon="hero-beaker"
+        class="overflow-visible [&>header]:rounded-t-md"
+      >
         <div class="space-y-4">
           <div class="flex flex-wrap items-center gap-3">
-            <nav class="flex flex-wrap gap-1" aria-label="Test outcome">
-              <.button
-                :for={{value, label} <- @filters}
-                id={"filter-#{value}"}
-                variant={if @outcome == value, do: "soft", else: "ghost"}
-                size="sm"
-                patch={tests_path(assigns, outcome: value, page: 1)}
-                aria-current={@outcome == value && "true"}
-              >
-                {label} <span class="font-mono text-xs text-muted">{@counts[value]}</span>
-              </.button>
-            </nav>
+            <LiveFilter.bar filter={@livefilter} theme={:neutral} variant={:neutral} />
             <div class="ml-auto flex flex-wrap items-center gap-2">
-              <.form
-                for={@search_form}
-                id="test-search"
-                class="[&_.ui-field]:mb-0"
-                phx-change="search"
-                phx-submit="search"
-              >
-                <.input
-                  field={@search_form[:q]}
-                  type="search"
-                  placeholder="Search tests"
-                  aria-label="Search tests"
-                  autocomplete="off"
-                  phx-debounce="300"
-                />
-              </.form>
               <div class="flex gap-1" role="group" aria-label="Test order">
                 <.button
                   id="sort-order"

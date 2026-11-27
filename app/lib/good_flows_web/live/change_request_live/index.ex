@@ -69,6 +69,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Index do
     {:noreply,
      socket
      |> assign(filter: filter)
+     |> LiveFilter.init([state_filter()], [LiveFilter.Filter.new(state_filter(), :eq, filter)])
      |> load_rows(@page_size)}
   end
 
@@ -83,18 +84,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Index do
         </:subtitle>
       </.header>
 
-      <nav aria-label="Filter change requests" class="flex flex-wrap gap-2">
-        <.button
-          :for={filter <- filters()}
-          id={"filter-#{filter}"}
-          patch={list_path(@current_account, @project, filter)}
-          variant={if filter == @filter, do: "primary", else: "ghost"}
-          size="sm"
-          aria-current={filter == @filter && "page"}
-        >
-          {filter_label(filter)}
-        </.button>
-      </nav>
+      <LiveFilter.bar filter={@livefilter} theme={:neutral} variant={:neutral} />
 
       <.table
         id="change-requests"
@@ -202,6 +192,11 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Index do
   end
 
   @impl true
+  def handle_info({:livefilter, :updated, params}, socket) do
+    %{current_account: account, project: project} = socket.assigns
+    {:noreply, push_patch(socket, to: list_path(account, project, params["state"] || "active"))}
+  end
+
   def handle_info({:project_event, _project_id}, %{assigns: %{refresh_scheduled: true}} = socket),
     do: {:noreply, socket}
 
@@ -258,7 +253,17 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Index do
 
   defp review_count(_cr), do: "0 of 0"
 
-  defp filters, do: @filters
+  # A chip that is always shown and always set: picking a state patches
+  # `?state=`, and Clear all returns to the default, active.
+  defp state_filter do
+    LiveFilter.select(:state,
+      label: "State",
+      options: Enum.map(@filters, &{filter_label(&1), &1}),
+      custom_param: "state",
+      default_visible: true,
+      default_value: "active"
+    )
+  end
 
   defp filter_label("active"), do: "Active"
   defp filter_label("merged"), do: "Merged"

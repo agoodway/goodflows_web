@@ -60,6 +60,9 @@ defmodule GoodFlowsWeb.WorkflowRunLive.IndexTest do
     render(view)
   end
 
+  defp selected(field, value),
+    do: ~s(#filter-chip-#{field} [data-selected="#{value}"][aria-selected="true"])
+
   defp row_ids(view) do
     view
     |> render()
@@ -172,18 +175,37 @@ defmodule GoodFlowsWeb.WorkflowRunLive.IndexTest do
       {:ok, view, _html} = live(ctx.conn, list_path(ctx, "?workflow=ci&outcome=failed"))
 
       assert row_ids(view) == ["run-#{ctx.ci_failed}"]
-      assert has_element?(view, "#chip-workflow", "ci")
-      assert has_element?(view, "#chip-outcome", "failed")
+      assert has_element?(view, selected("workflow", "ci"))
+      assert has_element?(view, selected("outcome", "failed"))
+    end
+
+    test "picking a value in the filter bar patches the URL with the API name", ctx do
+      {:ok, view, _html} = live(ctx.conn, list_path(ctx, "?workflow=lint"))
+
+      view
+      |> element("#select-opt-workflow-0")
+      |> render_hook("select_option_value", %{"id" => "workflow", "selected" => "ci"})
+
+      assert_patch(view, list_path(ctx, "?workflow=ci"))
+      assert row_ids(view) == ["run-#{ctx.ci_passed}", "run-#{ctx.ci_failed}"]
     end
 
     test "a short commit is not applied and the error names the commit field", ctx do
       {:ok, view, _html} = live(ctx.conn, list_path(ctx))
 
-      view |> form("#filter-form", %{"commit" => "5a4a971"}) |> render_submit()
+      view
+      |> element("#always-on-commit")
+      |> render_change(%{"filter" => %{"commit" => "5a4a971"}})
+
       assert_patch(view, list_path(ctx, "?commit=5a4a971"))
 
-      assert has_element?(view, "#filter-form", "Commit must be a full 40- or 64-character SHA")
-      refute has_element?(view, "#chip-commit")
+      assert has_element?(
+               view,
+               "#filter-error-commit",
+               "Commit must be a full 40- or 64-character SHA"
+             )
+
+      assert has_element?(view, ~s(#filter-text-commit[value="5a4a971"]))
       assert length(row_ids(view)) == 3
     end
 
@@ -191,15 +213,19 @@ defmodule GoodFlowsWeb.WorkflowRunLive.IndexTest do
       {:ok, view, _html} = live(ctx.conn, list_path(ctx, "?workflow=ci&commit=5a4a971"))
 
       assert row_ids(view) == ["run-#{ctx.ci_passed}", "run-#{ctx.ci_failed}"]
-      assert has_element?(view, "#chip-workflow")
-      refute has_element?(view, "#chip-commit")
+      assert has_element?(view, selected("workflow", "ci"))
+      assert has_element?(view, "#filter-error-commit")
+      refute has_element?(view, "#filter-error-workflow")
     end
 
     test "removing one filter keeps the others", ctx do
       {:ok, view, _html} = live(ctx.conn, list_path(ctx, "?workflow=ci&branch=main"))
       assert row_ids(view) == ["run-#{ctx.ci_failed}"]
 
-      view |> element("#chip-branch") |> render_click()
+      view
+      |> element(~s(#filter-chip-branch button[aria-label="Remove filter"]))
+      |> render_click()
+
       assert_patch(view, list_path(ctx, "?workflow=ci"))
       assert row_ids(view) == ["run-#{ctx.ci_passed}", "run-#{ctx.ci_failed}"]
     end
@@ -332,7 +358,7 @@ defmodule GoodFlowsWeb.WorkflowRunLive.IndexTest do
       stored_event(view, ctx, lint)
 
       assert row_ids(view) == ["run-#{ci}", "run-#{old}"]
-      assert has_element?(view, "#chip-workflow")
+      assert has_element?(view, selected("workflow", "ci"))
     end
 
     test "51 loaded rows stay loaded after a refresh", ctx do

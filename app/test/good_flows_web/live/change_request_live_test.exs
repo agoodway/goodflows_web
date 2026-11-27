@@ -100,7 +100,11 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       {:ok, view, _html} = live(ctx.conn, list_path(ctx))
 
       assert row_numbers(view) == [draft.number, open.number]
-      assert has_element?(view, "#filter-active[aria-current=page]")
+
+      assert has_element?(
+               view,
+               ~s(#filter-chip-state [data-selected="active"][aria-selected="true"])
+             )
 
       assert has_element?(
                view,
@@ -117,7 +121,24 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       {:ok, view, _html} = live(ctx.conn, list_path(ctx, "?state=closed"))
 
       assert row_numbers(view) == [closed.number]
-      assert has_element?(view, "#filter-closed[aria-current=page]")
+
+      assert has_element?(
+               view,
+               ~s(#filter-chip-state [data-selected="closed"][aria-selected="true"])
+             )
+    end
+
+    test "picking a state in the filter bar patches ?state=", ctx do
+      [closed, _open] = for _ <- 1..2, do: create!(ctx)
+      close!(ctx, closed.number)
+      {:ok, view, _html} = live(ctx.conn, list_path(ctx))
+
+      view
+      |> element("#select-opt-state-2")
+      |> render_hook("select_option_value", %{"id" => "state", "selected" => "closed"})
+
+      assert_patch(view, list_path(ctx, "?state=closed"))
+      assert row_numbers(view) == [closed.number]
     end
 
     test "Load more shows all 51, and keeps them after a refresh", ctx do
@@ -131,7 +152,11 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
       _ = project_event(view, ctx)
       assert length(row_numbers(view)) == 51
-      assert has_element?(view, "#filter-active[aria-current=page]")
+
+      assert has_element?(
+               view,
+               ~s(#filter-chip-state [data-selected="active"][aria-selected="true"])
+             )
     end
 
     test "an empty filter names itself and offers all", ctx do

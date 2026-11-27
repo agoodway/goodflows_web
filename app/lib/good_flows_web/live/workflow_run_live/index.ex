@@ -5,10 +5,10 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Index do
 
   The filters live in the URL under the API's names and go to
   `GoodFlows.WorkflowRuns.list_runs/4` as given, so they mean and validate
-  exactly what the API's do (design D7). An invalid filter is not applied:
-  its error shows under its control and the other filters stay applied.
-  Each applied filter is a chip that removes it alone, and the page shows
-  the matching API request as a copyable URL.
+  exactly what the API's do (design D7). A LiveFilter bar edits them and
+  patches the URL on each change. An invalid filter is not applied: its
+  error shows under the bar and the other filters stay applied. The page
+  shows the matching API request as a copyable URL.
 
   With no filter applied, a run called by a run stored in the project is
   folded under its parent (design D3), whose row expands to show it. A
@@ -102,7 +102,8 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Index do
 
     {:noreply,
      socket
-     |> assign(raw: raw, filters: raw, invalid: [], expanded: MapSet.new())
+     |> init_filter_bar(raw)
+     |> assign(filters: raw, invalid: [], expanded: MapSet.new())
      |> load_rows(@page_size)}
   end
 
@@ -117,109 +118,20 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Index do
         </:subtitle>
       </.header>
 
-      <.panel id="run-filters" title="Filters" icon="hero-funnel">
-        <.form for={@form} id="filter-form" phx-submit="filter">
-          <div class="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
-            <.input
-              field={@form[:workflow]}
-              type="select"
-              label="Workflow"
-              prompt="Any workflow"
-              options={options(@values.workflows, @raw["workflow"])}
-            />
-            <.input
-              field={@form[:outcome]}
-              type="select"
-              label="Outcome"
-              prompt="Any outcome"
-              options={[{"Passed", "passed"}, {"Failed", "failed"}, {"Cancelled", "cancelled"}]}
-            />
-            <.input
-              field={@form[:branch]}
-              type="select"
-              label="Branch"
-              prompt="Any branch"
-              options={options(@values.branches, @raw["branch"])}
-            />
-            <.input
-              field={@form[:environment]}
-              type="select"
-              label="Environment"
-              prompt="Any environment"
-              options={options(@values.environments, @raw["environment"])}
-            />
-            <.input
-              field={@form[:commit]}
-              type="text"
-              label="Commit"
-              placeholder="Full SHA"
-              autocomplete="off"
-              spellcheck="false"
-              class="ui-input font-mono"
-            />
-            <.input
-              field={@form[:event]}
-              type="text"
-              label="CI event"
-              placeholder="push"
-              autocomplete="off"
-            />
-            <.input
-              field={@form[:ticket]}
-              type="text"
-              label="Ticket"
-              placeholder="GOO-123"
-              autocomplete="off"
-            />
-            <div class="flex items-end justify-end gap-2 sm:col-span-2 lg:col-span-1">
-              <.button
-                :if={@raw != %{}}
-                id="clear-filters"
-                variant="ghost"
-                size="sm"
-                patch={list_path(@current_account, @project, %{})}
-              >
-                Clear
-              </.button>
-              <.button id="apply-filters" type="submit" variant="primary" size="sm">
-                Apply filters
-              </.button>
-            </div>
-          </div>
-          <input
-            :for={name <- ~w(graph_sha256 thread_url)}
-            :if={Map.has_key?(@raw, name)}
-            type="hidden"
-            name={name}
-            value={@raw[name]}
-          />
-        </.form>
+      <.panel
+        id="run-filters"
+        title="Filters"
+        icon="hero-funnel"
+        class="overflow-visible [&>header]:rounded-t-md"
+      >
+        <LiveFilter.bar filter={@livefilter} theme={:neutral} variant={:neutral} />
 
-        <div :if={url_only_errors(@invalid) != []} id="filter-errors" class="mt-4">
+        <div :if={@invalid != []} id="filter-errors" class="mt-4">
           <.notice kind="warning">
-            <p :for={name <- url_only_errors(@invalid)} id={"filter-error-#{name}"}>
+            <p :for={name <- @invalid} id={"filter-error-#{name}"}>
               {error_message(name)} The filter is not applied.
             </p>
           </.notice>
-        </div>
-
-        <div
-          :if={@filters != %{}}
-          id="active-filters"
-          class="mt-4 flex flex-wrap items-center gap-2 border-t border-base-300 pt-4"
-        >
-          <span class="text-xs text-muted">Active filters</span>
-          <.link
-            :for={{name, value} <- active(@filters)}
-            id={"chip-#{name}"}
-            patch={list_path(@current_account, @project, Map.delete(@filters, name))}
-            class="filter-chip"
-            aria-label={"Remove filter #{label(name)} #{value}"}
-          >
-            <span class="text-muted">{name}</span>
-            <span class="min-w-0 break-all">{value}</span>
-            <.icon name="hero-x-mark-micro" class="size-3.5 shrink-0" />
-          </.link>
         </div>
 
         <div id="api-query" class="mt-4 flex items-start gap-2 border-t border-base-300 pt-4">
@@ -314,19 +226,6 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Index do
   end
 
   @impl true
-  def handle_event("filter", params, socket) do
-    filters =
-      for {name, value} <- Map.take(params, @filters_in_api_order),
-          is_binary(value) and String.trim(value) != "",
-          into: %{},
-          do: {name, value}
-
-    {:noreply,
-     push_patch(socket,
-       to: list_path(socket.assigns.current_account, socket.assigns.project, filters)
-     )}
-  end
-
   def handle_event("load_more", _params, %{assigns: %{next_cursor: nil}} = socket),
     do: {:noreply, socket}
 
@@ -360,6 +259,11 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Index do
   end
 
   @impl true
+  def handle_info({:livefilter, :updated, params}, socket) do
+    %{current_account: account, project: project} = socket.assigns
+    {:noreply, push_patch(socket, to: list_path(account, project, params))}
+  end
+
   def handle_info(
         {:workflow_run_stored, _project_id, _run_id},
         %{assigns: %{refresh_scheduled: true}} = socket
@@ -384,8 +288,7 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Index do
     |> assign(
       row_count: length(runs),
       next_cursor: next_cursor,
-      last_run: List.last(runs),
-      form: form(socket.assigns.raw, socket.assigns.invalid)
+      last_run: List.last(runs)
     )
     |> stream(:runs, items(socket, runs), reset: true)
   end
@@ -464,9 +367,56 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Index do
     )
   end
 
-  defp form(raw, invalid) do
-    errors = for name <- invalid, do: {String.to_existing_atom(name), {error_message(name), []}}
-    to_form(raw, errors: errors, action: :validate)
+  # Commit, CI event and ticket are free text, always shown as inputs; graph
+  # and thread URL join them only when the URL sets one. The others are
+  # chips added from the bar's menu. Each filter is an exact match whose URL
+  # param is its API name with the raw value.
+  defp init_filter_bar(socket, raw) do
+    %{values: values} = socket.assigns
+
+    texts =
+      for {field, placeholder} <- [
+            commit: "Full SHA",
+            event: "push",
+            ticket: "GOO-123",
+            graph_sha256: "SHA-256",
+            thread_url: "https://"
+          ],
+          field in [:commit, :event, :ticket] or Map.has_key?(raw, to_string(field)),
+          do: filter_config(&LiveFilter.text/2, field, always_on: true, placeholder: placeholder)
+
+    selects = [
+      filter_config(&LiveFilter.select/2, :workflow,
+        options: options(values.workflows, raw["workflow"])
+      ),
+      filter_config(&LiveFilter.select/2, :outcome,
+        options: [{"Passed", "passed"}, {"Failed", "failed"}, {"Cancelled", "cancelled"}]
+      ),
+      filter_config(&LiveFilter.select/2, :branch,
+        options: options(values.branches, raw["branch"])
+      ),
+      filter_config(&LiveFilter.select/2, :environment,
+        options: options(values.environments, raw["environment"])
+      )
+    ]
+
+    config = texts ++ selects
+
+    filters =
+      for %{field: field} = config <- config,
+          config.always_on or Map.has_key?(raw, to_string(field)),
+          do: LiveFilter.Filter.new(config, :eq, raw[to_string(field)])
+
+    LiveFilter.init(socket, config, filters)
+  end
+
+  defp filter_config(builder, field, opts) do
+    name = to_string(field)
+
+    builder.(
+      field,
+      [label: label(name), custom_param: name, operators: [:eq], default_operator: :eq] ++ opts
+    )
   end
 
   defp items(socket, runs) do
@@ -512,8 +462,6 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Index do
 
   defp active(filters),
     do: for(name <- @filters_in_api_order, value = filters[name], value != nil, do: {name, value})
-
-  defp url_only_errors(invalid), do: Enum.filter(invalid, &(&1 in ~w(graph_sha256 thread_url)))
 
   defp label(name), do: Map.fetch!(@labels, name)
   defp error_message(name), do: Map.fetch!(@errors, name)

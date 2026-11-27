@@ -23,6 +23,9 @@ defmodule GoodFlowsWeb.TestReportLive.ShowTest do
   defp run_path(ctx), do: "/dashboard/accounts/#{ctx.account.id}/projects/web/runs/#{@run_id}"
   defp report_path(ctx, id, query \\ ""), do: "#{run_path(ctx)}/reports/#{id}#{query}"
 
+  defp selected(outcome),
+    do: ~s(#filter-chip-outcome [data-selected="#{outcome}"][aria-selected="true"])
+
   test "the run page links each report to its page", ctx do
     {:ok, _} =
       WorkflowRuns.ingest(ctx.account, ctx.project, nil, Map.put(minimal(), "run_id", @run_id))
@@ -47,12 +50,15 @@ defmodule GoodFlowsWeb.TestReportLive.ShowTest do
     ack = stored_report_fixture(ctx.account, ctx.project, "failed")
     {:ok, view, _html} = live(ctx.conn, report_path(ctx, ack.id))
 
-    assert has_element?(view, "#filter-failed[aria-current]")
+    assert has_element?(view, selected("failed"))
     assert has_element?(view, "#test-0", "divides")
     refute has_element?(view, "#test-1")
     assert has_element?(view, "#groups", "src/broken.test.js")
 
-    view |> element("#filter-all") |> render_click()
+    view
+    |> element("#select-opt-outcome-1")
+    |> render_hook("select_option_value", %{"id" => "outcome", "selected" => "all"})
+
     assert_patch(view, report_path(ctx, ack.id, "?outcome=all"))
     assert has_element?(view, "#test-0-retried", "Passed on retry")
     assert has_element?(view, "#test-0-attempts li", "invocations: 2")
@@ -63,10 +69,11 @@ defmodule GoodFlowsWeb.TestReportLive.ShowTest do
     ack = stored_report_fixture(ctx.account, ctx.project, "complete")
     {:ok, view, _html} = live(ctx.conn, report_path(ctx, ack.id))
 
-    assert has_element?(view, "#filter-all[aria-current]")
+    assert has_element?(view, selected("all"))
     assert has_element?(view, "#test-3")
 
-    view |> form("#test-search", %{"q" => "no such test"}) |> render_change()
+    view |> element("#always-on-q") |> render_change(%{"filter" => %{"q" => "no such test"}})
+    assert_patch(view, report_path(ctx, ack.id, "?outcome=all&q=no+such+test"))
     assert has_element?(view, "#no-tests", "No test matches the search.")
   end
 

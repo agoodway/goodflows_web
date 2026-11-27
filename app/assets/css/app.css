@@ -6,6 +6,8 @@
 @source "../css";
 @source "../js";
 @source "../../lib/good_flows_web";
+/* LiveFilter's filter bar templates */
+@source "../../deps/livefilter/lib";
 /* Required for Tailwind to automatically pick up changes in colocated CSS files in dev */
 @source "../../_build/dev/phoenix-colocated/good_flows/*/";
 
