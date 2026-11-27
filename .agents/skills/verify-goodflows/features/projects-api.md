@@ -8,6 +8,11 @@ paths:
   - "app/lib/good_flows/projects/**"
   - "app/test/good_flows_web/controllers/api/v1/project_controller_test.exs"
   - "app/test/good_flows/projects_test.exs"
+  - "app/lib/good_flows_web/router.ex"
+  - "app/lib/good_flows_web/controllers/fallback_controller.ex"
+  - "app/test/good_flows_web/controllers/api/v1/openapi_test.exs"
+  - "app/test/good_flows/migrations/create_projects_migration_test.exs"
+  - ".agents/skills/verify-goodflows/features/projects-api.md"
 ---
 
 # Projects API

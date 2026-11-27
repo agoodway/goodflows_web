@@ -7,6 +7,17 @@ paths:
   - "app/priv/repo/migrations/*_create_stored_changes.exs"
   - "app/test/good_flows/stored_changes*.exs"
   - "app/test/good_flows_web/controllers/api/v1/stored_change_controller_test.exs"
+  - "app/lib/good_flows_web/router.ex"
+  - "app/lib/good_flows_web/controllers/fallback_controller.ex"
+  - "app/test/good_flows_web/controllers/api/v1/openapi_test.exs"
+  - "app/lib/good_flows_web/plugs/body_parsers.ex"
+  - "app/lib/good_flows_web/plugs/json_body.ex"
+  - "app/lib/good_flows/project_events.ex"
+  - "app/test/good_flows/migrations/create_projects_migration_test.exs"
+  - ".agents/skills/verify-goodflows/features/stored-changes-api.md"
+  - "goodflows/specs/stored-changes/**"
+  - "goodflows/changes/add-stored-changes/**"
+  - "goodflows/changes/archive/*-add-stored-changes/**"
 ---
 
 # Stored changes API
