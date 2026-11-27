@@ -2,12 +2,15 @@ defmodule GoodFlowsWeb.WorkflowRunComponents do
   @moduledoc """
   Workflow run pieces shared by `GoodFlowsWeb.ProjectLive.Show` (the
   project overview), `GoodFlowsWeb.WorkflowRunLive.Index` (the run list),
-  `GoodFlowsWeb.WorkflowRunLive.Show` (the run detail) and the workflow
+  `GoodFlowsWeb.WorkflowRunLive.Show` (the run detail),
+  `GoodFlowsWeb.TestReportLive.Show` (a test report) and the workflow
   runs panel of `GoodFlowsWeb.ChangeRequestLive.Show`:
 
   - `outcome_badge/1`: a run outcome in words, or `Missing` for no run.
   - `job_status_badge/1`: a result status in words, or `Not run`.
   - `duration/1`: milliseconds as `850ms`, `1.2s` or `3m 4s`.
+  - `test_duration/1`: microseconds as `850µs`, then like `duration/1`.
+  - `count_label/3`: a count with its singular or plural noun.
   - `trigger/1`: what started a run: `ci.event` (or the provider) with
     `#<pull request>` and the attempt, or `local` without `ci`.
   - `ci_url/1`: the run's `ci.url`, or nil.
@@ -28,6 +31,7 @@ defmodule GoodFlowsWeb.WorkflowRunComponents do
   @statuses %{
     "passed" => "Passed",
     "failed" => "Failed",
+    "errored" => "Errored",
     "timed_out" => "Timed out",
     "cancelled" => "Cancelled",
     "skipped" => "Skipped",
@@ -69,8 +73,19 @@ defmodule GoodFlowsWeb.WorkflowRunComponents do
   end
 
   defp status_kind("passed"), do: "primary"
-  defp status_kind(status) when status in ~w(failed timed_out), do: "error"
+  defp status_kind(status) when status in ~w(failed errored timed_out), do: "error"
   defp status_kind(_status), do: "neutral"
+
+  @doc "`1 one` or `n many`."
+  @spec count_label(integer(), String.t(), String.t()) :: String.t()
+  def count_label(1, one, _many), do: "1 #{one}"
+  def count_label(n, _one, many), do: "#{n} #{many}"
+
+  @doc "Formats microseconds as `850µs`, or like `duration/1` from 1ms."
+  @spec test_duration(non_neg_integer() | nil) :: String.t() | nil
+  def test_duration(nil), do: nil
+  def test_duration(us) when us < 1_000, do: "#{us}µs"
+  def test_duration(us), do: duration(div(us, 1_000))
 
   @doc "Formats milliseconds as `850ms`, `1.2s` or `3m 4s`."
   @spec duration(non_neg_integer() | nil) :: String.t() | nil

@@ -30,8 +30,9 @@ defmodule GoodFlows.TestReports do
   error is logged by SQLSTATE and constraint name only and raised as
   `GoodFlows.TestReports.StorageError` (a 500), never with its message.
 
-  `failed_tests/3` is the only read of report contents: it computes a run's
-  failed tests inside Postgres. There is no update, delete or retention API,
+  Report contents are read only inside Postgres: `failed_tests/3` computes
+  a run's failed tests, and `get_report/4` and `report_tests/2` read one
+  report's summary records, groups and a page of its tests. There is no update, delete or retention API,
   no aggregation across partitions and no link to Spry runs. Insert and comparison queries run
   with `log: false` so the document never reaches Ecto logs, and with the
   timeout `config :good_flows, :test_report_db_timeout_ms` (default 15,000).
@@ -234,6 +235,270 @@ defmodule GoodFlows.TestReports do
       line: test["line"],
       duration_us: test["duration_us"],
       outcome: test["outcome"]
+    }
+  end
+
+  @groups_limit 200
+
+  @report_details_sql """
+  SELECT
+    tr.payload->'source',
+    tr.payload->'report'->'truncated',
+    tr.payload->'report'->'records'->0,
+    jsonb_path_query_first(tr.payload->'report'->'records', '$[*] ? (@.event == "suite_finished")'),
+    jsonb_path_exists(tr.payload->'report'->'records', '$[*] ? (@.event == "interrupted")'),
+    jsonb_path_exists(tr.payload->'report'->'records', '$[*] ? (@.event == "max_failures_reached")'),
+    g.groups,
+    g.total
+  FROM test_reports tr
+  CROSS JOIN LATERAL (
+    SELECT
+      coalesce(jsonb_agg(
+        jsonb_build_object(
+          'group', s.r->'group', 'file', s.r->'file', 'outcome', s.r->'outcome',
+          'counts', s.r->'counts', 'duration_us', s.r->'duration_us'
+        ) ORDER BY s.failing DESC, s.i
+      ) FILTER (WHERE s.n <= $5), '[]') AS groups,
+      count(*) AS total
+    FROM (
+      SELECT rec.r, rec.i, rec.r->>'outcome' IN ('failed', 'errored') AS failing,
+        row_number() OVER (ORDER BY rec.r->>'outcome' IN ('failed', 'errored') DESC, rec.i) AS n
+      FROM jsonb_array_elements(tr.payload->'report'->'records') WITH ORDINALITY AS rec(r, i)
+      WHERE rec.r->>'event' = 'group_finished'
+    ) s
+  ) g
+  WHERE tr.id = $1 AND tr.account_id = $2 AND tr.project_id = $3 AND tr.workflow_run_id = $4
+  """
+
+  @doc """
+  One test report of the run `run_id` in `project`, by its server `id`,
+  for the report page. Report contents are read inside Postgres: only the
+  envelope's `source` and `truncated`, the `suite_started` and
+  `suite_finished` records, whether `interrupted` or `max_failures_reached`
+  was recorded, and the first #{@groups_limit} finished groups (failed and
+  errored first, then in record order) reach the application.
+
+  Returns `{:ok, details}` with `report` (summary fields plus `workflow`,
+  `environment` and `inserted_at`), `source`, `truncated`, `suite_started`
+  and `suite_finished` (nil when missing), `interrupted`,
+  `max_failures_reached`, `groups` and `groups_total`. A `run_id` or `id`
+  that is not a lowercase canonical UUID, or a report of another run,
+  project or account, is `{:error, :not_found}`.
+  """
+  @spec get_report(Account.t(), Project.t(), term(), term()) ::
+          {:ok, map()} | {:error, :not_found}
+  def get_report(
+        %Account{id: account_id},
+        %Project{account_id: account_id, id: project_id},
+        run_id,
+        id
+      ) do
+    with true <- canonical_uuid?(run_id) and canonical_uuid?(id),
+         %Report{} = report <- fetch_report(account_id, project_id, run_id, id) do
+      {:ok, Map.put(report_details(account_id, project_id, run_id, id), :report, report)}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  def get_report(%Account{}, %Project{}, _run_id, _id), do: {:error, :not_found}
+
+  defp canonical_uuid?(value), do: GoodFlows.WorkflowRuns.Validator.canonical_uuid?(value)
+
+  defp fetch_report(account_id, project_id, run_id, id) do
+    Report
+    |> where(account_id: ^account_id, project_id: ^project_id, workflow_run_id: ^run_id, id: ^id)
+    |> select(
+      [r],
+      struct(
+        r,
+        ^(Report.summary_fields() ++
+            [:account_id, :project_id, :workflow, :environment, :inserted_at])
+      )
+    )
+    |> Repo.one()
+  end
+
+  defp report_details(account_id, project_id, run_id, id) do
+    %{rows: [[source, truncated, first, finished, interrupted, max_failures, groups, total]]} =
+      Repo.query!(
+        @report_details_sql,
+        [
+          Ecto.UUID.dump!(id),
+          Ecto.UUID.dump!(account_id),
+          Ecto.UUID.dump!(project_id),
+          Ecto.UUID.dump!(run_id),
+          @groups_limit
+        ],
+        log: false,
+        timeout: db_timeout_ms()
+      )
+
+    %{
+      source: source || %{},
+      truncated: truncated == true,
+      suite_started: if(first["event"] == "suite_started", do: first),
+      suite_finished: finished,
+      interrupted: interrupted,
+      max_failures_reached: max_failures,
+      groups:
+        Enum.map(groups, fn g ->
+          %{
+            group: g["group"],
+            file: g["file"],
+            outcome: g["outcome"],
+            counts: g["counts"] || %{},
+            duration_us: g["duration_us"]
+          }
+        end),
+      groups_total: total
+    }
+  end
+
+  @test_filters ~w(all failed passed skipped retried)
+  @test_sorts ~w(order slowest)
+  @tests_page_size 100
+
+  @doc "The `report_tests/2` outcome filters: final outcome, or `retried`."
+  @spec test_filters() :: [String.t()]
+  def test_filters, do: @test_filters
+
+  @doc "The `report_tests/2` sort orders."
+  @spec test_sorts() :: [String.t()]
+  def test_sorts, do: @test_sorts
+
+  @doc "Tests per `report_tests/2` page."
+  @spec tests_page_size() :: pos_integer()
+  def tests_page_size, do: @tests_page_size
+
+  @report_tests_sql """
+  WITH finished AS (
+    SELECT rec.r, rec.i
+    FROM test_reports tr
+    CROSS JOIN LATERAL jsonb_array_elements(tr.payload->'report'->'records')
+      WITH ORDINALITY AS rec(r, i)
+    WHERE tr.id = $1 AND tr.account_id = $2 AND tr.project_id = $3
+      AND rec.r->>'event' = 'test_finished'
+  ),
+  tests AS (
+    SELECT min(i) AS first_i,
+      (array_agg(r ORDER BY i DESC))[1] AS final,
+      jsonb_agg(
+        jsonb_build_object(
+          'outcome', r->'outcome', 'duration_us', r->'duration_us',
+          'meta', coalesce(r->'meta', '{}'::jsonb)
+        ) ORDER BY i
+      ) AS attempts,
+      bool_or(r->>'outcome' IN ('failed', 'errored')) AS ever_failed
+    FROM finished
+    GROUP BY r->>'group', r->'path', r->>'name'
+  ),
+  searched AS (
+    SELECT first_i, final, attempts,
+      CASE WHEN final->>'outcome' IN ('failed', 'errored') THEN 'failed'
+        WHEN final->>'outcome' = 'passed' THEN 'passed'
+        ELSE 'skipped' END AS kind,
+      final->>'outcome' = 'passed' AND ever_failed AS retried
+    FROM tests
+    WHERE $4 = '' OR strpos(lower(concat_ws(' › ',
+      final->>'group',
+      (SELECT string_agg(p, ' › ') FROM jsonb_array_elements_text(final->'path') AS p),
+      final->>'name')), lower($4)) > 0
+  ),
+  matching AS (
+    SELECT * FROM searched
+    WHERE $5 = 'all' OR kind = $5 OR ($5 = 'retried' AND retried)
+  ),
+  page AS (
+    SELECT *, row_number() OVER (
+      ORDER BY CASE WHEN $6 = 'slowest' THEN coalesce((final->>'duration_us')::bigint, -1) END
+        DESC NULLS LAST, first_i
+    ) AS n
+    FROM matching
+    ORDER BY n
+    LIMIT $7 OFFSET $8
+  )
+  SELECT
+    (SELECT jsonb_build_object(
+      'all', count(*),
+      'failed', count(*) FILTER (WHERE kind = 'failed'),
+      'passed', count(*) FILTER (WHERE kind = 'passed'),
+      'skipped', count(*) FILTER (WHERE kind = 'skipped'),
+      'retried', count(*) FILTER (WHERE retried)
+    ) FROM searched),
+    (SELECT count(*) FROM matching),
+    (SELECT coalesce(jsonb_agg(
+      jsonb_build_object(
+        'group', final->'group', 'path', final->'path', 'name', final->'name',
+        'file', final->'file', 'line', final->'line', 'duration_us', final->'duration_us',
+        'outcome', final->'outcome', 'retried', retried, 'attempts', attempts
+      ) ORDER BY n
+    ), '[]') FROM page)
+  """
+
+  @doc """
+  One page of the tests of `report` (from `get_report/4`), computed inside
+  Postgres. A test is one `group`, `path` and `name`; its row is its final
+  execution (the last `test_finished`), with every execution's outcome,
+  duration and `meta` in `attempts`. Tests whose `test_finished` never
+  arrived are not listed.
+
+  Options:
+
+    * `:outcome` – `"all"` (default), `"failed"` (final outcome failed or
+      errored), `"passed"`, `"skipped"` or `"retried"` (final execution
+      passed after an earlier one failed or errored)
+    * `:search` – keeps tests whose `group › path › name` contains it,
+      ignoring case
+    * `:sort` – `"order"` (default, by first execution) or `"slowest"`
+      (final duration, longest first)
+    * `:page` – 1-based, #{@tests_page_size} tests per page
+
+  Returns `tests`, `total` (tests matching the filter and search) and
+  `counts` (tests matching the search, per filter).
+  """
+  @spec report_tests(Report.t(), keyword()) :: %{
+          tests: [map()],
+          total: non_neg_integer(),
+          counts: %{String.t() => non_neg_integer()}
+        }
+  def report_tests(%Report{id: id, account_id: account_id, project_id: project_id}, opts) do
+    outcome = Keyword.get(opts, :outcome, "all")
+    sort = Keyword.get(opts, :sort, "order")
+    page = Keyword.get(opts, :page, 1)
+
+    %{rows: [[counts, total, tests]]} =
+      Repo.query!(
+        @report_tests_sql,
+        [
+          Ecto.UUID.dump!(id),
+          Ecto.UUID.dump!(account_id),
+          Ecto.UUID.dump!(project_id),
+          Keyword.get(opts, :search, ""),
+          if(outcome in @test_filters, do: outcome, else: "all"),
+          if(sort in @test_sorts, do: sort, else: "order"),
+          @tests_page_size,
+          (max(page, 1) - 1) * @tests_page_size
+        ],
+        log: false,
+        timeout: db_timeout_ms()
+      )
+
+    %{
+      counts: counts,
+      total: total,
+      tests:
+        Enum.map(tests, fn test ->
+          test
+          |> test_fields()
+          |> Map.merge(%{
+            retried: test["retried"],
+            attempts:
+              Enum.map(test["attempts"], fn a ->
+                %{outcome: a["outcome"], duration_us: a["duration_us"], meta: a["meta"]}
+              end)
+          })
+        end)
     }
   end
 

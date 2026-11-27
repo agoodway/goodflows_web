@@ -258,6 +258,7 @@ defmodule GoodFlowsWeb.Router do
       live "/projects/:slug", ProjectLive.Show, :show
       live "/projects/:slug/runs", WorkflowRunLive.Index, :index
       live "/projects/:slug/runs/:run_id", WorkflowRunLive.Show, :show
+      live "/projects/:slug/runs/:run_id/reports/:id", TestReportLive.Show, :show
       live "/projects/:slug/change-requests", ChangeRequestLive.Index, :index
       live "/projects/:slug/change-requests/:number", ChangeRequestLive.Show, :show
       live "/projects/:slug/review-policy", ReviewPolicyLive.Show, :show

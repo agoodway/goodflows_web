@@ -2,7 +2,8 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Show do
   @moduledoc """
   One workflow run: its summary, every job (failures first, or in result
   order), the runs it called and the run that called it, the failed tests
-  of its test reports, its test report summaries and the change requests
+  of its test reports, its test report summaries (each linking to
+  `GoodFlowsWeb.TestReportLive.Show`) and the change requests
   whose head is its commit. Every account member sees every field,
   including commands, errors and thread links. It writes nothing.
 
@@ -335,7 +336,14 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Show do
               class="space-y-2"
             >
               <div class="flex flex-wrap items-center gap-2">
-                <h3 class="font-mono text-sm font-semibold">{result.report.job}</h3>
+                <h3 class="font-mono text-sm font-semibold">
+                  <.text_link
+                    id={"report-#{result.report.id}-link"}
+                    navigate={report_path(@current_account, @project, @run.run_id, result.report.id)}
+                  >
+                    {result.report.job}
+                  </.text_link>
+                </h3>
                 <.tag :if={result.report.partition}>
                   partition {partition(result.report)}
                 </.tag>
@@ -346,7 +354,7 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Show do
                   <.status_badge dot>Incomplete report</.status_badge>
                 </span>
                 <span class="ml-auto text-xs text-muted">
-                  {plural(result.failed_total, "failed test", "failed tests")}
+                  {count_label(result.failed_total, "failed test", "failed tests")}
                 </span>
               </div>
               <p
@@ -367,7 +375,7 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Show do
                 id={"report-#{result.report.id}-more"}
                 class="text-xs text-muted"
               >
-                {plural(
+                {count_label(
                   result.failed_total - length(result.failed),
                   "more failed test is not shown.",
                   "more failed tests are not shown."
@@ -389,7 +397,7 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Show do
                   id={"report-#{result.report.id}-retried-more"}
                   class="mt-2 text-xs text-muted"
                 >
-                  {plural(
+                  {count_label(
                     result.retried_total - length(result.retried),
                     "more test that passed on retry is not shown.",
                     "more tests that passed on retry are not shown."
@@ -409,7 +417,12 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Show do
           empty={@reports == []}
         >
           <:col :let={report} label="Job">
-            <.tag>{report.job}</.tag>
+            <.text_link
+              id={"test-report-#{report.id}-link"}
+              navigate={report_path(@current_account, @project, @run.run_id, report.id)}
+            >
+              <span class="font-mono">{report.job}</span>
+            </.text_link>
           </:col>
           <:col :let={report} label="Job status">
             <.job_status_badge status={report.job_status} />
@@ -517,14 +530,11 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Show do
   defp partition(%{partition: p, partition_count: nil}), do: p
   defp partition(%{partition: p, partition_count: n}), do: "#{p}/#{n}"
 
-  defp test_duration(us) when us < 1_000, do: "#{us}µs"
-  defp test_duration(us), do: duration(div(us, 1_000))
-
   defp tickets(doc), do: (doc["links"] || %{})["tickets"] || []
   defp threads(doc), do: (doc["links"] || %{})["threads"] || []
 
   defp host(host) do
-    cpus = host["logical_cpus"] && plural(host["logical_cpus"], "CPU", "CPUs")
+    cpus = host["logical_cpus"] && count_label(host["logical_cpus"], "CPU", "CPUs")
 
     [host["os"], host["arch"], cpus]
     |> Enum.reject(&is_nil/1)
@@ -535,8 +545,9 @@ defmodule GoodFlowsWeb.WorkflowRunLive.Show do
   defp bytes(n) when n < 1_048_576, do: "#{div(n + 1023, 1024)} KiB"
   defp bytes(n), do: "#{Float.round(n / 1_048_576, 1)} MiB"
 
-  defp plural(1, one, _many), do: "1 #{one}"
-  defp plural(n, _one, many), do: "#{n} #{many}"
+  defp report_path(account, project, run_id, id),
+    do:
+      ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/runs/#{run_id}/reports/#{id}"
 
   defp run_path(account, project, run_id),
     do: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/runs/#{run_id}"

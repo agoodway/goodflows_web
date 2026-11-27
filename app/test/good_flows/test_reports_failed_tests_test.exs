@@ -160,4 +160,115 @@ defmodule GoodFlows.TestReportsFailedTestsTest do
     assert [%{report: %{report_id: "other-run"}}] =
              TestReports.failed_tests(ctx.account, ctx.project, @other_run)
   end
+
+  describe "one report" do
+    defp report_details!(ctx, report_id) do
+      %Report{id: id} = Repo.get_by!(Report, report_id: report_id)
+      {:ok, details} = TestReports.get_report(ctx.account, ctx.project, @run_id, id)
+      details
+    end
+
+    defp names(result), do: Enum.map(result.tests, & &1.name)
+
+    test "get_report reads the summary records and lists failing groups first", ctx do
+      ack = stored_report_fixture(ctx.account, ctx.project, "incomplete")
+
+      {:ok, details} = TestReports.get_report(ctx.account, ctx.project, @run_id, ack.id)
+
+      assert {details.report.job, details.report.status} == {"test", "incomplete"}
+      assert details.suite_started["runner"]["name"] == "exunit"
+      assert details.suite_finished == nil
+      assert {details.interrupted, details.max_failures_reached} == {true, true}
+
+      insert_report!(ctx.project, "groups", [
+        %{"event" => "group_finished", "group" => "ok", "outcome" => "passed", "counts" => %{}},
+        %{"event" => "group_finished", "group" => "bad", "outcome" => "errored", "counts" => %{}}
+      ])
+
+      assert %{groups: [%{group: "bad"}, %{group: "ok"}], groups_total: 2} =
+               report_details!(ctx, "groups")
+    end
+
+    test "get_report is not found for another run, project or account, or a bad id", ctx do
+      ack = stored_report_fixture(ctx.account, ctx.project, "failed")
+
+      for {account, project, run_id, id} <- [
+            {ctx.account, ctx.project, @other_run, ack.id},
+            {ctx.account, project_fixture(ctx.account), @run_id, ack.id},
+            {ctx.other, ctx.other_project, @run_id, ack.id},
+            {ctx.account, ctx.project, @run_id, String.upcase(ack.id)},
+            {ctx.account, ctx.project, @run_id, "nope"}
+          ] do
+        assert TestReports.get_report(account, project, run_id, id) == {:error, :not_found}
+      end
+    end
+
+    test "report_tests: one row per test with its final outcome and every attempt", ctx do
+      insert_report!(ctx.project, "r1", [
+        finished("A", "flaky", "failed", %{"duration_us" => 5, "meta" => %{"try" => 1}}),
+        finished("A", "breaks", "passed"),
+        finished("A", "flaky", "passed", %{"duration_us" => 7}),
+        finished("A", "breaks", "errored"),
+        finished("B", "flaky", "skipped", %{"duration_us" => nil})
+      ])
+
+      report = report_details!(ctx, "r1").report
+      all = TestReports.report_tests(report, [])
+
+      assert all.counts == %{
+               "all" => 3,
+               "failed" => 1,
+               "passed" => 1,
+               "skipped" => 1,
+               "retried" => 1
+             }
+
+      assert [flaky, breaks, _skipped] = all.tests
+      assert {flaky.outcome, flaky.retried, flaky.duration_us} == {"passed", true, 7}
+
+      assert Enum.map(flaky.attempts, &{&1.outcome, &1.meta}) ==
+               [{"failed", %{"try" => 1}}, {"passed", %{}}]
+
+      assert {breaks.outcome, breaks.retried} == {"errored", false}
+
+      assert names(TestReports.report_tests(report, outcome: "failed")) == ["breaks"]
+      assert names(TestReports.report_tests(report, outcome: "retried")) == ["flaky"]
+
+      assert %{tests: [%{group: "B"}], total: 1} =
+               TestReports.report_tests(report, outcome: "skipped")
+    end
+
+    test "report_tests searches group, path and name ignoring case", ctx do
+      insert_report!(ctx.project, "r1", [
+        finished("Parser", "x", "passed"),
+        finished("G", "y", "passed", %{"path" => ["the PARSER"]}),
+        finished("G", "z", "failed")
+      ])
+
+      report = report_details!(ctx, "r1").report
+      result = TestReports.report_tests(report, search: "parser")
+
+      assert names(result) == ["x", "y"]
+      assert result.counts["all"] == 2 and result.counts["failed"] == 0
+    end
+
+    test "report_tests sorts slowest first with no duration last, and pages by 100", ctx do
+      insert_report!(
+        ctx.project,
+        "r1",
+        [finished("G", "none", "skipped", %{"duration_us" => nil})] ++
+          for(n <- 1..150, do: finished("G", "t#{n}", "passed", %{"duration_us" => n}))
+      )
+
+      report = report_details!(ctx, "r1").report
+      slowest = TestReports.report_tests(report, sort: "slowest")
+      assert {hd(names(slowest)), slowest.total} == {"t150", 151}
+
+      last = TestReports.report_tests(report, sort: "slowest", page: 2)
+      assert length(last.tests) == 51
+      assert List.last(names(last)) == "none"
+
+      assert hd(names(TestReports.report_tests(report, page: 2))) == "t100"
+    end
+  end
 end
