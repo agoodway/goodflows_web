@@ -25,10 +25,11 @@ defmodule GoodFlows.Migrations.CreateProjectsMigrationTest do
 
   # Cache entries and cache-key columns also reference `projects`, so they
   # are rolled back (newest first) before `projects` and migrated up after.
-  # Change request, review, event, merge lease and defect tables and the
-  # review policy versions reference `projects` too (and the last index is
+  # Change request, review, event, merge lease, defect and stored change
+  # tables and the review policy versions reference `projects` too (and the last index is
   # on `workflow_runs`), so they come first.
   @cache_migrations [
+    {20_261_127_175_802, GoodFlows.Repo.Migrations.CreateStoredChanges, "create_stored_changes"},
     {20_261_124_144_912, GoodFlows.Repo.Migrations.AddChangeRequestIterationHistory,
      "add_change_request_iteration_history"},
     {20_261_121_190_243, GoodFlows.Repo.Migrations.CreateDefects, "create_defects"},

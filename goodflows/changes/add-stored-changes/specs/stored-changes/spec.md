@@ -33,8 +33,8 @@ Refs: D9, D28
 A push whose change's latest stored version has status `archived` SHALL be refused with `409`, storing nothing, unless it is identical to that version; a push that also fails a `422` check SHALL be `422`. A push whose own status is `archived` SHALL be stored like any other status.
 
 ### Requirement: Changes are listed page by page
-Refs: D15, D21, G3
-`GET /api/v1/projects/:project/changes` SHALL list the project's stored changes by latest version, newest latest push first with ties broken by id, taking `limit` (1 to 200, default 50), `cursor`, and `status` (`proposed`, `approved` or `archived`, matched against the latest version), and SHALL return `next_cursor`, null on the last page. A malformed parameter SHALL be `422`.
+Refs: D15, D21, D29, G3
+`GET /api/v1/projects/:project/changes` SHALL list the project's stored changes by latest version, newest latest push first with ties broken by id, taking `limit` (1 to 200, default 50), `cursor`, and `status` (`proposed`, `approved` or `archived`, matched against the latest version), and SHALL return `next_cursor`, null on the last page. Each row SHALL carry `change_requests`: every change request of the project whose `change_id` equals the row's id, as number and state ordered by number, and `[]` when there is none, for `sk_` and `pk_` keys alike. A malformed parameter SHALL be `422`.
 
 ### Requirement: Reading a change returns its latest version and linked change requests
 Refs: D11, D15, G3, G4
@@ -45,8 +45,8 @@ Refs: D2, D15, D26, G2
 `GET /api/v1/projects/:project/changes/:change_id/versions` SHALL list the versions newest first, page by page with `limit` (1 to 200, default 50), `cursor` and `next_cursor`, each with its number, its own status, `pushed_at`, `source`, the pusher and `latest` (true only for the latest version). `GET /api/v1/projects/:project/changes/:change_id/versions/:n` SHALL return version `n` with its files, its own status, the pusher, and the change's `latest_status`. An unknown id or version SHALL be `404`.
 
 ### Requirement: Key access to stored changes
-Refs: D8, D19, D26
-Any `sk_` key of the account SHALL push, read and delete the project's stored changes and see each version's pusher. A `pk_` key SHALL list changes and list versions, with the pusher null. A `pk_` request for the change or for one version SHALL be `403`, whether or not the id exists. `ck_` keys and other accounts' keys SHALL be refused as on the other project routes.
+Refs: D8, D19, D26, D30
+Any `sk_` key of the account SHALL push, read and delete the project's stored changes and see each version's pusher. A `pk_` key SHALL list changes and list versions, with the pusher null. In the versions list a `pk_` key SHALL see only each version's number, status, `pushed_at`, `source` and `latest`, with the pusher null. A `pk_` request for the change or for one version SHALL be `403`, whether or not the id exists. `ck_` keys and other accounts' keys SHALL be refused as on the other project routes.
 
 ### Requirement: A delete removes the change unless a change request links it
 Refs: D4, D10, D11, D20, D25, D28, A1

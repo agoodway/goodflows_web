@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Gives clients and agents an append-only, per-project feed of change request activity with a keyset cursor and an optional long-poll, so they learn about state, verdict, scenario set, answer, task and policy changes without tight polling.
+Gives clients and agents an append-only, per-project feed of change request and stored change activity with a keyset cursor and an optional long-poll, so they learn about state, verdict, scenario set, answer, task and policy changes without tight polling.
 
 ## Requirements
 
@@ -30,10 +30,10 @@ Each event SHALL have `id` (its cursor), `type`, `number` (the change request nu
 
 #### Scenario: Event types
 - **WHEN** a client reads the feed
-- **THEN** each event's `type` is one of `cr_state_changed`, `cr_retargeted`, `cr_parent_changed`, `cr_dependencies_changed`, `verdict_changed`, `scenario_set_uploaded`, `scenario_set_approved`, `scenario_set_rejected`, `answer_recorded`, `task_created`, `task_completed`, `policy_version_created`, `lease_acquired`, `lease_renewed`, `lease_expired`, `lease_released`, `defect_recorded`, `workflow_run_stored` and `verify_run_stored`
+- **THEN** each event's `type` is one of `cr_state_changed`, `cr_retargeted`, `cr_parent_changed`, `cr_dependencies_changed`, `verdict_changed`, `scenario_set_uploaded`, `scenario_set_approved`, `scenario_set_rejected`, `answer_recorded`, `task_created`, `task_completed`, `policy_version_created`, `lease_acquired`, `lease_renewed`, `lease_expired`, `lease_released`, `defect_recorded`, `workflow_run_stored`, `verify_run_stored`, `change_pushed` and `change_deleted`
 
 #### Scenario: Event without a change request
-- **WHEN** a client reads a `policy_version_created` event or the `defect_recorded` event of an unattributed defect
+- **WHEN** a client reads a `policy_version_created` event, a `change_pushed` or `change_deleted` event, or the `defect_recorded` event of an unattributed defect
 - **THEN** its `number` is null
 
 #### Scenario: Lease event fields
@@ -337,3 +337,25 @@ The OpenAPI document SHALL list `workflow_run_stored` and `verify_run_stored` am
 #### Scenario: OpenAPI lists run events
 - **WHEN** a client reads the OpenAPI document
 - **THEN** the project event types include `workflow_run_stored` and `verify_run_stored`, with the payload fields of each
+
+### Requirement: Stored change pushes and deletes are recorded in the project feed
+The feed SHALL record `change_pushed` once for each push that stores a new version of a stored change, with `data` `change_id` and `version`, and `change_deleted` once for each successful delete of a stored change, with `data` `change_id`. Each is written in the transaction that stores or deletes, with `number` null, and its `actor` is the pushing or deleting key and its membership. A push identical to the latest version and a refused push or delete MUST record no event.
+
+#### Scenario: Push stores a version
+- **WHEN** a client pushes change `add-login` and version 1 is stored
+- **THEN** the feed gains one `change_pushed` event with `number` null and `data` `{"change_id": "add-login", "version": 1}`
+
+#### Scenario: Identical push
+- **WHEN** a client pushes the files of `add-login`'s latest version again
+- **THEN** no event is recorded
+
+#### Scenario: Delete a stored change
+- **WHEN** a client deletes stored change `add-logout`
+- **THEN** the feed gains one `change_deleted` event with `number` null and `data` `{"change_id": "add-logout"}`
+
+### Requirement: Stored change events are in the OpenAPI document
+The OpenAPI document SHALL list `change_pushed` and `change_deleted` among the feed's event types, with the payload fields of each.
+
+#### Scenario: OpenAPI lists stored change events
+- **WHEN** a client reads the OpenAPI document
+- **THEN** the project event types include `change_pushed` and `change_deleted`, with the payload fields of each

@@ -676,15 +676,20 @@ defmodule GoodFlows.ChangeRequests do
       else: :ok
   end
 
-  # Serializes everything that reads or changes who depends on change id
-  # `change_id` in a project with what changes the state of a change
-  # request linking it: a dependencies update and the merge, state change
-  # or create of a linking change request. Taken before any change request
-  # row lock. `lock_head/2` keys a different namespace, and no path takes
-  # both, so the two cannot form a cycle.
-  defp lock_change_id(_project_id, nil), do: :ok
+  @doc """
+  Serializes everything that reads or changes who depends on change id
+  `change_id` in a project with what changes the state of a change
+  request linking it: a dependencies update and the merge, state change
+  or create of a linking change request. Stored change pushes and deletes
+  of the id take it too (`GoodFlows.StoredChanges`), so a delete sees
+  every linking change request committed before it. Taken before any
+  change request row lock. `lock_head/2` keys a different namespace, and
+  no path takes both, so the two cannot form a cycle.
+  """
+  @spec lock_change_id(Ecto.UUID.t(), String.t() | nil) :: :ok
+  def lock_change_id(_project_id, nil), do: :ok
 
-  defp lock_change_id(project_id, change_id) do
+  def lock_change_id(project_id, change_id) do
     Repo.query!(
       "SELECT pg_advisory_xact_lock(hashtextextended('change_request_change:' || $1 || ':' || $2, 0))",
       [project_id, change_id],

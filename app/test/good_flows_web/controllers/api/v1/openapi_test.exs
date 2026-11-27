@@ -123,7 +123,13 @@ defmodule GoodFlowsWeb.Api.V1.OpenApiTest do
     {"/api/v1/projects/{project}/merge-leases/{lease_id}", "delete"},
     {"/api/v1/projects/{project}/defects", "get"},
     {"/api/v1/projects/{project}/defects", "post"},
-    {"/api/v1/projects/{project}/calibration", "get"}
+    {"/api/v1/projects/{project}/calibration", "get"},
+    {"/api/v1/projects/{project}/changes", "get"},
+    {"/api/v1/projects/{project}/changes", "post"},
+    {"/api/v1/projects/{project}/changes/{change_id}", "get"},
+    {"/api/v1/projects/{project}/changes/{change_id}", "delete"},
+    {"/api/v1/projects/{project}/changes/{change_id}/versions", "get"},
+    {"/api/v1/projects/{project}/changes/{change_id}/versions/{n}", "get"}
   ]
 
   test "documents the project slug rule on every project path parameter", %{conn: conn} do

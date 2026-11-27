@@ -119,6 +119,11 @@ defmodule GoodFlowsWeb.Router do
     get "/feature-index", FeatureIndexController, :show
     get "/feature-index/versions", FeatureIndexController, :index
     get "/feature-index/versions/:version", FeatureIndexController, :show_version
+    # Any valid key lists; the change and version reads refuse public keys.
+    get "/changes", StoredChangeController, :index
+    get "/changes/:change_id", StoredChangeController, :show
+    get "/changes/:change_id/versions", StoredChangeController, :versions
+    get "/changes/:change_id/versions/:n", StoredChangeController, :show_version
     get "/events", EventController, :index
     get "/defects", DefectController, :index
     get "/calibration", CalibrationController, :show
@@ -190,6 +195,8 @@ defmodule GoodFlowsWeb.Router do
     post "/verify-runs", VerifyRunController, :create
     post "/verify-runs/:run_id/commit", VerifyRunController, :commit
     post "/feature-index", FeatureIndexController, :create
+    post "/changes", StoredChangeController, :create
+    delete "/changes/:change_id", StoredChangeController, :delete
 
     put "/change-requests/:number/parent", ChangeRequestController, :set_parent
     delete "/change-requests/:number/parent", ChangeRequestController, :clear_parent

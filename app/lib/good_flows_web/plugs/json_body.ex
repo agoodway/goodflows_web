@@ -15,7 +15,10 @@ defmodule GoodFlowsWeb.Plugs.JsonBody do
   (`:change_request_read_timeout_ms`, default 30,000); `400` for an
   unreadable body or malformed JSON; and `422` on `body` for nesting deeper
   than 8 levels, duplicate keys, U+0000 or integers beyond ±(2^53 - 1).
-  Messages are fixed and never echo the body.
+  Messages are fixed and never echo the body. With `errors: {module,
+  function}`, those `422` errors are rendered by `module.function(errors)`
+  from the `{path, message}` list instead, for a route that names the
+  value at fault.
 
   The normalized document is stored at `:json_body` in `conn.private`.
   """
@@ -30,7 +33,7 @@ defmodule GoodFlowsWeb.Plugs.JsonBody do
   @default_read_timeout_ms 30_000
 
   @impl Plug
-  def init(opts), do: Keyword.validate!(opts, [:limit, :default])
+  def init(opts), do: Keyword.validate!(opts, [:limit, :default, :errors])
 
   @impl Plug
   def call(conn, opts) do
@@ -39,7 +42,7 @@ defmodule GoodFlowsWeb.Plugs.JsonBody do
     with :ok <- RawBodyHeaders.check_json_content_type(conn),
          :ok <- RawBodyHeaders.check_content_encoding(conn),
          :ok <- RawBodyHeaders.check_declared_length(conn, limit) do
-      read(conn, limit)
+      read(conn, limit, opts[:errors])
     else
       {:error, reason} -> reject(conn, reason)
     end
@@ -51,16 +54,16 @@ defmodule GoodFlowsWeb.Plugs.JsonBody do
     do:
       Application.get_env(:good_flows, :change_request_read_timeout_ms, @default_read_timeout_ms)
 
-  defp read(conn, limit) do
+  defp read(conn, limit, render) do
     deadline = System.monotonic_time(:millisecond) + read_timeout_ms()
 
     case RawBody.read(conn, limit, deadline) do
-      {:ok, conn, body} -> decode(conn, body)
+      {:ok, conn, body} -> decode(conn, body, render)
       {:error, conn, reason} -> reject(conn, reason)
     end
   end
 
-  defp decode(conn, body) do
+  defp decode(conn, body, render) do
     with :ok <- JsonDocument.check_depth(body, @max_depth),
          {:ok, decoded} <- JsonDocument.decode(body),
          {:ok, document} <- JsonDocument.normalize(decoded) do
@@ -71,6 +74,10 @@ defmodule GoodFlowsWeb.Plugs.JsonBody do
 
       {:error, :malformed_json} ->
         reject(conn, :malformed_json)
+
+      {:error, errors} when is_tuple(render) ->
+        {module, function} = render
+        send_json(conn, 422, %{errors: apply(module, function, [errors])})
 
       {:error, errors} ->
         reject(conn, {:invalid, errors |> Enum.map(&elem(&1, 1)) |> Enum.uniq()})

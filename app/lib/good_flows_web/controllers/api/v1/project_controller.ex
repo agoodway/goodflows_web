@@ -132,7 +132,8 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
     summary: "Delete a project",
     description:
       "Only a project without recipes, test reports, workflow runs, change requests " <>
-        "(in any state) or verify runs (in any status) can be deleted; otherwise `409`. " <>
+        "(in any state), verify runs (in any status) or stored changes can be deleted; " <>
+        "otherwise `409`. " <>
         "Cache entries, cache keys, review policy versions and feature index versions are " <>
         "deleted with the project.",
     parameters: @project_param,
@@ -143,8 +144,8 @@ defmodule GoodFlowsWeb.Api.V1.ProjectController do
         {"Public keys and plain members cannot write", "application/json", ErrorResponse},
       not_found: {"No such project in this account", "application/json", ErrorResponse},
       conflict:
-        {"The project still has recipes, test reports, workflow runs, change requests or " <>
-           "verify runs", "application/json", ConflictResponse},
+        {"The project still has recipes, test reports, workflow runs, change requests, " <>
+           "verify runs or stored changes", "application/json", ConflictResponse},
       unprocessable_entity: {"Invalid project slug", "application/json", ValidationErrorResponse}
     ]
   )

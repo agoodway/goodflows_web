@@ -181,6 +181,18 @@ decisions:
     by: agent
     why: "The id must come from a valid change.md before the archived check can run, and 204 matches project delete"
     rejected: [409 before content checks, 200 with a body on delete]
+  - id: D29
+    question: Does each row of the change list carry the change requests that link it?
+    answer: "Yes. Each row of GET /changes carries change_requests, every change request of the project whose change_id equals the row's id, as number and state ordered by number, and [] when none, in the shape the change read returns. sk_ and pk_ keys both see it. This amends D19, whose change list fields did not include it"
+    by: agent
+    why: "Found while building: tbrewer asked for it through the delegating thread. The CLI's D16 has goodflows change list print each change's linked change request numbers, and a pk_ key may list changes but gets 403 on the change read, so the list is the only route where it can see them. pk_ keys already read change request numbers and states on the change request routes, so this reveals nothing new"
+    rejected: [linked change requests on the change read only]
+  - id: D30
+    question: Does the key access requirement state what a pk_ key sees in the versions list?
+    answer: "Yes. In the versions list a pk_ key sees only each version's number, status, pushed_at, source and latest, with the pusher null, as D19 already says"
+    by: agent
+    why: "Found while building: the code renders only D19's fields to pk_ keys in the versions list, but the requirement said only that pk_ keys list versions with the pusher null, so it was silent on the other fields"
+    rejected: [leave the field list to D19 alone]
 left_to_builder:
   - Table layout, how file text and parsed fields are stored, and how the identical-push comparison is computed, as long as it compares the set of paths and every file's bytes
   - Project event type names and payloads, as long as each names the change id and, for a push, the version number
