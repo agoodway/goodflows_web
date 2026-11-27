@@ -1,0 +1,99 @@
+# goodflows review policy for goodflows-web. Reasons for each non-default value:
+# - evidence.ignore_paths: "**/*.md" is dropped because tests read Markdown
+#   (app/test/good_flows/scenario_sets/sections_test.exs:7 reads a .md fixture) and
+#   the verify-goodflows skill's feature files are .md. openspec/** is narrowed to
+#   .md and .yaml because tests read JSON fixtures under openspec/changes/archive
+#   (app/test/support/fixtures/workflow_run_fixtures.ex:12).
+# - evidence.required_workflows: ci is the goodflows.toml workflow that runs the
+#   checks; goodflows.toml [reporting] history = true uploads every run.
+# - size: near the 90th percentile of the last 80 landings on main
+#   (p90 78 files / 7,003 lines).
+# - paths: migrations, auth and API key code, release and deploy config,
+#   dependency lockfile, CI config and this policy go through a person.
+# - coverage.unmapped_areas: the verify-goodflows feature files are synced as
+#   feature index version 1, so changed files no feature maps need review.
+format = "review-policy/1"
+
+[coverage]
+unmapped_areas = "needs_review"
+undriven_features = "ignore"
+
+[evidence]
+required_workflows = ["ci"]
+ignore_paths = [
+  "docs/**",
+  "openspec/**/*.md",
+  "openspec/**/*.yaml",
+  "DESIGN.md",
+  "AGENTS.md",
+  "app/AGENTS.md",
+  "app/README.md",
+]
+
+[size]
+max_changed_files = 80
+max_changed_lines = 7000
+
+[[paths]]
+glob = "goodflows/review-policy.toml"
+outcome = "needs_review"
+
+[[paths]]
+glob = "goodflows.toml"
+outcome = "needs_review"
+
+[[paths]]
+glob = ".agents/setup"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/priv/repo/migrations/**"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/priv/pgflow/**"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/lib/good_flows_web/user_auth.ex"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/lib/good_flows_web/plugs/api_auth.ex"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/lib/good_flows/accounts/api_key.ex"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/lib/good_flows/accounts/user_token.ex"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/lib/good_flows/accounts/scope.ex"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/lib/good_flows/caches/keys.ex"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/config/runtime.exs"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/config/prod.exs"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/rel/**"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/Dockerfile"
+outcome = "needs_review"
+
+[[paths]]
+glob = "app/mix.lock"
+outcome = "needs_review"
