@@ -22,7 +22,12 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
 
   On a `draft` or `open` change request, a member answers review items
   here (`GoodFlows.Review.answer/4` with a `dashboard` actor). The answer
-  is bound to the head the page showed. Actions a member may not take,
+  is bound to the head the page showed. Approve is a split button
+  (`split_button/1`): its main part approves at once with no note, its
+  menu opens the answer dialog to approve with a note. An item approved
+  at the head offers Unapprove instead, which withdraws the approval at
+  once (`GoodFlows.Review.withdraw/4`); set approval and weakened diff
+  items offer none. Actions a member may not take,
   under the policy's `scenarios.approver`, are hidden, and the domain
   refuses them anyway. On the QA panel, a member the approver rule allows
   approves or rejects the intent set version shown from a popover, bound
@@ -529,9 +534,50 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
                   </p>
                 </div>
                 <%= if may_answer?(item, @may_approve?, @membership) do %>
-                  <div class="-ml-2 flex flex-wrap gap-1 sm:ml-0 sm:justify-end">
+                  <div class="-ml-2 flex flex-wrap items-center gap-1 sm:ml-0 sm:justify-end">
+                    <.split_button
+                      :if={approve_action(item) == :approve}
+                      id={"#{item_dom_id(item)}-approve"}
+                      phx-click="approve"
+                      phx-value-item={item.id}
+                      phx-value-head={@packet.head}
+                      phx-disable-with="Approving…"
+                      aria-label={"Approve: #{kind_label(item.kind)}"}
+                      menu_label={"More ways to approve: #{kind_label(item.kind)}"}
+                    >
+                      Approve
+                      <:menu>
+                        <button
+                          id={"#{item_dom_id(item)}-approve-note"}
+                          type="button"
+                          class="menu-item"
+                          phx-click={
+                            "open_answer"
+                            |> JS.push(value: %{item: item.id, answer: "approve"})
+                            |> hide_popover("#{item_dom_id(item)}-approve-menu")
+                          }
+                        >
+                          Approve with note…
+                        </button>
+                      </:menu>
+                    </.split_button>
                     <.button
-                      :for={answer <- other_answers(item)}
+                      :if={approve_action(item) == :unapprove}
+                      id={"#{item_dom_id(item)}-unapprove"}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      class="ui-button-muted"
+                      phx-click="unapprove"
+                      phx-value-item={item.id}
+                      phx-value-head={@packet.head}
+                      phx-disable-with="Unapproving…"
+                      aria-label={"Unapprove: #{kind_label(item.kind)}"}
+                    >
+                      Unapprove
+                    </.button>
+                    <.button
+                      :for={answer <- other_answers(item) -- ["approve"]}
                       id={"#{item_dom_id(item)}-#{answer}"}
                       type="button"
                       variant="ghost"
@@ -1032,6 +1078,36 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     end
   end
 
+  def handle_event(event, %{"item" => item_id} = params, socket)
+      when event in ~w(approve unapprove) do
+    %{packet: packet, may_approve?: may_approve?} = socket.assigns
+    %{current_scope: scope, current_account: account} = socket.assigns
+    item = packet && Enum.find(packet.items, &(&1.id == item_id))
+    membership = Accounts.get_account_user(scope.user, account)
+    head = params["head"]
+
+    cond do
+      item == nil ->
+        {:noreply, socket |> put_flash(:error, error_message(:not_found)) |> reload()}
+
+      not may_answer?(item, may_approve?, membership) ->
+        {:noreply, put_flash(socket, :error, "You can't answer this item")}
+
+      event == "approve" ->
+        socket.assigns.change_request
+        |> Review.answer(Review.dashboard_actor(membership), item_id, %{
+          "head" => head,
+          "answer" => "approve"
+        })
+        |> one_click(socket)
+
+      true ->
+        socket.assigns.change_request
+        |> Review.withdraw(Review.dashboard_actor(membership), item_id, head)
+        |> one_click(socket)
+    end
+  end
+
   def handle_event("toggle_scenario", %{"source" => source, "id" => id}, socket) do
     key = {source, id}
     open = socket.assigns.open_scenarios
@@ -1102,6 +1178,11 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     |> then(&if(note in [nil, ""], do: &1, else: Map.put(&1, "note", note)))
     |> then(&if(dialog.answer == "choose", do: Map.put(&1, "option", params["option"]), else: &1))
   end
+
+  defp one_click({:ok, _answer}, socket), do: {:noreply, reload(socket)}
+
+  defp one_click({:error, reason}, socket),
+    do: {:noreply, socket |> put_flash(:error, error_message(reason)) |> reload()}
 
   defp answered({:ok, _answer}, _params, socket) do
     {:noreply, socket |> close_dialog() |> put_flash(:info, "Answer recorded.") |> reload()}
@@ -1191,6 +1272,10 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
     do: "Some of these items were answered meanwhile. Nothing was approved; review them again."
 
   defp error_message(:not_found), do: "This item no longer needs an answer at this head."
+
+  defp error_message(:not_approved),
+    do: "This item's answer changed meanwhile. Nothing was unapproved; review it again."
+
   defp error_message(:forbidden), do: "You can't answer this item"
   defp error_message(:not_active), do: "This change request is no longer open"
   defp error_message(:stale_digest), do: "The scenario set changed. Review the items again."
@@ -1935,6 +2020,18 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   }
 
   defp bulk_kind?(kind), do: kind in @bulk_kinds
+
+  # Whether the item offers the Approve split button, Unapprove or neither.
+  # Set approvals record a set decision on approve, which a withdrawal
+  # could not undo, so they offer no Unapprove.
+  defp approve_action(item) do
+    cond do
+      "approve" not in item.answers -> nil
+      item.answer == nil or item.answer.answer != "approve" -> :approve
+      item.kind in @approval_kinds -> nil
+      true -> :unapprove
+    end
+  end
 
   # A question can be chosen again with another option; any other answer
   # is not offered again once given.

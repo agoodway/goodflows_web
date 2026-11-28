@@ -492,6 +492,19 @@
   }
   .ui-button-danger:hover { background: color-mix(in oklch, var(--color-error) 20%, transparent); }
 
+  /* Split buttons (`split_button/1`): a main action joined to its "…" menu trigger, with a muted border. */
+  .ui-split-button { display: inline-flex; }
+  .ui-split-button > .ui-button-outline,
+  .ui-button-outline.ui-button-muted { border-color: var(--line); }
+  .ui-split-button > .ui-button:has(+ .ui-button) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .ui-split-button > .ui-button + .ui-button {
+    margin-left: -1px;
+    padding-inline: 0.5rem;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+  .ui-split-menu { width: 12rem; padding: 0.25rem; }
+
   .ui-button:disabled,
   .ui-button[aria-disabled="true"],
   .ui-button.phx-submit-loading,

@@ -21,6 +21,8 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
       answers accept a diff digest)
     - `scenario_set_rejected`: `source`, `digest`, `note`
     - `answer_recorded`: `item_id`, `kind`, `head`, `answer`, `option`, `note`
+    - `answer_withdrawn`: `item_id`, `kind`, `head`, `answer` (a member withdrew the item's
+      current answer at the head in the dashboard)
     - `task_created`: `task_id`, `item_id`, `head`, `note`
     - `task_completed`: `task_id`, `item_id`
     - `policy_version_created`: `version`, `note` (`number` is null)
@@ -51,6 +53,7 @@ defmodule GoodFlowsWeb.Schemas.ProjectEvent do
         enum: ~w(cr_state_changed cr_retargeted cr_parent_changed cr_dependencies_changed
           verdict_changed
           scenario_set_uploaded scenario_set_approved scenario_set_rejected answer_recorded
+          answer_withdrawn
           task_created task_completed policy_version_created lease_acquired lease_renewed
           lease_expired lease_released defect_recorded workflow_run_stored verify_run_stored
           change_pushed change_deleted)

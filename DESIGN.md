@@ -185,6 +185,7 @@ Every one of these is in `GoodFlowsWeb.CoreComponents` unless noted.
 | `confirm_dialog/1` | Every one-action confirmation | `data-confirm`, a hand-built confirm modal |
 | `menu/1` | A menu opened from a trigger | Hand-written `dropdown` markup |
 | `popover/1` | A quick form or explanation beside a control, opened from its trigger | Hand-built floating panels, `dropdown` markup holding forms |
+| `split_button/1` | A one-click main action with related actions in a "…" menu, such as Approve and Approve with note | Two adjacent buttons, a hand-built menu beside a button |
 | `code_block/1` | Shell commands and config files | `<pre>` blocks |
 | `empty_state/1` | Empty results, with the action that fills them | Centered placeholder text |
 | `form_actions/1` | The button row at the end of a form | A hand-written flex row |
@@ -272,6 +273,15 @@ content only while it is open. A trigger with `refused` stays focusable but
 reads as disabled, is described by the reason, and opens nothing. Use
 `menu/1` for lists of links and `editor_dialog/1` for anything that needs
 the page's full attention.
+
+`split_button/1` joins a small `outline` main button to a "…" button with a
+muted `--line` border and shared corners. The main button takes `id` and the
+caller's attributes, such as `phx-click`, and acts in one click with no
+confirmation. The "…" button, named by `menu_label`, opens a `popover/1`
+(`<id>-menu`, no arrow, aligned to its end) holding `menu-item` buttons from
+the `:menu` slot; each closes it with `hide_popover/2`. Use it when the main
+action is common and safe to repeat, and its variants (a note, a choice)
+need a dialog or more input.
 
 Shared components own presentation, while their callers own resource state,
 permissions, URLs, and event handling.

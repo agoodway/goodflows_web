@@ -28,6 +28,11 @@ defmodule GoodFlows.Review do
   effects per item, refusing all of them if any is answered at the head
   already, and recomputes the verdict once.
 
+  `withdraw/4` ends an item's current `approve` at the head from the
+  dashboard (`answer_withdrawn`), leaving the item unanswered there, and
+  recomputes the verdict. Set approval and weakened diff items have no
+  withdrawal: their approval records a set decision it could not undo.
+
   A `diff_set_weakened` answer acts on the stored verdict's diff digest
   after it is stored: `reject` records a `reject` decision with its note,
   and `approve` records an `approve` decision, with this answer's
@@ -233,6 +238,68 @@ defmodule GoodFlows.Review do
     answers = Enum.map(ids, &store_answer(change_request, actor, items[&1], attrs))
     ChangeRequests.recompute(change_request)
     answers
+  end
+
+  @no_withdraw_kinds ~w(scenario_set_approval diff_set_weakened)
+
+  @doc """
+  Withdraws the current `approve` answer to item `item_id` at `head`, from
+  the dashboard, whoever gave it: it supersedes the answer with no
+  successor (making any `open` task of it `stale`), records
+  `answer_withdrawn` and recomputes the verdict. It stores nothing when
+  the change request is not active (`:not_active`), `head` is not current
+  (`{:stale_head, head}`), the item is not at the head or is a
+  `scenario_set_approval` or `diff_set_weakened` item (`:not_found`), or
+  its current answer at the head is not `approve` (`:not_approved`).
+  """
+  @spec withdraw(ChangeRequest.t(), actor(), String.t(), String.t() | nil) ::
+          {:ok, Answer.t()}
+          | {:error, :not_active | :not_found | :not_approved | {:stale_head, String.t() | nil}}
+  def withdraw(
+        %ChangeRequest{} = change_request,
+        %{account_user: %AccountUser{}, channel: "dashboard"} = actor,
+        item_id,
+        head
+      ) do
+    with :ok <- ChangeRequests.require_active(change_request) do
+      Repo.transaction(fn ->
+        change_request
+        |> ChangeRequests.lock_active()
+        |> withdraw_locked(actor, item_id, head)
+      end)
+    end
+  end
+
+  defp withdraw_locked(change_request, actor, item_id, head) do
+    if head != change_request.head, do: Repo.rollback({:stale_head, change_request.head})
+
+    verdict = Repo.get!(Verdict, change_request.id)
+
+    item =
+      Enum.find(Items.build(verdict.reasons, Packet.claims(change_request)), &(&1.id == item_id))
+
+    if item == nil or item.kind in @no_withdraw_kinds, do: Repo.rollback(:not_found)
+
+    answer =
+      change_request
+      |> current_query()
+      |> where([a], a.item_id == ^item_id)
+      |> Repo.one()
+
+    unless answer && answer.answer == "approve", do: Repo.rollback(:not_approved)
+
+    supersede(change_request, item_id, head, DateTime.utc_now())
+
+    ProjectEvents.record(
+      change_request.project_id,
+      change_request.number,
+      "answer_withdrawn",
+      %{"item_id" => item_id, "kind" => item.kind, "head" => head, "answer" => answer.answer},
+      actor
+    )
+
+    ChangeRequests.recompute(change_request)
+    answer
   end
 
   # A `reject` or `request_change` note must not be only whitespace, as

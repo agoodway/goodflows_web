@@ -861,7 +861,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
       assert has_element?(view, "#review-cleared", "0 of 1 cleared")
 
-      view |> element("##{door_id}-approve") |> render_click()
+      view |> element("##{door_id}-approve-note") |> render_click()
       assert has_element?(view, "#answer-dialog #answer-confirm", "Approve")
 
       _ = project_event(view, ctx)
@@ -880,6 +880,137 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
       assert stored.account_user_id == ctx.membership.id
       assert stored.head == sha(1)
+    end
+
+    test "approve is one click and unapprove withdraws it, whoever approved", ctx do
+      cr = create!(ctx)
+      one_way!(ctx, cr.number, sha(1))
+      door_id = item_id(ctx, cr.number, "one_way_door")
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      view |> element("##{door_id}-approve") |> render_click()
+
+      refute has_element?(view, "#answer-dialog")
+      assert has_element?(view, "##{door_id}-state", "Approved")
+      assert has_element?(view, "#header-verdict", "Mergeable")
+      refute has_element?(view, "##{door_id}-approve")
+      assert has_element?(view, "##{door_id}-request_change")
+
+      # Another member's approval at the head replaces this member's.
+      _ =
+        ctx.member_sk_conn
+        |> answer(
+          ctx.slug,
+          cr.number,
+          item!(packet(ctx.sk_conn, ctx.slug, cr.number), "one_way_door")["id"],
+          %{
+            "head" => sha(1),
+            "answer" => "approve"
+          }
+        )
+        |> json_response(201)
+
+      _ = project_event(view, ctx)
+      view |> element("##{door_id}-unapprove") |> render_click()
+
+      refute has_element?(view, "#answer-dialog")
+      assert has_element?(view, "##{door_id}-state", "No answer")
+      assert has_element?(view, "##{door_id}-approve")
+      assert has_element?(view, "#review-cleared", "0 of 1 cleared")
+      assert has_element?(view, "#header-verdict", "Needs review")
+      assert Repo.all(from a in Answer, where: is_nil(a.superseded_at)) == []
+
+      assert [%{data: data, actor_membership_id: actor, actor_key_id: nil}] =
+               Repo.all(
+                 from e in GoodFlows.ProjectEvents.Event, where: e.type == "answer_withdrawn"
+               )
+
+      assert actor == ctx.membership.id
+      assert data["head"] == sha(1) and data["answer"] == "approve"
+      assert data["kind"] == "one_way_door"
+    end
+
+    test "approve with note from the menu stores the note", ctx do
+      cr = create!(ctx)
+      one_way!(ctx, cr.number, sha(1))
+      door_id = item_id(ctx, cr.number, "one_way_door")
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+
+      view |> element("##{door_id}-approve-note") |> render_click()
+      view |> form("#answer-form", answer: %{note: "ok for v1"}) |> render_submit()
+
+      assert [%Answer{answer: "approve", note: "ok for v1"}] = Repo.all(Answer)
+      assert has_element?(view, "##{door_id}-unapprove")
+    end
+
+    test "unapprove stores nothing when the head moved or the answer changed", ctx do
+      cr = create!(ctx)
+      one_way!(ctx, cr.number, sha(1))
+      door_id = item_id(ctx, cr.number, "one_way_door")
+      raw_id = item!(packet(ctx.sk_conn, ctx.slug, cr.number), "one_way_door")["id"]
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
+      view |> element("##{door_id}-approve") |> render_click()
+
+      _ =
+        ctx.member_sk_conn
+        |> answer(ctx.slug, cr.number, raw_id, %{
+          "head" => sha(1),
+          "answer" => "request_change",
+          "note" => "not yet"
+        })
+        |> json_response(201)
+
+      view |> element("##{door_id}-unapprove") |> render_click()
+
+      assert render(view) =~ "answer changed meanwhile"
+      assert has_element?(view, "##{door_id}-state", "Change requested")
+
+      assert [%Answer{answer: "request_change"}] =
+               Repo.all(from a in Answer, where: is_nil(a.superseded_at))
+
+      view |> element("##{door_id}-approve") |> render_click()
+      one_way!(ctx, cr.number, sha(2))
+      view |> element("##{door_id}-unapprove") |> render_click()
+
+      assert render(view) =~ "A new head was reported"
+
+      assert %Answer{answer: "approve"} =
+               Repo.one(from a in Answer, where: is_nil(a.superseded_at) and a.head == ^sha(1))
+
+      assert Repo.all(
+               from e in GoodFlows.ProjectEvents.Event, where: e.type == "answer_withdrawn"
+             ) ==
+               []
+    end
+
+    test "set approvals approve in one click and cannot be withdrawn", ctx do
+      policy!(ctx.sk_conn, ctx.slug, %{
+        "scenarios" => %{"require_approved_intent" => true, "approver" => "any"}
+      })
+
+      number = create_cr(ctx.sk_conn, ctx.slug, %{"change_id" => "add-export"})["number"]
+
+      _ =
+        ctx.sk_conn
+        |> post_json(
+          cr_path(ctx.slug, number, "/scenario-sets"),
+          set_body(intent_fm("add-export"))
+        )
+        |> json_response(201)
+
+      set_id = item_id(ctx, number, "scenario_set_approval")
+      raw_id = item!(packet(ctx.sk_conn, ctx.slug, number), "scenario_set_approval")["id"]
+      cr = Repo.get_by!(GoodFlows.ChangeRequests.ChangeRequest, number: number)
+
+      assert {:error, :not_found} =
+               Review.withdraw(cr, Review.dashboard_actor(ctx.membership), raw_id, cr.head)
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, number))
+      view |> element("##{set_id}-approve") |> render_click()
+
+      refute has_element?(view, "#answer-dialog")
+      refute has_element?(view, "##{set_id}")
+      assert [%Answer{answer: "approve", channel: "dashboard"}] = Repo.all(Answer)
     end
 
     test "choose drop stores choose with option drop", ctx do
@@ -927,7 +1058,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       door_id = item_id(ctx, cr.number, "one_way_door")
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
 
-      view |> element("##{door_id}-approve") |> render_click()
+      view |> element("##{door_id}-approve-note") |> render_click()
       one_way!(ctx, cr.number, sha(2))
       view |> form("#answer-form", answer: %{note: ""}) |> render_submit()
 
@@ -1011,7 +1142,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
 
       set_id = item_id(ctx, number, "scenario_set_approval")
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, number))
-      view |> element("##{set_id}-approve") |> render_click()
+      view |> element("##{set_id}-approve-note") |> render_click()
 
       policy!(
         ctx.sk_conn,
@@ -1034,7 +1165,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       door_id = item_id(ctx, cr.number, "one_way_door")
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
 
-      view |> element("##{door_id}-approve") |> render_click()
+      view |> element("##{door_id}-approve-note") |> render_click()
       close!(ctx, cr.number)
       view |> form("#answer-form", answer: %{note: ""}) |> render_submit()
 
@@ -1055,7 +1186,7 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
       path_id = item_id(ctx, cr.number, "sensitive_path")
       {:ok, view, _html} = live(ctx.conn, show_path(ctx, cr.number))
 
-      view |> element("##{path_id}-approve") |> render_click()
+      view |> element("##{path_id}-approve-note") |> render_click()
       policy!(ctx.sk_conn, ctx.slug, %{"paths" => []}, 1)
       view |> form("#answer-form", answer: %{note: ""}) |> render_submit()
 

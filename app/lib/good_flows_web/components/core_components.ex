@@ -1103,6 +1103,47 @@ defmodule GoodFlowsWeb.CoreComponents do
   end
 
   @doc """
+  Renders a split button: a small bordered main action joined to a "…"
+  button that opens a `popover/1` menu of related actions. The main
+  button's id is `id` and gets the `rest` attributes; the menu's id is
+  `<id>-menu` and its trigger's `<id>-menu-trigger`. Give the menu's
+  buttons the `menu-item` class and close the menu from them with
+  `hide_popover/2`.
+
+  ## Examples
+
+      <.split_button id="approve" phx-click="approve" menu_label="More ways to approve">
+        Approve
+        <:menu>
+          <button type="button" class="menu-item" phx-click={hide_popover("approve-menu")}>
+            Approve with note…
+          </button>
+        </:menu>
+      </.split_button>
+  """
+  attr :id, :string, required: true
+  attr :menu_label, :string, required: true, doc: "the accessible name of the \"…\" button"
+  attr :rest, :global, include: ~w(disabled), doc: "attributes added to the main button"
+  slot :inner_block, required: true
+  slot :menu, required: true
+
+  def split_button(assigns) do
+    ~H"""
+    <div class="ui-split-button" role="group">
+      <.button id={@id} type="button" variant="outline" size="sm" {@rest}>
+        {render_slot(@inner_block)}
+      </.button>
+      <.popover id={"#{@id}-menu"} align="end" arrow={false} class="ui-split-menu">
+        <:trigger variant="outline" size="sm" aria-label={@menu_label} title={@menu_label}>
+          <.icon name="hero-ellipsis-horizontal" class="size-4" />
+        </:trigger>
+        {render_slot(@menu)}
+      </.popover>
+    </div>
+    """
+  end
+
+  @doc """
   Renders a [Heroicon](https://heroicons.com). This is the only way to
   render an icon.
 

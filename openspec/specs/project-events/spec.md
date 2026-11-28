@@ -30,7 +30,7 @@ Each event SHALL have `id` (its cursor), `type`, `number` (the change request nu
 
 #### Scenario: Event types
 - **WHEN** a client reads the feed
-- **THEN** each event's `type` is one of `cr_state_changed`, `cr_retargeted`, `cr_parent_changed`, `cr_dependencies_changed`, `verdict_changed`, `scenario_set_uploaded`, `scenario_set_approved`, `scenario_set_rejected`, `answer_recorded`, `task_created`, `task_completed`, `policy_version_created`, `lease_acquired`, `lease_renewed`, `lease_expired`, `lease_released`, `defect_recorded`, `workflow_run_stored`, `verify_run_stored`, `change_pushed` and `change_deleted`
+- **THEN** each event's `type` is one of `cr_state_changed`, `cr_retargeted`, `cr_parent_changed`, `cr_dependencies_changed`, `verdict_changed`, `scenario_set_uploaded`, `scenario_set_approved`, `scenario_set_rejected`, `answer_recorded`, `answer_withdrawn`, `task_created`, `task_completed`, `policy_version_created`, `lease_acquired`, `lease_renewed`, `lease_expired`, `lease_released`, `defect_recorded`, `workflow_run_stored`, `verify_run_stored`, `change_pushed` and `change_deleted`
 
 #### Scenario: Event without a change request
 - **WHEN** a client reads a `policy_version_created` event, a `change_pushed` or `change_deleted` event, or the `defect_recorded` event of an unattributed defect
@@ -183,7 +183,7 @@ Events older than 90 days SHALL be deleted. A read whose `after` precedes events
 - **THEN** the API responds `200` with events newer than `latest_cursor`
 
 ### Requirement: Public keys see restricted events
-A `pk_` key SHALL receive every event type, with `note` in `scenario_set_rejected`, `answer_recorded`, `task_created` and `policy_version_created` set to null, `ticket` in `defect_recorded` set to null, and `actor` set to null. A field absent from an event MUST NOT be added. `sk_` keys MUST see events as stored. The stored rows MUST NOT change.
+A `pk_` key SHALL receive every event type, with `note` in `scenario_set_rejected`, `answer_recorded`, `answer_withdrawn`, `task_created` and `policy_version_created` set to null, `ticket` in `defect_recorded` set to null, and `actor` set to null. A field absent from an event MUST NOT be added. `sk_` keys MUST see events as stored. The stored rows MUST NOT change.
 
 #### Scenario: Public key reads an answer event
 - **WHEN** a client with a `pk_` key reads an `answer_recorded` event with note `fine for v1`

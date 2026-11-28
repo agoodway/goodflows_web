@@ -36,6 +36,7 @@ defmodule GoodFlows.ProjectEvents do
   @types ~w(cr_state_changed cr_retargeted cr_parent_changed cr_dependencies_changed
             verdict_changed
             scenario_set_uploaded scenario_set_approved scenario_set_rejected answer_recorded
+            answer_withdrawn
             task_created task_completed policy_version_created lease_acquired lease_renewed
             lease_expired lease_released defect_recorded workflow_run_stored verify_run_stored
             change_pushed change_deleted)
