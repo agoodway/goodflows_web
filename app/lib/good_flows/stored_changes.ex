@@ -151,8 +151,12 @@ defmodule GoodFlows.StoredChanges do
   #{@default_page_size}), `"cursor"` and `"status"` (matched against the
   latest version). `change_requests` maps each listed id to its linked
   change requests, by number; an id with none is absent.
+
+  The option `statuses:`, which the API never sets, keeps only changes
+  whose latest status is one of the given (the dashboard's Active filter
+  passes `~w(proposed approved)`).
   """
-  @spec list(Project.t(), map()) ::
+  @spec list(Project.t(), map(), keyword()) ::
           {:ok,
            %{
              changes: [Change.t()],
@@ -160,12 +164,15 @@ defmodule GoodFlows.StoredChanges do
              next_cursor: String.t() | nil
            }}
           | {:error, Ecto.Changeset.t()}
-  def list(%Project{id: project_id}, params) do
+  def list(%Project{id: project_id}, params, opts \\ []) do
     with {:ok, params} <- list_params(params) do
+      statuses = Keyword.get(opts, :statuses)
+
       changes =
         Change
         |> where(project_id: ^project_id)
         |> then(&if params.status, do: where(&1, status: ^params.status), else: &1)
+        |> then(&if statuses, do: where(&1, [c], c.status in ^statuses), else: &1)
         |> after_cursor(params.cursor)
         |> order_by([c], desc: c.last_pushed_at, asc: c.change_id)
         |> limit(^(params.limit + 1))
@@ -175,6 +182,36 @@ defmodule GoodFlows.StoredChanges do
       next = if rest != [], do: encode_cursor(List.last(page))
       {:ok, %{changes: page, change_requests: page_links(project_id, page), next_cursor: next}}
     end
+  end
+
+  @doc """
+  How many of the project's stored changes have each latest status: every
+  status of `GoodFlows.StoredChanges.Push.statuses/0` is a key, zero when
+  none.
+  """
+  @spec status_counts(Project.t()) :: %{String.t() => non_neg_integer()}
+  def status_counts(%Project{id: project_id}) do
+    counts =
+      Repo.all(
+        from c in Change,
+          where: c.project_id == ^project_id,
+          group_by: c.status,
+          select: {c.status, count(c.id)}
+      )
+
+    Map.merge(Map.new(Push.statuses(), &{&1, 0}), Map.new(counts))
+  end
+
+  @doc "The ids among `change_ids` that name a stored change of the project."
+  @spec stored_ids(Project.t(), [String.t()]) :: [String.t()]
+  def stored_ids(_project, []), do: []
+
+  def stored_ids(%Project{id: project_id}, change_ids) when is_list(change_ids) do
+    Repo.all(
+      from c in Change,
+        where: c.project_id == ^project_id and c.change_id in ^change_ids,
+        select: c.change_id
+    )
   end
 
   defp list_params(params) do

@@ -679,6 +679,33 @@
     user-select: none;
   }
 
+  /* A stored change's line diff: old and new line numbers, a +/- mark, the text. */
+  .stored-change-diff {
+    max-height: 32rem;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 0.125rem;
+    background: var(--color-base-200);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.6;
+  }
+
+  .stored-change-diff-line {
+    display: grid;
+    grid-template-columns: 3rem 3rem 1rem minmax(0, 1fr);
+    min-width: max-content;
+  }
+
+  .stored-change-diff-number { padding-right: 0.5rem; color: var(--text-muted); text-align: right; user-select: none; }
+  .stored-change-diff-mark { color: var(--text-muted); user-select: none; }
+  .stored-change-diff-text { white-space: pre; padding-right: 0.75rem; }
+  .stored-change-diff-ins { background: color-mix(in oklch, var(--color-primary) 14%, transparent); }
+  .stored-change-diff-del { background: color-mix(in oklch, var(--color-base-content) 10%, transparent); text-decoration: line-through; text-decoration-color: var(--text-muted); }
+  .stored-change-diff-skip { display: block; padding: 0.125rem 0.75rem; color: var(--text-muted); border-block: 1px solid var(--line-soft); }
+  /* A file over the size limit, as plain text: it scrolls inside its own box like the line diff. */
+  .stored-change-plain-text pre { max-height: 32rem; overflow: auto; }
+
   .scenario-markdown {
     min-width: 0;
     font-size: 0.8125rem;

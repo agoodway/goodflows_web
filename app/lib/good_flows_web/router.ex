@@ -268,6 +268,8 @@ defmodule GoodFlowsWeb.Router do
       live "/projects/:slug/runs/:run_id/reports/:id", TestReportLive.Show, :show
       live "/projects/:slug/change-requests", ChangeRequestLive.Index, :index
       live "/projects/:slug/change-requests/:number", ChangeRequestLive.Show, :show
+      live "/projects/:slug/changes", StoredChangeLive.Index, :index
+      live "/projects/:slug/changes/:change_id", StoredChangeLive.Show, :show
       live "/projects/:slug/review-policy", ReviewPolicyLive.Show, :show
       live "/api-keys", ApiKeyLive.Index, :index
     end

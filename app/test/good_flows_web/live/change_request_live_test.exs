@@ -239,6 +239,34 @@ defmodule GoodFlowsWeb.ChangeRequestLiveTest do
   end
 
   describe "detail" do
+    test "the change id links to its stored change only when one is stored", ctx do
+      change_md = "---\nformat: goodflows-change/1\nid: add-login\nstatus: proposed\n---\n"
+
+      {:ok, :created, _version, _replaced} =
+        GoodFlows.StoredChanges.push(ctx.project, ctx.sk_key, %{
+          "files" => %{"change.md" => change_md},
+          "source" => %{"commit" => nil, "branch" => nil, "dirty" => false}
+        })
+
+      stored = create!(ctx, %{"change_id" => "add-login"})
+      unstored = create!(ctx, %{"change_id" => "add-ghost", "source_branch" => "feat/ghost"})
+      changes = "/dashboard/accounts/#{ctx.account.id}/projects/#{ctx.slug}/changes"
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, stored.number))
+
+      assert has_element?(
+               view,
+               "#details-panel a#change-id-link[href='#{changes}/add-login']",
+               "add-login"
+             )
+
+      {:ok, view, _html} = live(ctx.conn, show_path(ctx, unstored.number))
+
+      assert has_element?(view, "#details-panel #change-id-tag", "add-ghost")
+      refute has_element?(view, "#details-panel a#change-id-link")
+      refute has_element?(view, "#details-panel a[href^='#{changes}']")
+    end
+
     test "needs_review is summarized by kind and each item shows its subject", ctx do
       policy!(ctx.sk_conn, ctx.slug, %{
         "paths" => [%{"glob" => "priv/repo/migrations/**", "outcome" => "needs_review"}]

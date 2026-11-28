@@ -9,7 +9,9 @@ defmodule GoodFlowsWeb.ProjectLive.ShowTest do
 
   alias GoodFlows.ChangeRequests
   alias GoodFlows.ChangeRequests.{ChangeRequest, Verdict}
+  alias GoodFlows.ProjectEvents
   alias GoodFlows.Repo
+  alias GoodFlows.StoredChanges
   alias GoodFlows.WorkflowRuns
 
   setup :register_and_log_in_user
@@ -225,5 +227,107 @@ defmodule GoodFlowsWeb.ProjectLive.ShowTest do
     assert_receive {:trace, _pid, :receive, :refresh}, 2_000
     assert has_element?(view, "#latest-ci", "Passed")
     assert has_element?(view, "#recent-#{run_id}")
+  end
+
+  describe "Changes card (scenarios 8, 17)" do
+    defp push_change!(ctx, id, status) do
+      change_md =
+        "---\nformat: goodflows-change/1\nid: #{id}\nstatus: #{status}\n---\n\n## Why\n"
+
+      {:ok, :created, version, _replaced} =
+        StoredChanges.push(ctx.project, ctx.api_key, %{
+          "files" => %{"change.md" => change_md},
+          "source" => %{"commit" => nil, "branch" => "main", "dirty" => false}
+        })
+
+      version
+    end
+
+    defp active_changes(view) do
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#active-changes > li")
+      |> LazyHTML.attribute("data-change-id")
+    end
+
+    test "counts proposed and approved changes and lists the 5 latest active ones", ctx do
+      pushed =
+        for {status, n} <- [
+              {"proposed", 1},
+              {"archived", 1},
+              {"approved", 1},
+              {"proposed", 2},
+              {"approved", 2},
+              {"archived", 2},
+              {"approved", 3},
+              {"proposed", 3},
+              {"approved", 4}
+            ] do
+          push_change!(ctx, "#{status}-#{n}", status)
+          {"#{status}-#{n}", status}
+        end
+
+      {:ok, view, _html} = live(ctx.conn, path(ctx))
+
+      assert has_element?(view, "#changes-count-proposed", "3")
+      assert has_element?(view, "#changes-count-approved", "4")
+
+      expected =
+        pushed
+        |> Enum.reverse()
+        |> Enum.reject(&(elem(&1, 1) == "archived"))
+        |> Enum.take(5)
+        |> Enum.map(&elem(&1, 0))
+
+      assert active_changes(view) == expected
+
+      assert has_element?(
+               view,
+               ~s(#active-changes a[href="#{path(ctx)}/changes/approved-4"]),
+               "approved-4"
+             )
+
+      assert has_element?(view, ~s(#changes-link[href="#{path(ctx)}/changes"]))
+      refute has_element?(view, "#changes-card-empty")
+    end
+
+    test "a project with no stored changes shows the push empty state", ctx do
+      {:ok, view, _html} = live(ctx.conn, path(ctx))
+
+      assert has_element?(view, "#changes-card-empty", "goodflows change push")
+      assert has_element?(view, "#changes-card-empty", "newer than 0.10.0")
+      refute has_element?(view, "#no-active-changes")
+    end
+
+    test "a project whose changes are all archived says no change is active", ctx do
+      push_change!(ctx, "done", "archived")
+      {:ok, view, _html} = live(ctx.conn, path(ctx))
+
+      assert has_element?(view, "#changes-count-proposed", "0")
+      assert has_element?(view, "#changes-count-approved", "0")
+      assert has_element?(view, "#no-active-changes", "No change is active")
+      refute has_element?(view, "#changes-card-empty")
+      assert has_element?(view, ~s(#changes-link[href="#{path(ctx)}/changes"]))
+    end
+
+    test "a push refreshes the counts", ctx do
+      push_change!(ctx, "first", "proposed")
+      {:ok, view, _html} = live(ctx.conn, path(ctx))
+      assert has_element?(view, "#changes-count-proposed", "1")
+
+      push_change!(ctx, "second", "proposed")
+      :erlang.trace(view.pid, true, [:receive])
+
+      Phoenix.PubSub.broadcast(
+        GoodFlows.PubSub,
+        ProjectEvents.topic(ctx.project.id),
+        {:project_event, ctx.project.id}
+      )
+
+      assert_receive {:trace, _pid, :receive, :refresh}, 2_000
+      assert has_element?(view, "#changes-count-proposed", "2")
+      assert active_changes(view) == ["second", "first"]
+    end
   end
 end

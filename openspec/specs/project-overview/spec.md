@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Gives account members one dashboard page per project that shows, at a glance, whether its workflows pass on the default branch, what ran recently, and which change requests need attention, and links to the run and change request pages.
+Gives account members one dashboard page per project that shows, at a glance, whether its workflows pass on the default branch, what ran recently, which change requests need attention and which goodflows changes are planned, and links to the run, change request and Changes pages.
 
 ## Requirements
 
@@ -11,7 +11,7 @@ The dashboard SHALL serve a project overview at `/dashboard/accounts/:account_id
 
 #### Scenario: Member opens the overview
 - **WHEN** a signed-in member with role `member` opens the overview of project `web` in their account
-- **THEN** the page shows `web`'s slug, its default branch, its Change requests card and below it its Runs card
+- **THEN** the page shows `web`'s slug, its default branch, its Change requests card, below it its Changes card and below that its Runs card
 
 #### Scenario: Project of another account
 - **WHEN** a signed-in user opens the overview with their own account ID and the slug of a project that belongs only to another account
@@ -60,8 +60,23 @@ The Change requests card SHALL show how many `draft` or `open` change requests h
 - **WHEN** a project has only merged and closed change requests
 - **THEN** the card shows zero counts, says no change request is active, and links to the change request list
 
+### Requirement: The Changes card summarizes active stored changes
+The Changes card SHALL show the number of the project's stored changes whose latest status is `proposed` and the number whose latest status is `approved`, the 5 most recently pushed changes with those statuses, each linking to its detail page, and a link to the Changes list. A project with no stored changes SHALL show an empty state in the card that explains pushing a change with `goodflows change push` and that the command needs a goodflows release newer than 0.10.0. A project whose stored changes are all archived SHALL show both counts as 0 and say that no change is active.
+
+#### Scenario: Counts and active changes
+- **WHEN** a project has 3 `proposed`, 4 `approved` and 2 `archived` stored changes
+- **THEN** the card shows 3 proposed and 4 approved, lists the 5 most recently pushed active changes and links to the Changes list
+
+#### Scenario: No stored changes
+- **WHEN** a member opens the overview of a project with no stored changes
+- **THEN** the Changes card shows the push empty state
+
+#### Scenario: Only archived changes
+- **WHEN** every stored change of a project is archived
+- **THEN** the card shows 0 proposed and 0 approved and says no change is active
+
 ### Requirement: The overview updates live
-The overview SHALL refresh both cards when a run of the project is stored or a project event is recorded, without a page reload.
+The overview SHALL refresh every card when a run of the project is stored or a project event is recorded, without a page reload.
 
 #### Scenario: New run
 - **WHEN** a member has the overview open and a run of workflow `ci` on the default branch is uploaded

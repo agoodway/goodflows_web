@@ -10,18 +10,25 @@ defmodule GoodFlowsWeb.ProjectLive.Show do
   folded as the run list folds called runs, each saying how many runs it
   called (design D6).
 
-  Both cards reload 500 ms after a run of the project is stored
+  The Changes card, between them, counts the stored changes whose latest
+  status is `proposed` and `approved` and lists the 5 most recently
+  pushed of them; a project with no stored change shows how to push one,
+  and one whose changes are all archived says that no change is active.
+
+  The cards reload 500 ms after a run of the project is stored
   (`GoodFlows.WorkflowRuns.topic/1`) or a project event is recorded
   (`GoodFlows.ProjectEvents.topic/1`).
   """
   use GoodFlowsWeb, :live_view
 
   import GoodFlowsWeb.ChangeRequestComponents
+  import GoodFlowsWeb.StoredChangeComponents
   import GoodFlowsWeb.WorkflowRunComponents
 
   alias GoodFlows.ChangeRequests
   alias GoodFlows.ProjectEvents
   alias GoodFlows.Projects
+  alias GoodFlows.StoredChanges
   alias GoodFlows.WorkflowRuns
 
   @refresh_ms 500
@@ -78,7 +85,9 @@ defmodule GoodFlowsWeb.ProjectLive.Show do
       recent: recent,
       children: children,
       counts: ChangeRequests.verdict_counts(project),
-      change_requests: ChangeRequests.recent_active(project, @recent)
+      change_requests: ChangeRequests.recent_active(project, @recent),
+      change_counts: StoredChanges.status_counts(project),
+      active_changes: active_changes(project)
     )
   end
 
@@ -154,6 +163,55 @@ defmodule GoodFlowsWeb.ProjectLive.Show do
             </span>
           </li>
         </ul>
+      </.panel>
+
+      <.panel id="changes-card" title="Changes" icon="hero-document-duplicate">
+        <:actions>
+          <.text_link id="changes-link" navigate={changes_path(@current_account, @project)}>
+            <span class="normal-case tracking-normal">All changes</span>
+          </.text_link>
+        </:actions>
+        <%= if @change_counts |> Map.values() |> Enum.sum() == 0 do %>
+          <.push_empty_state id="changes-card-empty" account={@current_account} />
+        <% else %>
+          <dl id="change-counts" class="grid grid-cols-2 gap-3">
+            <div
+              :for={status <- ~w(proposed approved)}
+              id={"changes-count-#{status}"}
+              class="rounded-sm border border-base-300 p-3"
+            >
+              <dt><.change_status_badge status={status} /></dt>
+              <dd class="mt-2 font-mono text-lg font-semibold">{@change_counts[status]}</dd>
+            </div>
+          </dl>
+          <p :if={@active_changes == []} id="no-active-changes" class="mt-4 text-sm text-muted">
+            No change is active: every stored change is archived.
+          </p>
+          <ul :if={@active_changes != []} id="active-changes" class="mt-4 list-table">
+            <li
+              :for={change <- @active_changes}
+              id={"active-change-#{change.change_id}"}
+              data-change-id={change.change_id}
+              class="run-row grid-cols-[1fr_auto] items-center"
+            >
+              <span class="flex min-w-0 flex-wrap items-center gap-2">
+                <.link
+                  navigate={
+                    ~p"/dashboard/accounts/#{@current_account.id}/projects/#{@project.slug}/changes/#{change.change_id}"
+                  }
+                  class="min-w-0 break-all font-mono text-sm font-medium hover:underline"
+                >
+                  {change.change_id}
+                </.link>
+                <span class="font-mono text-xs text-muted">v{change.latest_version}</span>
+              </span>
+              <span class="flex flex-col items-end gap-1">
+                <.change_status_badge status={change.status} />
+                <span class="font-mono text-xs text-muted">{format_time(change.last_pushed_at)}</span>
+              </span>
+            </li>
+          </ul>
+        <% end %>
       </.panel>
 
       <.panel id="runs-card" title="Runs" icon="hero-play-circle">
@@ -247,6 +305,16 @@ defmodule GoodFlowsWeb.ProjectLive.Show do
   end
 
   defp verdict_order, do: @verdict_order
+
+  defp active_changes(project) do
+    {:ok, %{changes: changes}} =
+      StoredChanges.list(project, %{"limit" => @recent}, statuses: ~w(proposed approved))
+
+    changes
+  end
+
+  defp changes_path(account, project),
+    do: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/changes"
 
   defp runs_path(account, project, filters \\ %{}),
     do: ~p"/dashboard/accounts/#{account.id}/projects/#{project.slug}/runs?#{filters}"

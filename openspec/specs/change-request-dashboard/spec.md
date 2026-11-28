@@ -368,3 +368,14 @@ Each run in the detail page's workflow runs panel SHALL link to that run's detai
 #### Scenario: Required workflow run
 - **WHEN** change request 42's panel shows run X for required workflow `ci`
 - **THEN** the `ci` row links to run X's detail page
+
+### Requirement: The linked change id links to its stored change
+On a change request's detail page, the change id SHALL link to the stored change's detail page at `/dashboard/accounts/:account_id/projects/:slug/changes/:change_id` when the project has a stored change with that id, and SHALL stay plain text when it has none.
+
+#### Scenario: Stored change
+- **WHEN** a member opens change request 12, whose change id `add-login` is stored in project `web`
+- **THEN** the change id links to `add-login`'s detail page
+
+#### Scenario: No stored change
+- **WHEN** a member opens a change request whose change id has no stored change in the project
+- **THEN** the change id is plain text with no link

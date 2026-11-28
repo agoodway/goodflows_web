@@ -44,4 +44,16 @@ defmodule GoodFlowsWeb.ScenarioMarkdownTest do
     assert count(doc, "pre > code") == 1
     assert count(doc, "[style]") == 0
   end
+
+  test "without only_scheme_links, images and upper-case schemes render as before" do
+    doc = render("![rel](specs/p.png) ![proto](//evil.example/p.png) [Up](HTTPS://example.com)\n")
+
+    assert doc |> LazyHTML.query("img") |> LazyHTML.attribute("src") == [
+             "specs/p.png",
+             "//evil.example/p.png"
+           ]
+
+    assert doc |> LazyHTML.query("a") |> Enum.count() == 1
+    assert doc |> LazyHTML.query("a[href]") |> Enum.count() == 0
+  end
 end

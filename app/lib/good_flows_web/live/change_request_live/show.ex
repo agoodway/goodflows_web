@@ -62,6 +62,7 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
   alias GoodFlows.ReviewPolicies
   alias GoodFlows.ScenarioSets
   alias GoodFlows.ScenarioSets.Sections
+  alias GoodFlows.StoredChanges
   alias GoodFlows.VerifyRuns
   alias GoodFlows.WorkflowRuns
   alias GoodFlowsWeb.ScenarioMarkdown
@@ -210,6 +211,9 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
       lease: lease && Repo.preload(lease, :api_key),
       claims: Packet.claims(change_request),
       emails: Accounts.member_emails(account),
+      change_stored?:
+        change_request.change_id != nil and
+          StoredChanges.stored_ids(socket.assigns.project, [change_request.change_id]) != [],
       evidence: evidence(socket.assigns.project, change_request, loaded.verdict, active?)
     )
   end
@@ -788,7 +792,18 @@ defmodule GoodFlowsWeb.ChangeRequestLive.Show do
           </:item>
           <:item title="Opened by">{email(@emails, @change_request.opened_by_account_user_id)}</:item>
           <:item title="Change">
-            <.tag :if={@change_request.change_id}>{@change_request.change_id}</.tag>
+            <.text_link
+              :if={@change_request.change_id && @change_stored?}
+              id="change-id-link"
+              navigate={
+                ~p"/dashboard/accounts/#{@current_account.id}/projects/#{@project.slug}/changes/#{@change_request.change_id}"
+              }
+            >
+              <span class="font-mono">{@change_request.change_id}</span>
+            </.text_link>
+            <span :if={@change_request.change_id && !@change_stored?} id="change-id-tag">
+              <.tag>{@change_request.change_id}</.tag>
+            </span>
             <span :if={!@change_request.change_id} class="text-muted">None</span>
           </:item>
           <:item title="Parent">

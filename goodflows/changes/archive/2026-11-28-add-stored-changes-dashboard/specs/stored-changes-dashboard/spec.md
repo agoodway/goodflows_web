@@ -33,16 +33,16 @@ Refs: D7, D18
 On a change request's detail page, the linked change id SHALL link to the stored change's detail page when the project has a stored change with that id, and SHALL stay plain text when it has none.
 
 ### Requirement: The detail page shows the version it opens
-Refs: D16, D15, G1
-The detail page SHALL show the change id, the version number, the version's own status, size, door, capabilities, depends_on, the source commit, the source branch, whether the checkout was dirty, the pusher's email and the push time. A field stored as null SHALL be shown as not given, a null commit as no commit and a null branch as a detached HEAD. Each depends_on id SHALL link to that stored change when the project has it. A version that is not the latest SHALL say so and link to the latest.
+Refs: D16, D15, D27, G1
+The detail page SHALL show the change id, the version number, the version's own status, size, door, capabilities, depends_on, the source commit, the source branch, whether the checkout was dirty, the pusher's email and the push time. A field stored as null SHALL be shown as not given, a capabilities or depends_on list stored empty as none, a null commit as no commit and a null branch as a detached HEAD. Each depends_on id SHALL link to that stored change when the project has it. A version that is not the latest SHALL say so and link to the latest.
 
 ### Requirement: The detail page shows linked change requests
 Refs: D8, G1
 The detail page SHALL list every change request of the project with the change's id, as number and state, each linking to its change request page, and SHALL say that no change request exists for the change when there is none.
 
 ### Requirement: File text renders only as sanitized Markdown
-Refs: D3, D21, D23, A1
-Each file of the version SHALL be shown by path, with its YAML front matter, when it has one, as a plain code block and its body rendered as Markdown with raw HTML dropped, through the same Markdown parser and sanitizer the change request page uses for scenario Markdown. A link SHALL keep its target only when its URL starts with the scheme `http:`, `https:` or `mailto:`; every other link, including a relative, fragment, protocol-relative or `javascript:` link, SHALL show as its text with no target. No pushed text SHALL reach the page as HTML any other way. Front matter SHALL be only the text between a first line that is `---` and the next line that is `---`, each ignoring one trailing carriage return; a file without both renders whole as its body.
+Refs: D3, D21, D23, D29, A1
+Each file of the version SHALL be shown by path, with its YAML front matter, when it has one, as a plain code block and its body rendered as Markdown with raw HTML dropped, through the same Markdown parser and sanitizer the change request page uses for scenario Markdown. A link SHALL keep its target only when its URL starts with the scheme `http:`, `https:` or `mailto:`; every other link, including a relative, fragment, protocol-relative or `javascript:` link, SHALL show as its text with no target. An image SHALL keep its source only when its URL starts with `http:` or `https:`; any other image SHALL show as its alt text. No pushed text SHALL reach the page as HTML any other way. Front matter SHALL be only the text between a first line that is `---` and the next line that is `---`, each ignoring one trailing carriage return; a file without both renders whole as its body.
 
 #### Scenario: Script in a pushed file
 - **WHEN** a version's `change.md` body contains `<script>alert(1)</script>` and a `[x](javascript:alert(1))` link
@@ -57,8 +57,8 @@ Refs: D12, D25, G2
 The detail page SHALL have a History panel listing the change's versions newest first, 50 at a time with Load more, each with its number, its own status, push time, pusher and source commit, and marking the version being viewed. Each entry SHALL link to that version with `?version=N`, except the latest, which SHALL link to the page without `?version`.
 
 ### Requirement: A version shows what changed from the version before it
-Refs: D4, D11, D20, D24, G2, N3
-The detail page SHALL list, for the version it opens, the files added, removed and changed compared with the version numbered one less, and SHALL list every file of version 1 as added. Each changed file SHALL get a line diff unless either version of it is over 262,144 UTF-8 bytes or the two versions together have more than 10,000 lines; a changed file without a line diff SHALL say why.
+Refs: D4, D11, D20, D24, D28, D30, D31, G2, N3
+The detail page SHALL list, for the version it opens, the files added, removed and changed compared with the version numbered one less, and SHALL list every file of version 1 as added. A changed file's changed region SHALL be the lines of its two versions left after removing the lines they share at the start and at the end. Each changed file SHALL get a line diff unless either version of it is over 262,144 UTF-8 bytes or its changed region has more than 1,000 lines. The line diffs of one version SHALL cover at most 1,000 changed-region lines together: changed files are taken in path order, and a changed file whose changed region would take that total past 1,000 lines SHALL get no line diff. A changed file without a line diff SHALL say why.
 
 ### Requirement: Pages update on project events
 Refs: D10, D15

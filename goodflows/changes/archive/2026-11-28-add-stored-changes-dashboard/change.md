@@ -1,7 +1,7 @@
 ---
 format: goodflows-change/1
 id: add-stored-changes-dashboard
-status: approved
+status: archived
 size: project
 door: two_way
 capabilities: [stored-changes-dashboard]
@@ -172,6 +172,36 @@ decisions:
     by: agent
     why: The Change requests card says no change request is active the same way, and the push explanation would wrongly tell the team to set up pushing
     rejected: [the push empty state, an empty card]
+  - id: D27
+    question: How does the detail page show a capabilities or depends_on list that was pushed empty?
+    answer: As none, told apart from a list the server stored as null, which shows as not given
+    by: agent
+    why: "Found while building: the server stores an empty list as [] and a malformed one as null, and showing both as not given would tell the reader the change.md field is broken when it says the change has none"
+    rejected: [show an empty list as not given]
+  - id: D28
+    question: How many lines may a changed file's two versions have together and still get a line diff, amending D24?
+    answer: "At most 1,000. A changed file whose two versions together have more than 1,000 lines gets no line diff, as well as when either is over the size limit (D20), and the page says why; the comparison is computed once per page open, on the connected mount"
+    by: agent
+    why: "Found while building: the line diff is quadratic in time and memory when every line differs; measured on the build orb, 500+500 lines take about 150 ms and 80 MB, 1,000+1,000 about 600 ms and 370 MB, 2,000+2,000 about 3 s and 1.3 GB, and 4,999+5,001 exhausted 8 GB, so D24's 10,000 lines missed D10's 2 seconds and could take the node down"
+    rejected: [keep 10,000 lines, bound the edit distance instead of the line count, a time budget per diff]
+  - id: D29
+    question: Which images in pushed text keep their source?
+    answer: "Only images whose URL starts with the scheme http: or https:. Any other image, including a relative, protocol-relative (//host), data: or javascript: one, shows as its alt text. The change request page's rendering is unchanged"
+    by: agent
+    why: "Found while building: images kept relative and //host sources, so pushed text made members' browsers request in-app URLs or other hosts, which D23's reasons for links cover as much as images"
+    rejected: [keep every image the sanitizer keeps, drop images entirely]
+  - id: D30
+    question: How many lines may the line diffs of one version have together, amending D28?
+    answer: "At most 1,000, the same as one file at D28's per-file limit. Changed files are diffed in path order; a changed file whose two versions would take the version's diffed lines past 1,000 gets no line diff, as well as when it is over the per-file limits (D20, D28), and the page says why and to compare the two versions with git diff"
+    by: agent
+    why: "Found while building: D28's 1,000-line limit is per file, so one push within the server's limits (100 files of 500+500 different lines) took about 25 s to compare, against D10's 2 seconds and D11's 100-file, 2 MiB goal. Measured on the build orb with a per-version limit: that push compares in about 0.27 s, and the worst case (one file at the per-file limit with 500-byte lines) in about 0.33 s and about 110 MB; a 2,000-line limit took about 0.5 s alone and 1.2 s under a loaded test run, too close to 2 seconds"
+    rejected: [a per-file limit only, a 2,000-line per-version limit, compute the comparison asynchronously instead of bounding it]
+  - id: D31
+    question: Which lines count against the per-file and per-version line-diff limits, amending D28 and D30?
+    answer: "Only each changed file's changed region: the lines of its two versions left after removing the lines they share at the start and at the end. A changed file gets no line diff when its changed region has more than 1,000 lines (D28), or when its changed region would take the version's changed-region lines, counted over changed files in path order, past 1,000 (D30); only the changed region is diffed, and the 262,144-byte limit (D20) is unchanged"
+    by: agent
+    why: "Found while building: D30 counted every line of each diffed file, unchanged ones included, so a one-line edit in each of a change's own three files (about 230, 280 and 70 lines) left qa-scenarios.md without a line diff, against D4's line diff for each changed file. A diff's cost comes from the changed region, so counting it keeps D4 for ordinary edits. Measured on the build orb, the worst cases a push can produce (100 files, 2 MiB) stay at about 0.33 s or less: 100 files of 500+500 different lines about 0.3 s, 100 files of 10,000 lines with one line edited each (all diffed) about 0.2 s, and 8 files of 130,000 lines changed at the first and last line about 0.29 s and about 200 MB above idle"
+    rejected: [count every line of a diffed file, keep the per-file limit on all lines while the version limit counts the changed region]
 left_to_builder:
   - Page layout, components, file order and how the line diff looks, following DESIGN.md (including its timestamp format and the dashboard's short commit form) and the shared components
   - Sidebar and breadcrumbs, following the change request pages' pattern
