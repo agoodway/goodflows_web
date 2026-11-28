@@ -408,7 +408,13 @@ defmodule GoodFlowsWeb.StoredChangeLive.Show do
             </div>
             <%= case entry.diff do %>
               <% {:lines, rows} -> %>
-                <div data-role="line-diff" class="stored-change-diff">
+                <div
+                  data-role="line-diff"
+                  class="stored-change-diff"
+                  tabindex="0"
+                  role="region"
+                  aria-label={"Line diff of #{entry.path}"}
+                >
                   <div
                     :for={row <- rows}
                     data-op={row.op}

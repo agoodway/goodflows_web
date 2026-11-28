@@ -821,6 +821,8 @@ defmodule GoodFlowsWeb.StoredChangeLiveTest do
       assert Enum.sort(paths) == ["change.md", "qa-scenarios.md", "specs/auth/spec.md"]
 
       lines = "#{diff("change.md")} [data-role=line-diff]"
+      # Long lines scroll inside the panel, so it must take keyboard focus to scroll.
+      assert has_element?(view, ~s(#{lines}[tabindex="0"][aria-label="Line diff of change.md"]))
       assert has_element?(view, "#{lines} [data-op=del]", "second line")
       assert has_element?(view, "#{lines} [data-op=ins]", "second line edited")
       refute has_element?(view, "#{lines} [data-op=del]", "first line")
