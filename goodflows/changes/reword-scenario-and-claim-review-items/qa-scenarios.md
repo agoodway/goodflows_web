@@ -2,7 +2,7 @@
 format: qa-scenarios/2
 source: intent
 change: "reword-scenario-and-claim-review-items"
-specs: uncommitted
+specs: 63e274d
 review: null
 scenarios:
   - id: 1
