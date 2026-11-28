@@ -13,16 +13,18 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
   run IDs) and `counted_runs` are shown to every key.
   """
 
+  use GoodFlowsWeb, :verified_routes
+
   alias GoodFlows.Accounts.AccountUser
   alias GoodFlows.ChangeRequests.{ChangeRequest, Claims, Event, GitFacts, Verdict}
 
   @public_front_matter ~w(format cr head door)
 
   @doc "Renders one change request with its description, verdict and history."
-  def show(%{loaded: loaded, redact?: redact?}) do
+  def show(%{loaded: loaded, project: project, redact?: redact?}) do
     data =
       loaded.change_request
-      |> record(redact?)
+      |> record(project, redact?)
       |> Map.merge(%{
         description: if(redact?, do: nil, else: loaded.description),
         verdict: verdict_data(loaded.verdict, redact?),
@@ -33,8 +35,13 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
   end
 
   @doc "Renders one page of change requests."
-  def index(%{change_requests: change_requests, next_cursor: next_cursor, redact?: redact?}) do
-    %{data: Enum.map(change_requests, &record(&1, redact?)), next_cursor: next_cursor}
+  def index(%{
+        change_requests: change_requests,
+        next_cursor: next_cursor,
+        project: project,
+        redact?: redact?
+      }) do
+    %{data: Enum.map(change_requests, &record(&1, project, redact?)), next_cursor: next_cursor}
   end
 
   @doc "Renders a verdict read."
@@ -84,10 +91,14 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestJSON do
     }
   end
 
-  defp record(%ChangeRequest{} = change_request, redact?) do
+  defp record(%ChangeRequest{} = change_request, project, redact?) do
     %{
       id: change_request.id,
       number: change_request.number,
+      url:
+        url(
+          ~p"/dashboard/accounts/#{project.account_id}/projects/#{project.slug}/change-requests/#{change_request.number}"
+        ),
       title: change_request.title,
       state: change_request.state,
       source_branch: change_request.source_branch,

@@ -14,6 +14,7 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequest do
     required: [
       :id,
       :number,
+      :url,
       :title,
       :state,
       :source_branch,
@@ -31,6 +32,14 @@ defmodule GoodFlowsWeb.Schemas.ChangeRequest do
     properties: %{
       id: %Schema{type: :string, format: :uuid},
       number: %Schema{type: :integer, minimum: 1},
+      url: %Schema{
+        type: :string,
+        format: :uri,
+        description:
+          "The absolute URL of this change request's page in the web app " <>
+            "(`/dashboard/accounts/{account_id}/projects/{project}/change-requests/{number}`), " <>
+            "built from the server's public endpoint. Opening it needs a signed-in member of the account"
+      },
       title: %Schema{type: :string},
       state: %Schema{type: :string, enum: ~w(draft open merged closed)},
       source_branch: %Schema{type: :string},

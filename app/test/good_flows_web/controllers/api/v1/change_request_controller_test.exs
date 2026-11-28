@@ -154,6 +154,14 @@ defmodule GoodFlowsWeb.Api.V1.ChangeRequestControllerTest do
              } = data
 
       refute Map.has_key?(data, "account_id") or Map.has_key?(data, "project_id")
+
+      page = "/dashboard/accounts/#{ctx.account.id}/projects/#{project.slug}/change-requests/1"
+      assert data["url"] == GoodFlowsWeb.Endpoint.url() <> page
+
+      assert [%{"url" => listed}] =
+               ctx.pk_conn |> get(crs_path(project.slug)) |> json_response(200) |> Map.get("data")
+
+      assert listed == data["url"]
       owner = Repo.preload(ctx.sk_key, :account_user).account_user
       assert data["opened_by"]["user_id"] == owner.user_id
 
