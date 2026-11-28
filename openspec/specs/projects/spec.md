@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Stores account-owned projects, each addressed by a slug unique within its account, and manages them over the JSON API at `/api/v1/projects`. Each project has a `default_branch`, `main` unless set, which names its fallback cache scope. A project groups an account's Spry recipes, stored test reports, stored workflow runs, and caches. A project cannot be deleted while it still has recipes, test reports, or stored workflow runs; its caches and cache keys are deleted with it.
+Stores account-owned projects, each addressed by a slug unique within its account, and manages them over the JSON API at `/api/v1/projects`. Each project has a `default_branch`, `main` unless set, which names its fallback cache scope. A project groups an account's Spry recipes, stored test reports, stored workflow runs, and caches. A project cannot be deleted while it still has recipes, test reports, stored workflow runs, or stored changes; its caches and cache keys are deleted with it.
 
 ## Requirements
 
@@ -85,10 +85,10 @@ The API SHALL provide `POST /api/v1/projects`, `GET /api/v1/projects`, `GET /api
 - **THEN** the API responds `422` and does not write
 
 ### Requirement: Recipes, test reports, and workflow runs protect a project from deletion
-Deleting a project that has any recipe, test report, workflow run, change request in any state, or verify run in any status MUST respond `409` and keep all of them. Otherwise it MUST respond `204`, and a later show MUST respond `404`. Scenario set versions go with their change requests. Review policy versions, feature index versions, cache entries, reservations and keys MUST NOT block deletion: they are deleted with the project and their objects queued for deletion.
+Deleting a project that has any recipe, test report, workflow run, change request in any state, verify run in any status, or stored change MUST respond `409` and keep all of them. Otherwise it MUST respond `204`, and a later show MUST respond `404`. Scenario set versions go with their change requests. Review policy versions, feature index versions, cache entries, reservations and keys MUST NOT block deletion: they are deleted with the project and their objects queued for deletion.
 
 #### Scenario: Delete an empty project
-- **WHEN** a client deletes a project that has no recipes, test reports, workflow runs, change requests, or verify runs
+- **WHEN** a client deletes a project that has no recipes, test reports, workflow runs, change requests, verify runs, or stored changes
 - **THEN** the API responds `204` and a later show of that slug responds `404`
 
 #### Scenario: Delete a project that has a recipe
@@ -130,3 +130,7 @@ Deleting a project that has any recipe, test report, workflow run, change reques
 #### Scenario: Uploading verify run
 - **WHEN** a client deletes a project whose only content is a verify run with `status` `uploading`
 - **THEN** the API responds `409` until the sweep deletes the expired run, after which deletion responds `204`
+
+#### Scenario: Delete a project with only a stored change
+- **WHEN** a client deletes a project whose only content is a stored change with two versions
+- **THEN** the API responds `409` and the project and the stored change remain; after the stored change is deleted, deleting the project responds `204`

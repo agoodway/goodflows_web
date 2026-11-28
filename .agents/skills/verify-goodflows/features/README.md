@@ -44,4 +44,5 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Projects page](./projects-page.md) covers listing, creating, editing, and deleting projects in the dashboard, and the read-only view for members.
 - [Change requests API](./change-requests-api.md) covers opening a change request with the goodflows CLI, Git facts, a diff scenario set, claims, the review packet and answers, the merge lease, and the merge report.
 - [Verify runs API](./verify-runs-api.md) covers uploading a run folder, how it counts in the verdict, repeat uploads, an unknown scenario set, and the 503 for evidence without object storage.
+- [Stored changes API](./stored-changes-api.md) covers pushing a goodflows change's files as versions, identical and refused pushes, listing changes with their linked change requests, reading a change and its versions, what a public key may see, and deleting a change.
 - [Registration](./registration.md) covers creating an account and confirming it from the dev mailbox.

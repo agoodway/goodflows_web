@@ -52,6 +52,39 @@ defmodule GoodFlowsWeb.FallbackController do
     |> json(%{errors: %{detail: "The project has verify runs and cannot be deleted"}})
   end
 
+  def call(conn, {:error, :has_stored_changes}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: %{detail: "The project has stored changes and cannot be deleted; delete them first"}
+    })
+  end
+
+  def call(conn, {:error, {:stored_change_archived, change_id}}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: %{
+        error: "change_archived",
+        detail: "#{change_id} is archived and takes no further pushes; give a new change a new id"
+      }
+    })
+  end
+
+  def call(conn, {:error, {:stored_change_linked, change_requests}}) do
+    numbers = Enum.map_join(change_requests, ", ", &"##{&1.number} (#{&1.state})")
+
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: %{
+        detail:
+          "Change requests #{numbers} link this change, so it cannot be deleted while they exist",
+        change_requests: change_requests
+      }
+    })
+  end
+
   def call(conn, {:error, :stale_digest}) do
     conn
     |> put_status(:conflict)
@@ -192,6 +225,13 @@ defmodule GoodFlowsWeb.FallbackController do
   def call(conn, {:error, {:unprocessable, detail}}) when is_binary(detail) do
     conn
     |> put_status(:unprocessable_entity)
+    |> json(%{errors: %{detail: detail}})
+  end
+
+  def call(conn, {:error, {status, detail}})
+      when status in [:not_found, :forbidden] and is_binary(detail) do
+    conn
+    |> put_status(status)
     |> json(%{errors: %{detail: detail}})
   end
 

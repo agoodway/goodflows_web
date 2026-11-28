@@ -36,6 +36,13 @@ paths:
   - "app/test/good_flows_web/controllers/api/v1/review_controller_test.exs"
   - "app/test/good_flows_web/controllers/api/v1/review_isolated_test.exs"
   - "app/test/good_flows_web/controllers/api/v1/merge_lease_controller_test.exs"
+  - "app/lib/good_flows_web/router.ex"
+  - "app/lib/good_flows_web/controllers/fallback_controller.ex"
+  - "app/test/good_flows_web/controllers/api/v1/openapi_test.exs"
+  - "app/lib/good_flows_web/plugs/body_parsers.ex"
+  - "app/lib/good_flows_web/plugs/json_body.ex"
+  - "app/lib/good_flows/project_events.ex"
+  - ".agents/skills/verify-goodflows/features/change-requests-api.md"
 ---
 
 # Change requests API

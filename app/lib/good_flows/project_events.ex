@@ -1,8 +1,8 @@
 defmodule GoodFlows.ProjectEvents do
   @moduledoc """
   The per-project event feed (the `project-events` capability): an
-  append-only log of change request activity with a keyset cursor and an
-  optional long-poll.
+  append-only log of change request and stored change activity with a
+  keyset cursor and an optional long-poll.
 
   `record/5` inserts an event inside the caller's transaction, so a change
   that rolls back leaves no event. It first takes a per-project
@@ -37,7 +37,8 @@ defmodule GoodFlows.ProjectEvents do
             verdict_changed
             scenario_set_uploaded scenario_set_approved scenario_set_rejected answer_recorded
             task_created task_completed policy_version_created lease_acquired lease_renewed
-            lease_expired lease_released defect_recorded workflow_run_stored verify_run_stored)
+            lease_expired lease_released defect_recorded workflow_run_stored verify_run_stored
+            change_pushed change_deleted)
   @default_limit 100
   @max_limit 200
   @max_wait 30

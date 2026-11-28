@@ -8,6 +8,12 @@ paths:
   - "app/test/good_flows/verify_runs/**"
   - "app/test/good_flows_web/controllers/api/v1/verify_run_controller_test.exs"
   - "app/test/good_flows_web/verify_run_hygiene_test.exs"
+  - "app/lib/good_flows_web/router.ex"
+  - "app/lib/good_flows_web/controllers/fallback_controller.ex"
+  - "app/test/good_flows_web/controllers/api/v1/openapi_test.exs"
+  - "app/lib/good_flows_web/plugs/body_parsers.ex"
+  - "app/lib/good_flows_web/plugs/json_body.ex"
+  - ".agents/skills/verify-goodflows/features/verify-runs-api.md"
 ---
 
 # Verify runs API

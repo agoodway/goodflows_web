@@ -56,8 +56,9 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
   after authentication: creating a change request, reporting a merge, Git
   facts or claims, writing a review policy version, uploading, approving
   or rejecting a scenario set, uploading or committing a verify run,
-  syncing a feature index, answering a review item, setting a parent or
-  dependencies, retargeting, acquiring a merge lease and recording a defect. The state
+  syncing a feature index, pushing a stored change, answering a review
+  item, setting a parent or dependencies, retargeting, acquiring a merge
+  lease and recording a defect. The state
   changes (`ready`, `draft`, `close`, `reopen`), marking a review task
   done and a merge lease heartbeat take no body and are left unparsed
   too, so no body is read before authentication; whatever is sent is
@@ -131,7 +132,7 @@ defmodule GoodFlowsWeb.Plugs.BodyParsers do
         method: "POST",
         path_info: ["api", "v1", "projects", _project, resource]
       })
-      when resource in ["verify-runs", "feature-index", "defects"],
+      when resource in ["verify-runs", "feature-index", "defects", "changes"],
       do: true
 
   def strict_json_route?(%Plug.Conn{

@@ -90,8 +90,7 @@ defmodule GoodFlows.ScenarioSets.Document do
        }}
 
     with [] <- Shape.check(body, spec, []) |> cut(),
-         {:ok, front_matter} <- FrontMatter.parse(body["content"]),
-         [] <- front_matter_errors(front_matter),
+         {:ok, front_matter} <- check_content(body["content"]),
          [] <- section_errors(front_matter, body["sections"]) do
       {:ok,
        %{
@@ -104,6 +103,21 @@ defmodule GoodFlows.ScenarioSets.Document do
     else
       {:error, message} -> invalid(%{"content" => [message]})
       errors when is_list(errors) -> invalid(DocumentErrors.render(errors))
+    end
+  end
+
+  @doc """
+  Checks the front matter of a `qa-scenarios/2` file as an upload's
+  `content`, without `sections`. Returns the parsed front matter, or
+  errors whose paths start with `content` (`{:error, message}` when the
+  front matter cannot be parsed).
+  """
+  @spec check_content(String.t()) ::
+          {:ok, map()} | {:error, String.t()} | [GoodFlows.JsonDocument.error()]
+  def check_content(content) when is_binary(content) do
+    with {:ok, front_matter} <- FrontMatter.parse(content),
+         [] <- front_matter_errors(front_matter) do
+      {:ok, front_matter}
     end
   end
 

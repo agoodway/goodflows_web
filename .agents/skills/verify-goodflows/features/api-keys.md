@@ -9,6 +9,10 @@ paths:
   - "app/test/good_flows_web/plugs/api_auth_test.exs"
   - "app/test/good_flows_web/controllers/api/v1/me_controller_test.exs"
   - "app/test/good_flows/api_keys_test.exs"
+  - "app/lib/good_flows_web/router.ex"
+  - "app/lib/good_flows_web/controllers/fallback_controller.ex"
+  - "app/test/good_flows_web/controllers/api/v1/openapi_test.exs"
+  - ".agents/skills/verify-goodflows/features/api-keys.md"
 ---
 
 # API keys

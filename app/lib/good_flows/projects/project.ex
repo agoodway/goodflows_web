@@ -46,6 +46,7 @@ defmodule GoodFlows.Projects.Project do
     has_many :workflow_runs, Run
     has_many :change_requests, ChangeRequest
     has_many :verify_runs, VerifyRun
+    has_many :stored_changes, GoodFlows.StoredChanges.Change
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -103,7 +104,8 @@ defmodule GoodFlows.Projects.Project do
 
   @doc """
   Builds the delete changeset; refuses while any recipe, test report,
-  workflow run, change request, or verify run belongs to the project.
+  workflow run, change request, verify run, or stored change belongs to
+  the project.
   """
   @spec delete_changeset(t()) :: Ecto.Changeset.t()
   def delete_changeset(project) do
@@ -114,5 +116,6 @@ defmodule GoodFlows.Projects.Project do
     |> no_assoc_constraint(:workflow_runs, name: :workflow_runs_project_id_fkey)
     |> no_assoc_constraint(:change_requests, name: :change_requests_project_id_fkey)
     |> no_assoc_constraint(:verify_runs, name: :verify_runs_project_id_fkey)
+    |> no_assoc_constraint(:stored_changes, name: :stored_changes_project_id_fkey)
   end
 end

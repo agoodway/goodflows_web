@@ -55,9 +55,20 @@ defmodule GoodFlows.Projects do
 
   def update_project(%Account{}, %Project{}, _attrs), do: {:error, :not_found}
 
+  # The changeset errors a refused project delete can carry, in the order
+  # they are reported.
+  @delete_blockers [
+    recipes: :has_recipes,
+    test_reports: :has_test_reports,
+    workflow_runs: :has_workflow_runs,
+    change_requests: :has_change_requests,
+    verify_runs: :has_verify_runs,
+    stored_changes: :has_stored_changes
+  ]
+
   @doc """
   Deletes a project that has no recipes, test reports, workflow runs,
-  change requests, or verify runs. Its cache entries, cache keys, review
+  change requests, verify runs, or stored changes. Its cache entries, cache keys, review
   policy versions and feature index versions never block the delete: the
   database deletes them with the project and queues cache objects for
   deletion.
@@ -65,8 +76,8 @@ defmodule GoodFlows.Projects do
   `{:error, :has_test_reports}` while any test report does,
   `{:error, :has_workflow_runs}` while any workflow run does,
   `{:error, :has_change_requests}` while any change request in any state
-  does, and `{:error, :has_verify_runs}` while any verify run in any
-  status does, including rows committed concurrently (the foreign key violation
+  does, `{:error, :has_verify_runs}` while any verify run in any status
+  does, and `{:error, :has_stored_changes}` while any stored change does, including rows committed concurrently (the foreign key violation
   maps through `no_assoc_constraint/3`). They are reported in that order.
   The project and its rows are kept.
   """
@@ -78,23 +89,23 @@ defmodule GoodFlows.Projects do
              | :has_test_reports
              | :has_workflow_runs
              | :has_change_requests
-             | :has_verify_runs}
+             | :has_verify_runs
+             | :has_stored_changes}
   def delete_project(%Account{id: account_id}, %Project{account_id: account_id} = project) do
     case project |> Project.delete_changeset() |> Repo.delete(stale_error_field: :id) do
       {:ok, _project} ->
         :ok
 
       {:error, %Ecto.Changeset{errors: errors}} ->
-        cond do
-          Keyword.has_key?(errors, :recipes) -> {:error, :has_recipes}
-          Keyword.has_key?(errors, :test_reports) -> {:error, :has_test_reports}
-          Keyword.has_key?(errors, :workflow_runs) -> {:error, :has_workflow_runs}
-          Keyword.has_key?(errors, :change_requests) -> {:error, :has_change_requests}
-          Keyword.has_key?(errors, :verify_runs) -> {:error, :has_verify_runs}
-          true -> {:error, :not_found}
-        end
+        {:error, delete_blocker(errors)}
     end
   end
 
   def delete_project(%Account{}, %Project{}), do: {:error, :not_found}
+
+  defp delete_blocker(errors) do
+    Enum.find_value(@delete_blockers, :not_found, fn {field, reason} ->
+      Keyword.has_key?(errors, field) && reason
+    end)
+  end
 end
