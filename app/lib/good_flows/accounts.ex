@@ -63,6 +63,17 @@ defmodule GoodFlows.Accounts do
   ## User registration
 
   @doc """
+  Returns whether new accounts may register.
+
+  Set by `GOOD_FLOWS_USER_REGISTRATION_ENABLED` in `config/runtime.exs`;
+  open in dev and test, closed in prod unless the variable says otherwise.
+  """
+  @spec registration_enabled?() :: boolean()
+  def registration_enabled? do
+    Application.get_env(:good_flows, :user_registration_enabled, true)
+  end
+
+  @doc """
   Registers a user.
 
   ## Examples

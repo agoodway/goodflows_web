@@ -14,7 +14,8 @@ defmodule GoodFlowsWeb.UserLive.Login do
           <:subtitle>
             <%= if @current_scope do %>
               You need to reauthenticate to perform sensitive actions on your account.
-            <% else %>
+            <% end %>
+            <%= if !@current_scope and GoodFlows.Accounts.registration_enabled?() do %>
               Don't have an account? <.text_link navigate={~p"/users/register"}>Sign up</.text_link>
               for an account now.
             <% end %>

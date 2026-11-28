@@ -50,7 +50,14 @@ defmodule GoodFlowsWeb.Layouts do
             Log out
           </.button>
         <% else %>
-          <.button navigate={~p"/users/register"} variant="ghost" size="sm">Register</.button>
+          <.button
+            :if={GoodFlows.Accounts.registration_enabled?()}
+            navigate={~p"/users/register"}
+            variant="ghost"
+            size="sm"
+          >
+            Register
+          </.button>
           <.button navigate={~p"/users/log-in"} variant="primary" size="sm">Log in</.button>
         <% end %>
         <.theme_toggle />
