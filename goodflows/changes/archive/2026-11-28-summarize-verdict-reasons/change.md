@@ -1,7 +1,7 @@
 ---
 format: goodflows-change/1
 id: summarize-verdict-reasons
-status: approved
+status: archived
 size: small
 door: two_way
 capabilities: [change-request-dashboard]
